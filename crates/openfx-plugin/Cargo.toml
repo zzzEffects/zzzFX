@@ -1,0 +1,22 @@
+[package]
+name = "example-openfx-plugin"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR ISC OR Apache-2.0"
+
+[dependencies]
+allocator-api2 = "0.2.16"
+example-effect = { path = "../example-effect" }
+rfd = "0.15.3"
+
+[build-dependencies]
+bindgen = "0.71"
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+trybuild = "1.0"
