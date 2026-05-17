@@ -1,12 +1,6 @@
 #![cfg(any(windows, target_os = "macos"))]
 
 mod handle;
-mod window_handle;
-
-use std::{
-    fs::File,
-    num::NonZero,
-};
 
 use after_effects::{self as ae};
 use example_effect::{
@@ -15,8 +9,6 @@ use example_effect::{
         EnumValue, SettingDescriptor, SettingKind, SettingID, Settings, SettingsList,
     },
 };
-use raw_window_handle::Win32WindowHandle;
-use window_handle::WindowAndDisplayHandle;
 
 // ---------------------------------------------------------------------------
 // Plugin struct
@@ -44,8 +36,6 @@ enum ParamID {
     Param(i32),
     GroupStart(i32),
     GroupEnd(i32),
-    LoadPresetButton,
-    SavePresetButton,
 }
 
 trait IDExt {
@@ -89,32 +79,6 @@ impl AdobePluginGlobal for Plugin {
         _in_data: InData,
         _out_data: OutData,
     ) -> Result<(), Error> {
-        params.add_customized(
-            ParamID::LoadPresetButton,
-            "",
-            ae::ButtonDef::setup(|def| {
-                def.set_label("Load Preset...");
-            }),
-            |p| {
-                p.set_flag(ParamFlag::START_COLLAPSED, true);
-                p.set_flag(ParamFlag::SUPERVISE, true);
-                -1
-            },
-        )?;
-
-        params.add_customized(
-            ParamID::SavePresetButton,
-            "",
-            ae::ButtonDef::setup(|def| {
-                def.set_label("Save Preset...");
-            }),
-            |p| {
-                p.set_flag(ParamFlag::START_COLLAPSED, true);
-                p.set_flag(ParamFlag::SUPERVISE, true);
-                -1
-            },
-        )?;
-
         Self::map_params(
             params,
             &self.settings.setting_descriptors,
@@ -145,9 +109,6 @@ impl AdobePluginGlobal for Plugin {
             }
             Command::UpdateParamsUi => {
                 Self::update_controls_disabled(params, &self.settings.setting_descriptors, true)?
-            }
-            Command::UserChangedParam { param_index } => {
-                self.handle_param_callback(params, in_data, out_data, param_index)?
             }
             Command::GetFlattenedSequenceData => {}
             _ => {}
@@ -562,183 +523,6 @@ impl Plugin {
                             Ok(())
                         },
                     )?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    // -----------------------------------------------------------------------
-    // Preset load/save
-    // -----------------------------------------------------------------------
-
-    fn get_window_handle(
-        &self,
-        #[allow(unused_variables)] in_data: &InData,
-    ) -> Result<Option<WindowAndDisplayHandle>, Error> {
-        #[cfg(windows)]
-        {
-            let hwnd = if in_data.is_premiere() {
-                premiere::suites::Window::new()
-                    .map_err(|_| Error::Generic)?
-                    .get_main_window() as usize as isize
-            } else {
-                let utility = ae::aegp::suites::Utility::new()?;
-                utility.main_hwnd()? as usize as isize
-            };
-
-            Ok(NonZero::<isize>::new(hwnd)
-                .map(|hwnd| unsafe { WindowAndDisplayHandle::new(Win32WindowHandle::new(hwnd)) }))
-        }
-
-        #[cfg(not(windows))]
-        Ok(None)
-    }
-
-    fn handle_param_callback(
-        &self,
-        params: &mut Parameters<ParamID>,
-        in_data: InData,
-        mut out_data: OutData,
-        param_index: usize,
-    ) -> Result<(), Error> {
-        match params.type_at(param_index) {
-            ParamID::LoadPresetButton => {
-                let mut dialog = rfd::FileDialog::new()
-                    .add_filter("Example Effect preset", &["json"]);
-
-                if let Some(handle) = self.get_window_handle(&in_data)? {
-                    dialog = dialog.set_parent(&handle);
-                }
-
-                let Some(preset_path) = dialog.pick_file() else {
-                    return Ok(());
-                };
-
-                let loaded_preset: Result<_, Box<dyn std::error::Error>> = (|| {
-                    let file_contents = std::fs::read_to_string(preset_path)?;
-                    Ok(self.settings.from_json_generic(&file_contents)?)
-                })();
-                let loaded_preset = match loaded_preset {
-                    Ok(loaded_preset) => loaded_preset,
-                    Err(e) => {
-                        out_data.set_error_msg(&format!("Error loading preset: {e}"));
-                        return Ok(());
-                    }
-                };
-
-                Self::update_params_from_settings(
-                    &self.settings.setting_descriptors,
-                    params,
-                    &loaded_preset,
-                )?;
-            }
-            ParamID::SavePresetButton => {
-                let mut dialog = rfd::FileDialog::new()
-                    .add_filter("Example Effect preset", &["json"])
-                    .set_file_name("settings.json");
-
-                if let Some(handle) = self.get_window_handle(&in_data)? {
-                    dialog = dialog.set_parent(&handle);
-                }
-
-                let Some(preset_path) = dialog.save_file() else {
-                    return Ok(());
-                };
-
-                let effect_settings = self.apply_settings(params)?;
-                let res: Result<(), Box<dyn std::error::Error>> = (|| {
-                    let mut destination = File::create(preset_path)?;
-                    self.settings
-                        .write_json_to_io(&effect_settings, &mut destination)?;
-
-                    Ok(())
-                })();
-                if let Err(e) = res {
-                    out_data.set_error_msg(&format!("Error saving preset: {e}"));
-                    return Ok(());
-                }
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    fn update_params_from_settings(
-        descriptors: &[SettingDescriptor<ExampleEffectFullSettings>],
-        params: &mut Parameters<ParamID>,
-        settings: &ExampleEffectFullSettings,
-    ) -> Result<(), Error> {
-        for descriptor in descriptors {
-            match &descriptor.kind {
-                SettingKind::Enumeration { options, .. } => {
-                    let mut param = params.get_mut(ParamID::Param(descriptor.id.ae_id()))?;
-                    let mut param = param.as_popup_mut()?;
-                    let setting = settings.get_field::<EnumValue>(&descriptor.id).unwrap().0;
-                    param.set_value(
-                        options
-                            .iter()
-                            .position(|item| item.index == setting)
-                            .unwrap() as i32
-                            + 1,
-                    );
-                    param.set_value_changed();
-                }
-                SettingKind::Percentage { logarithmic, .. } => {
-                    let mut param = params.get_mut(ParamID::Param(descriptor.id.ae_id()))?;
-                    let mut param = param.as_float_slider_mut()?;
-                    let setting = settings.get_field::<f32>(&descriptor.id).unwrap();
-                    param.set_value(
-                        if *logarithmic {
-                            map_logarithmic_inverse(setting.into(), 0.0, 1.0, LOG_SLIDER_BASE)
-                        } else {
-                            setting.into()
-                        } * 100.0,
-                    );
-                    param.set_value_changed();
-                }
-                SettingKind::IntRange { .. } => {
-                    let mut param = params.get_mut(ParamID::Param(descriptor.id.ae_id()))?;
-                    let mut param = param.as_float_slider_mut()?;
-                    let setting = settings.get_field::<i32>(&descriptor.id).unwrap();
-                    param.set_value(setting.into());
-                    param.set_value_changed();
-                }
-                SettingKind::FloatRange {
-                    range, logarithmic, ..
-                } => {
-                    let mut param = params.get_mut(ParamID::Param(descriptor.id.ae_id()))?;
-                    let mut param = param.as_float_slider_mut()?;
-                    let setting = settings.get_field::<f32>(&descriptor.id).unwrap();
-                    param.set_value(if *logarithmic {
-                        map_logarithmic_inverse(
-                            setting.into(),
-                            *range.start() as f64,
-                            *range.end() as f64,
-                            LOG_SLIDER_BASE,
-                        )
-                    } else {
-                        setting.into()
-                    });
-                    param.set_value_changed();
-                }
-                SettingKind::Boolean => {
-                    let mut param = params.get_mut(ParamID::Param(descriptor.id.ae_id()))?;
-                    let mut param = param.as_checkbox_mut()?;
-                    let setting = settings.get_field::<bool>(&descriptor.id).unwrap();
-                    param.set_value(setting);
-                    param.set_value_changed();
-                }
-                SettingKind::Group { children, .. } => {
-                    let mut param = params.get_mut(ParamID::Param(descriptor.id.ae_id()))?;
-                    let mut param = param.as_checkbox_mut()?;
-                    let setting = settings.get_field::<bool>(&descriptor.id).unwrap();
-                    param.set_value(setting);
-                    param.set_value_changed();
-
-                    Self::update_params_from_settings(children, params, settings)?;
                 }
             }
         }
