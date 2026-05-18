@@ -128,7 +128,7 @@ impl Default for ZzzStroke {
         Self {
             stroke_position: StrokePosition::Outer,
             fill_mode: FillMode::SolidColor,
-            stroke_width: 0.02,
+            stroke_width: 0.05,
             stroke_color_r: 1.0,
             stroke_color_g: 1.0,
             stroke_color_b: 1.0,

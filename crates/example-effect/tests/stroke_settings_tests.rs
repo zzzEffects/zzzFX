@@ -19,7 +19,7 @@ fn get_and_set_fields() {
     // Float field
     assert_eq!(
         settings.get_field::<f32>(&setting_id::STROKE_WIDTH).unwrap(),
-        0.02
+        0.05
     );
     settings
         .set_field::<f32>(&setting_id::STROKE_WIDTH, 0.5)

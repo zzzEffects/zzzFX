@@ -1,5 +1,6 @@
 mod effect;
 pub mod blend;
+pub mod gpu;
 mod solid_blend;
 mod zzz_stroke;
 pub mod settings;

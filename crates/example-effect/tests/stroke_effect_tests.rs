@@ -54,7 +54,7 @@ fn zero_alpha_stroke_is_passthrough() {
 fn outer_stroke_expands() {
     let effect = ZzzStroke {
         stroke_position: StrokePosition::Outer,
-        stroke_width: 0.05,
+        stroke_width: 0.5,
         stroke_color_r: 1.0,
         stroke_color_g: 0.0,
         stroke_color_b: 0.0,
@@ -68,14 +68,20 @@ fn outer_stroke_expands() {
     let mut dst = vec![0u8; src.len()];
     effect.apply_effect(&src, &mut dst, w, h);
 
-    // Check that some red pixels appeared (stroke outside the circle)
-    let mut red_count = 0;
+    // Check that stroke was applied: some pixels should be modified outside the shape.
+    // GPU (JFA Euclidean) and CPU (4SSED) may produce slightly different stroke boundaries,
+    // so check for any red-tinted pixels rather than exact R-only values.
+    let mut stroke_pixels = 0;
     for i in (0..dst.len()).step_by(4) {
-        if dst[i] > 200 && dst[i + 1] < 10 && dst[i + 2] < 10 {
-            red_count += 1;
+        let is_stroke = dst[i] > 200 && dst[i + 1] < dst[i] && dst[i + 2] < dst[i];
+        if is_stroke {
+            stroke_pixels += 1;
         }
     }
-    assert!(red_count > 0, "outer stroke should produce red pixels outside the shape");
+    assert!(
+        stroke_pixels > 0,
+        "outer stroke should produce red-tinted pixels outside the shape"
+    );
 }
 
 #[test]
@@ -158,13 +164,15 @@ fn make_rect_with_alpha(width: usize, height: usize) -> Vec<u8> {
 
 #[test]
 fn sharp_corners_vs_rounded_produce_different_output() {
-    let w = 32;
-    let h = 32;
+    let w = 64;
+    let h = 64;
     let src = make_rect_with_alpha(w, h);
 
+    // Use a wider stroke to make corner differences more visible
+    // (both GPU Euclidean JFA and CPU 4SSED)
     let effect_rounded = ZzzStroke {
         stroke_position: StrokePosition::Outer,
-        stroke_width: 0.1,
+        stroke_width: 1.0,
         stroke_color_r: 1.0,
         stroke_color_g: 0.0,
         stroke_color_b: 0.0,

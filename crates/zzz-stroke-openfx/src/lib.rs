@@ -281,8 +281,34 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     gp(desc, &mut param_set).ofx_ok()?;
 
-    // --- Create generic params for top-level descriptors, skipping native-grouped ---
+    // --- Block A: Params before Stroke Color (IDs 200-202) ---
     for desc in d.settings_list.setting_descriptors.iter() {
+        if desc.id.id > 202 {
+            break;
+        }
+        if is_native_grouped(desc.id.id) {
+            continue;
+        }
+        define_single_param(d, param_set, desc, &defaults, c"")?;
+    }
+
+    // --- Native RGBA: Stroke Color (descriptors 203-206) ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(param_set, kOfxParamTypeRGBA.as_ptr(), STROKE_COLOR_PARAM.as_ptr(), &mut pp).ofx_ok()?;
+        ps(pp, kOfxPropLabel.as_ptr(), 0, c"Stroke Color".as_ptr()).ofx_ok()?;
+        ps(pp, kOfxParamPropHint.as_ptr(), 0, c"Color of the stroke.".as_ptr()).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 1.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
+    }
+
+    // --- Block C: Params after Stroke Color (IDs 207+) ---
+    for desc in d.settings_list.setting_descriptors.iter() {
+        if desc.id.id < 207 {
+            continue;
+        }
         if is_native_grouped(desc.id.id) {
             continue;
         }
@@ -307,18 +333,6 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         } else {
             define_single_param(d, param_set, desc, &defaults, c"")?;
         }
-    }
-
-    // --- Native RGBA: Stroke Color (descriptors 203-206) ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(param_set, kOfxParamTypeRGBA.as_ptr(), STROKE_COLOR_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, c"Stroke Color".as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, c"Color of the stroke.".as_ptr()).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
     }
 
     // --- Native Double2D: Gradient Start (descriptors 213-214) ---

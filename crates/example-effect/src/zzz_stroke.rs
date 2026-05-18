@@ -1,6 +1,9 @@
 use std::cell::RefCell;
 
+use rayon::prelude::*;
+
 use crate::blend::{self, blend_channel, is_stencil_or_outline};
+use crate::gpu;
 use crate::settings::zzz_stroke::{
     BlendMode, FillMode, StrokePosition, ZzzStroke,
 };
@@ -38,31 +41,54 @@ impl ZzzStroke {
 
         let total_pixels = width * height;
         let sw = self.stroke_width.clamp(0.0, 1.0);
+        let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
+        let max_dim = width.max(height) as f32;
+        let w_px = (sw / 10.0) * max_dim;
+
+        // Fast path: no stroke
+        if w_px <= 0.0 || stroke_a <= 0.0 {
+            let src_opacity = self.source_opacity.clamp(0.0, 1.0);
+            dst[..len].copy_from_slice(&src[..len]);
+            for p in dst.chunks_mut(4) {
+                p[3] = (p[3] as f32 * src_opacity).round() as u8;
+            }
+            return;
+        }
+
+        // GPU first
+        match gpu::try_gpu_render(self, src, dst, width, height) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(_) => {}
+        }
+
+        // CPU fallback with rayon
+        self.apply_effect_cpu_rayon(src, dst, width, height, total_pixels);
+    }
+
+    fn apply_effect_cpu_rayon(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: usize,
+        height: usize,
+        total_pixels: usize,
+    ) {
+        let sw = self.stroke_width.clamp(0.0, 1.0);
         let threshold = self.alpha_threshold.clamp(0.0, 1.0);
         let feather = self.stroke_feathering.clamp(0.0, 1.0);
         let src_opacity = self.source_opacity.clamp(0.0, 1.0);
         let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
         let max_dim = width.max(height) as f32;
-        let w_px = sw * max_dim;
+        let w_px = (sw / 10.0) * max_dim;
         let feather_px = feather * w_px;
+        let sigma = feather_px / 3.0;
 
-        // Fast path: no stroke
-        if w_px <= 0.0 || stroke_a <= 0.0 {
-            if (src_opacity - 1.0).abs() < f32::EPSILON {
-                dst[..len].copy_from_slice(&src[..len]);
-            } else {
-                dst[..len].copy_from_slice(&src[..len]);
-                for p in dst.chunks_mut(4) {
-                    p[3] = (p[3] as f32 * src_opacity).round() as u8;
-                }
-            }
-            return;
-        }
-
-        BUFS.with(|bufs_cell| {
+        // Stages 1-3: sequential (fast O(N)) inside thread-local buffers
+        // Take buffers out for stages 4-5 parallel work, then restore
+        let (mask, dists, nearest_cols) = BUFS.with(|bufs_cell| {
             let bufs = &mut *bufs_cell.borrow_mut();
 
-            // Resize reusable buffers (only grows, never shrinks)
             bufs.mask.resize(total_pixels, false);
             bufs.dists.resize(total_pixels, 0.0f32);
             bufs.nearest_cols.resize(total_pixels, 0u32);
@@ -71,12 +97,12 @@ impl ZzzStroke {
             let dists = &mut bufs.dists;
             let nearest_cols = &mut bufs.nearest_cols;
 
-            // Stage 1: Build binary mask
+            // Stage 1: Build binary mask (sequential — trivially cheap)
             for (i, chunk) in src.chunks(4).enumerate() {
                 mask[i] = (chunk[3] as f32 / 255.0) >= threshold;
             }
 
-            // Stage 2+3: Initialize distance transform (inline edge detection)
+            // Stage 2+3: Edge detection + two-pass distance transform (sequential)
             for y in 0..height {
                 for x in 0..width {
                     let idx = y * width + x;
@@ -85,7 +111,6 @@ impl ZzzStroke {
                         nearest_cols[idx] = 0;
                         continue;
                     }
-                    // Check if edge pixel (mask pixel with a non-mask 4-neighbor)
                     let is_edge = (x > 0 && !mask[idx - 1])
                         || (x + 1 < width && !mask[idx + 1])
                         || (y > 0 && !mask[idx - width])
@@ -106,7 +131,7 @@ impl ZzzStroke {
                 (3.0, 4.0)
             };
 
-            // Forward pass: top → bottom, left → right
+            // Forward pass
             for y in 0..height {
                 let row_offset = y * width;
                 for x in 0..width {
@@ -126,7 +151,7 @@ impl ZzzStroke {
                 }
             }
 
-            // Backward pass: bottom → top, right → left
+            // Backward pass
             for y in (0..height).rev() {
                 let row_offset = y * width;
                 for x in (0..width).rev() {
@@ -152,164 +177,200 @@ impl ZzzStroke {
                 *d /= scale;
             }
 
-            // Stage 4: Compute stroke per pixel
-            let stroke_r = self.stroke_color_r.clamp(0.0, 1.0);
-            let stroke_g = self.stroke_color_g.clamp(0.0, 1.0);
-            let stroke_b = self.stroke_color_b.clamp(0.0, 1.0);
-            let pos = self.stroke_position;
-            let fmode = self.fill_mode;
-            let gradient = self.gradient.clone();
-            let bmode = self.blend_mode;
+            // Take ownership of the data buffers for rayon parallel composition
+            let mask_out = std::mem::take(&mut bufs.mask);
+            let dists_out = std::mem::take(&mut bufs.dists);
+            let nearest_out = std::mem::take(&mut bufs.nearest_cols);
+            (mask_out, dists_out, nearest_out)
+        });
 
-            for pixel_idx in 0..total_pixels {
-                let x = pixel_idx % width;
-                let y = pixel_idx / width;
-                let idx = pixel_idx;
-                let inside = mask[idx];
-                let d = dists[idx];
+        // Stage 4+5: Parallel stroke composition using owned Vecs
+        let stroke_r = self.stroke_color_r.clamp(0.0, 1.0);
+        let stroke_g = self.stroke_color_g.clamp(0.0, 1.0);
+        let stroke_b = self.stroke_color_b.clamp(0.0, 1.0);
+        let pos = self.stroke_position;
+        let fmode = self.fill_mode;
+        let gradient = self.gradient.clone();
+        let bmode = self.blend_mode;
 
-                let stroke_alpha_local = match pos {
-                    StrokePosition::Outer => {
-                        if inside {
-                            0.0
+        dst.par_chunks_mut(4).enumerate().for_each(|(pixel_idx, out)| {
+            let x = pixel_idx % width;
+            let y = pixel_idx / width;
+            let idx = pixel_idx;
+            let inside = mask[idx];
+            let d = dists[idx];
+
+            let stroke_alpha_local = match pos {
+                StrokePosition::Outer => {
+                    if inside {
+                        0.0
+                    } else {
+                        gaussian_edge(sigma, w_px, d)
+                    }
+                }
+                StrokePosition::Inner => {
+                    if !inside {
+                        0.0
+                    } else {
+                        gaussian_edge(sigma, w_px, d)
+                    }
+                }
+                StrokePosition::Center => {
+                    let half_w = w_px * 0.5;
+                    gaussian_edge(sigma, half_w, d)
+                }
+            };
+
+            let sa = stroke_alpha_local * stroke_a;
+            let is_stroke = sa > 0.0;
+
+            let (sr, sg, sb) = if is_stroke {
+                match fmode {
+                    FillMode::SolidColor => (stroke_r, stroke_g, stroke_b),
+                    FillMode::DistanceGradient => {
+                        if let Some(ref g) = gradient {
+                            let gx = g.start_x * width as f32;
+                            let gy = g.start_y * height as f32;
+                            let dx = x as f32 - gx;
+                            let dy = y as f32 - gy;
+                            let dist = (dx * dx + dy * dy).sqrt();
+                            let max_dist = ((width as f32).powi(2)
+                                + (height as f32).powi(2))
+                            .sqrt();
+                            let t = (dist / max_dist).clamp(0.0, 1.0);
+                            (
+                                g.start_color_r
+                                    + t * (g.end_color_r - g.start_color_r),
+                                g.start_color_g
+                                    + t * (g.end_color_g - g.start_color_g),
+                                g.start_color_b
+                                    + t * (g.end_color_b - g.start_color_b),
+                            )
                         } else {
-                            smoothstep_edge(w_px + feather_px, w_px - feather_px, d)
+                            (stroke_r, stroke_g, stroke_b)
                         }
                     }
-                    StrokePosition::Inner => {
-                        if !inside {
-                            0.0
+                    FillMode::Gradient => {
+                        if let Some(ref g) = gradient {
+                            let dx = g.end_x - g.start_x;
+                            let dy = g.end_y - g.start_y;
+                            let len_sq = dx * dx + dy * dy;
+                            let gx = g.start_x * width as f32;
+                            let gy = g.start_y * height as f32;
+                            let px = x as f32 - gx;
+                            let py = y as f32 - gy;
+                            let t = if len_sq > 0.0 {
+                                ((px * dx + py * dy) / len_sq).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
+                            (
+                                g.start_color_r
+                                    + t * (g.end_color_r - g.start_color_r),
+                                g.start_color_g
+                                    + t * (g.end_color_g - g.start_color_g),
+                                g.start_color_b
+                                    + t * (g.end_color_b - g.start_color_b),
+                            )
                         } else {
-                            smoothstep_edge(w_px + feather_px, w_px - feather_px, d)
+                            (stroke_r, stroke_g, stroke_b)
                         }
                     }
-                    StrokePosition::Center => {
-                        let half_w = w_px * 0.5;
-                        smoothstep_edge(half_w + feather_px, half_w - feather_px, d)
+                    FillMode::SourceColorExtension => {
+                        let nc = nearest_cols[idx] as usize;
+                        let src_idx = (y * width + nc) * 4;
+                        if src_idx + 2 < src.len() {
+                            (
+                                src[src_idx] as f32 / 255.0,
+                                src[src_idx + 1] as f32 / 255.0,
+                                src[src_idx + 2] as f32 / 255.0,
+                            )
+                        } else {
+                            (stroke_r, stroke_g, stroke_b)
+                        }
                     }
+                }
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+
+            let out_idx = pixel_idx * 4;
+            let src_r = src[out_idx] as f32 / 255.0;
+            let src_g = src[out_idx + 1] as f32 / 255.0;
+            let src_b = src[out_idx + 2] as f32 / 255.0;
+
+            if sa > 0.0 {
+                let h = (pixel_idx as u32).wrapping_mul(0x45d9f3b);
+                let h = (h ^ (h >> 16)).wrapping_mul(0x85ebca6b);
+                let h = h ^ (h >> 13);
+                let rng_base = h as f32 / u32::MAX as f32;
+
+                let rng1 = rng_base;
+                let rng2 = {
+                    let h2 = (h ^ 0xDEADBEEF) as f32 / u32::MAX as f32;
+                    h2
+                };
+                let rng3 = {
+                    let h3 = (h ^ 0xCAFEBABE) as f32 / u32::MAX as f32;
+                    h3
                 };
 
-                let sa = stroke_alpha_local * stroke_a;
-                let is_stroke = sa > 0.0;
+                let blended_r = blend_channel(bmode, src_r, sr, sa, &mut || rng1);
+                let blended_g = blend_channel(bmode, src_g, sg, sa, &mut || rng2);
+                let blended_b = blend_channel(bmode, src_b, sb, sa, &mut || rng3);
 
-                let (sr, sg, sb) = if is_stroke {
-                    match fmode {
-                        FillMode::SolidColor => (stroke_r, stroke_g, stroke_b),
-                        FillMode::DistanceGradient => {
-                            if let Some(ref g) = gradient {
-                                let gx = g.start_x * width as f32;
-                                let gy = g.start_y * height as f32;
-                                let dx = x as f32 - gx;
-                                let dy = y as f32 - gy;
-                                let dist = (dx * dx + dy * dy).sqrt();
-                                let max_dist = ((width as f32).powi(2) + (height as f32).powi(2)).sqrt();
-                                let t = (dist / max_dist).clamp(0.0, 1.0);
-                                (
-                                    g.start_color_r + t * (g.end_color_r - g.start_color_r),
-                                    g.start_color_g + t * (g.end_color_g - g.start_color_g),
-                                    g.start_color_b + t * (g.end_color_b - g.start_color_b),
-                                )
-                            } else {
-                                (stroke_r, stroke_g, stroke_b)
-                            }
-                        }
-                        FillMode::Gradient => {
-                            if let Some(ref g) = gradient {
-                                let dx = g.end_x - g.start_x;
-                                let dy = g.end_y - g.start_y;
-                                let len_sq = dx * dx + dy * dy;
-                                let gx = g.start_x * width as f32;
-                                let gy = g.start_y * height as f32;
-                                let px = x as f32 - gx;
-                                let py = y as f32 - gy;
-                                let t = if len_sq > 0.0 {
-                                    ((px * dx + py * dy) / len_sq).clamp(0.0, 1.0)
-                                } else {
-                                    0.0
-                                };
-                                (
-                                    g.start_color_r + t * (g.end_color_r - g.start_color_r),
-                                    g.start_color_g + t * (g.end_color_g - g.start_color_g),
-                                    g.start_color_b + t * (g.end_color_b - g.start_color_b),
-                                )
-                            } else {
-                                (stroke_r, stroke_g, stroke_b)
-                            }
-                        }
-                        FillMode::SourceColorExtension => {
-                            let nc = nearest_cols[idx] as usize;
-                            let src_idx = (y * width + nc) * 4;
-                            if src_idx + 2 < src.len() {
-                                (
-                                    src[src_idx] as f32 / 255.0,
-                                    src[src_idx + 1] as f32 / 255.0,
-                                    src[src_idx + 2] as f32 / 255.0,
-                                )
-                            } else {
-                                (stroke_r, stroke_g, stroke_b)
-                            }
-                        }
-                    }
-                } else {
-                    (0.0, 0.0, 0.0)
-                };
-
-                let out_idx = pixel_idx * 4;
-                let src_r = src[out_idx] as f32 / 255.0;
-                let src_g = src[out_idx + 1] as f32 / 255.0;
-                let src_b = src[out_idx + 2] as f32 / 255.0;
-
-                if sa > 0.0 {
-                    // RNG for dissolve — simple hash per pixel
-                    let mut rng_call = || {
-                        let h = (pixel_idx as u32).wrapping_mul(0x45d9f3b);
-                        let h = (h ^ (h >> 16)).wrapping_mul(0x85ebca6b);
-                        let h = h ^ (h >> 13);
-                        h as f32 / u32::MAX as f32
+                if is_stencil_or_outline(bmode) {
+                    let stencil_a = match bmode {
+                        BlendMode::StencilAlpha => sa,
+                        BlendMode::StencilLuma => sa * blend::luminance(sr, sg, sb),
+                        BlendMode::OutlineAlpha => sa,
+                        BlendMode::OutlineLuma => sa * blend::luminance(sr, sg, sb),
+                        _ => sa,
                     };
 
-                    let blended_r = blend_channel(bmode, src_r, sr, sa, &mut rng_call);
-                    let blended_g = blend_channel(bmode, src_g, sg, sa, &mut rng_call);
-                    let blended_b = blend_channel(bmode, src_b, sb, sa, &mut rng_call);
-
-                    if is_stencil_or_outline(bmode) {
-                        let stencil_a = match bmode {
-                            BlendMode::StencilAlpha => sa,
-                            BlendMode::StencilLuma => sa * blend::luminance(sr, sg, sb),
-                            BlendMode::OutlineAlpha => sa,
-                            BlendMode::OutlineLuma => sa * blend::luminance(sr, sg, sb),
-                            _ => sa,
-                        };
-
-                        if matches!(bmode, BlendMode::OutlineAlpha | BlendMode::OutlineLuma) {
-                            dst[out_idx] = (sr * 255.0).round() as u8;
-                            dst[out_idx + 1] = (sg * 255.0).round() as u8;
-                            dst[out_idx + 2] = (sb * 255.0).round() as u8;
-                            dst[out_idx + 3] = (stencil_a * 255.0).round() as u8;
-                        } else {
-                            dst[out_idx] = (blended_r * 255.0).round() as u8;
-                            dst[out_idx + 1] = (blended_g * 255.0).round() as u8;
-                            dst[out_idx + 2] = (blended_b * 255.0).round() as u8;
-                            dst[out_idx + 3] = (stencil_a * 255.0).round() as u8;
-                        }
+                    if matches!(
+                        bmode,
+                        BlendMode::OutlineAlpha | BlendMode::OutlineLuma
+                    ) {
+                        out[0] = (sr * 255.0).round() as u8;
+                        out[1] = (sg * 255.0).round() as u8;
+                        out[2] = (sb * 255.0).round() as u8;
+                        out[3] = (stencil_a * 255.0).round() as u8;
                     } else {
-                        let inv = 1.0 - sa;
-                        dst[out_idx] = ((blended_r * sa + src_r * inv).clamp(0.0, 1.0) * 255.0).round() as u8;
-                        dst[out_idx + 1] = ((blended_g * sa + src_g * inv).clamp(0.0, 1.0) * 255.0).round() as u8;
-                        dst[out_idx + 2] = ((blended_b * sa + src_b * inv).clamp(0.0, 1.0) * 255.0).round() as u8;
-                        dst[out_idx + 3] = src[out_idx + 3];
+                        out[0] = (blended_r * 255.0).round() as u8;
+                        out[1] = (blended_g * 255.0).round() as u8;
+                        out[2] = (blended_b * 255.0).round() as u8;
+                        out[3] = (stencil_a * 255.0).round() as u8;
                     }
                 } else {
-                    dst[out_idx] = (src_r * 255.0).round() as u8;
-                    dst[out_idx + 1] = (src_g * 255.0).round() as u8;
-                    dst[out_idx + 2] = (src_b * 255.0).round() as u8;
-                    dst[out_idx + 3] = src[out_idx + 3];
+                    let inv = 1.0 - sa;
+                    out[0] =
+                        ((blended_r * sa + src_r * inv).clamp(0.0, 1.0) * 255.0)
+                            .round() as u8;
+                    out[1] =
+                        ((blended_g * sa + src_g * inv).clamp(0.0, 1.0) * 255.0)
+                            .round() as u8;
+                    out[2] =
+                        ((blended_b * sa + src_b * inv).clamp(0.0, 1.0) * 255.0)
+                            .round() as u8;
+                    out[3] = src[out_idx + 3];
                 }
-
-                if (src_opacity - 1.0).abs() > f32::EPSILON {
-                    dst[out_idx + 3] = (dst[out_idx + 3] as f32 * src_opacity).round() as u8;
-                }
+            } else {
+                out[0] = (src_r * 255.0).round() as u8;
+                out[1] = (src_g * 255.0).round() as u8;
+                out[2] = (src_b * 255.0).round() as u8;
+                out[3] = src[out_idx + 3];
             }
+
+            out[3] = (out[3] as f32 * src_opacity).round() as u8;
+        });
+
+        // Restore buffers to thread_local for reuse next frame
+        BUFS.with(|bufs_cell| {
+            let bufs = &mut *bufs_cell.borrow_mut();
+            bufs.mask = mask;
+            bufs.dists = dists;
+            bufs.nearest_cols = nearest_cols;
         });
     }
 }
@@ -330,13 +391,16 @@ fn try_update(
 }
 
 #[inline]
-fn smoothstep_edge(edge0: f32, edge1: f32, x: f32) -> f32 {
-    if x >= edge0 {
-        0.0
-    } else if x <= edge1 {
-        1.0
-    } else {
-        let t = (x - edge1) / (edge0 - edge1);
-        t * t * (3.0 - 2.0 * t)
+fn gaussian_edge(sigma: f32, center: f32, d: f32) -> f32 {
+    if sigma <= 0.0 {
+        return if d <= center { 1.0 } else { 0.0 };
     }
+    let x = 1.701 * (d - center) / sigma;
+    if x > 10.0 {
+        return 0.0;
+    }
+    if x < -10.0 {
+        return 1.0;
+    }
+    1.0 / (1.0 + x.exp())
 }
