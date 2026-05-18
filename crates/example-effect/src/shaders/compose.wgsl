@@ -12,6 +12,7 @@ struct Uniforms {
     stroke_g: f32,
     stroke_b: f32,
     alpha_threshold: f32,
+    edge_blend: f32,
     source_opacity: f32,
     stroke_position: u32,   // 0=Outer, 1=Inner, 2=Center
     fill_mode: u32,         // 0=SolidColor, 1=DistanceGradient, 2=Gradient, 3=SourceColorExtension
@@ -172,26 +173,51 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     // Stroke alpha from distance
+    let blend_range = uniforms.edge_blend / 2.0;
+    let lower_bound = uniforms.alpha_threshold - blend_range;
+    let upper_bound = uniforms.alpha_threshold + blend_range;
     var stroke_alpha_local: f32;
     let sigma = uniforms.feather_px / 3.0;
     switch uniforms.stroke_position {
         case 0u: { // Outer
-            if inside {
+            if blend_range <= 0.0 {
+                if inside {
+                    stroke_alpha_local = 0.0;
+                } else {
+                    stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d);
+                }
+            } else if src_a <= lower_bound {
+                stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d);
+            } else if src_a >= upper_bound {
                 stroke_alpha_local = 0.0;
             } else {
-                stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d);
+                stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d) * (1.0 - src_a);
             }
         }
         case 1u: { // Inner
-            if !inside {
+            if blend_range <= 0.0 {
+                if !inside {
+                    stroke_alpha_local = 0.0;
+                } else {
+                    stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d);
+                }
+            } else if src_a <= lower_bound {
                 stroke_alpha_local = 0.0;
-            } else {
+            } else if src_a >= upper_bound {
                 stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d);
+            } else {
+                stroke_alpha_local = gaussian_edge(sigma, uniforms.stroke_width_px, d) * (1.0 - src_a);
             }
         }
         case 2u: { // Center
             let half_w = uniforms.stroke_width_px * 0.5;
-            stroke_alpha_local = gaussian_edge(sigma, half_w, d);
+            if blend_range <= 0.0 {
+                stroke_alpha_local = gaussian_edge(sigma, half_w, d);
+            } else if src_a <= lower_bound || src_a >= upper_bound {
+                stroke_alpha_local = 0.0;
+            } else {
+                stroke_alpha_local = gaussian_edge(sigma, half_w, d) * (1.0 - src_a);
+            }
         }
         default: {
             stroke_alpha_local = 0.0;
@@ -293,26 +319,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 out_r = sr;
                 out_g = sg;
                 out_b = sb;
-                out_a = stencil_a;
+                out_a = stencil_a * uniforms.source_opacity;
             } else {
                 // Stencil
                 out_r = blended_r;
                 out_g = blended_g;
                 out_b = blended_b;
-                out_a = stencil_a;
+                out_a = stencil_a * uniforms.source_opacity;
             }
         } else {
             // Normal blending: over-composite
             let inv = 1.0 - sa;
-            out_r = clamp(blended_r * sa + src_r * inv, 0.0, 1.0);
-            out_g = clamp(blended_g * sa + src_g * inv, 0.0, 1.0);
-            out_b = clamp(blended_b * sa + src_b * inv, 0.0, 1.0);
-            out_a = src_a;
+            out_r = clamp(blended_r * sa + src_r * uniforms.source_opacity * inv, 0.0, 1.0);
+            out_g = clamp(blended_g * sa + src_g * uniforms.source_opacity * inv, 0.0, 1.0);
+            out_b = clamp(blended_b * sa + src_b * uniforms.source_opacity * inv, 0.0, 1.0);
+            out_a = clamp(sa + src_a * uniforms.source_opacity * inv, 0.0, 1.0);
         }
+    } else {
+        out_r = src_r * uniforms.source_opacity;
+        out_g = src_g * uniforms.source_opacity;
+        out_b = src_b * uniforms.source_opacity;
+        out_a = src_a * uniforms.source_opacity;
     }
-
-    // Apply source opacity
-    out_a = out_a * uniforms.source_opacity;
 
     // Pack output
     let r8 = u32(clamp(out_r, 0.0, 1.0) * 255.0 + 0.5);

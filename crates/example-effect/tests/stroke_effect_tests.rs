@@ -112,7 +112,7 @@ fn inner_stroke_is_inside() {
 }
 
 #[test]
-fn source_opacity_reduces_output_alpha() {
+fn source_opacity_fades_source() {
     let effect = ZzzStroke {
         source_opacity: 0.5,
         stroke_width: 0.0, // no stroke, only source opacity
@@ -125,8 +125,14 @@ fn source_opacity_reduces_output_alpha() {
     effect.apply_effect(&src, &mut dst, w, h);
 
     for i in (0..dst.len()).step_by(4) {
-        let expected = (src[i + 3] as f32 * 0.5).round() as u8;
-        assert_eq!(dst[i + 3], expected);
+        let expected_alpha = (src[i + 3] as f32 * 0.5).round() as u8;
+        assert_eq!(dst[i + 3], expected_alpha, "alpha should be halved");
+        // RGB channels should also be faded
+        if src[i + 3] > 0 {
+            assert_eq!(dst[i], (src[i] as f32 * 0.5).round() as u8, "R should be halved");
+            assert_eq!(dst[i + 1], (src[i + 1] as f32 * 0.5).round() as u8, "G should be halved");
+            assert_eq!(dst[i + 2], (src[i + 2] as f32 * 0.5).round() as u8, "B should be halved");
+        }
     }
 }
 
@@ -237,4 +243,99 @@ fn default_settings_produce_output() {
     let mut dst = vec![0u8; src.len()];
     effect.apply_effect(&src, &mut dst, w, h);
     // Should not panic and produce some output (may be mostly passthrough with tiny stroke)
+}
+
+#[test]
+fn edge_blend_zero_is_binary() {
+    // With edge_blend=0, should behave like original hard threshold
+    let effect = ZzzStroke {
+        stroke_position: StrokePosition::Outer,
+        stroke_width: 0.5,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        edge_blend: 0.0,
+        ..Default::default()
+    };
+    let w = 32;
+    let h = 32;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+
+    let mut stroke_pixels = 0;
+    for i in (0..dst.len()).step_by(4) {
+        let is_stroke = dst[i] > 200 && dst[i + 1] < dst[i] && dst[i + 2] < dst[i];
+        if is_stroke {
+            stroke_pixels += 1;
+        }
+    }
+    assert!(stroke_pixels > 0, "edge_blend=0 should still produce stroke pixels");
+}
+
+fn make_gradient_alpha(width: usize, height: usize) -> Vec<u8> {
+    let len = width * height * 4;
+    let mut buf = vec![0u8; len];
+    // horizontal gradient: alpha 0 on left, 255 on right
+    for y in 0..height {
+        for x in 0..width {
+            let alpha = ((x as f32 / (width - 1) as f32) * 255.0).round() as u8;
+            let idx = (y * width + x) * 4;
+            buf[idx] = 255;
+            buf[idx + 1] = 255;
+            buf[idx + 2] = 255;
+            buf[idx + 3] = alpha;
+        }
+    }
+    buf
+}
+
+#[test]
+fn edge_blend_full_creates_softer_transitions() {
+    // edge_blend=1 should produce a wider blend zone than edge_blend=0
+    // Use a gradient image with intermediate alpha values where edge_blend matters
+    let effect_full = ZzzStroke {
+        stroke_position: StrokePosition::Outer,
+        stroke_width: 0.5,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        edge_blend: 1.0,
+        ..Default::default()
+    };
+    let effect_none = ZzzStroke {
+        edge_blend: 0.0,
+        ..effect_full.clone()
+    };
+
+    let w = 32;
+    let h = 32;
+    let src = make_gradient_alpha(w, h);
+    let mut dst_full = vec![0u8; src.len()];
+    let mut dst_none = vec![0u8; src.len()];
+    effect_full.apply_effect(&src, &mut dst_full, w, h);
+    effect_none.apply_effect(&src, &mut dst_none, w, h);
+
+    // edge_blend=1 should produce different output from edge_blend=0
+    let diff = dst_full
+        .iter()
+        .zip(dst_none.iter())
+        .any(|(a, b)| a != b);
+    assert!(
+        diff,
+        "edge_blend=1 should produce different output from edge_blend=0"
+    );
+}
+
+#[test]
+fn edge_blend_default_is_one() {
+    let effect = ZzzStroke::default();
+    assert!(
+        (effect.edge_blend - 1.0).abs() < f32::EPSILON,
+        "default edge_blend should be 1.0"
+    );
 }

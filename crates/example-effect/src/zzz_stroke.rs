@@ -57,6 +57,9 @@ impl ZzzStroke {
             let src_opacity = self.source_opacity.clamp(0.0, 1.0);
             dst[..len].copy_from_slice(&src[..len]);
             for p in dst.chunks_mut(4) {
+                p[0] = (p[0] as f32 * src_opacity).round() as u8;
+                p[1] = (p[1] as f32 * src_opacity).round() as u8;
+                p[2] = (p[2] as f32 * src_opacity).round() as u8;
                 p[3] = (p[3] as f32 * src_opacity).round() as u8;
             }
             return;
@@ -83,6 +86,10 @@ impl ZzzStroke {
     ) {
         let sw = self.stroke_width.clamp(0.0, 1.0);
         let threshold = self.alpha_threshold.clamp(0.0, 1.0);
+        let edge_blend = self.edge_blend.clamp(0.0, 1.0);
+        let blend_range = edge_blend / 2.0;
+        let lower_bound = threshold - blend_range;
+        let upper_bound = threshold + blend_range;
         let feather = self.stroke_feathering.clamp(0.0, 1.0);
         let src_opacity = self.source_opacity.clamp(0.0, 1.0);
         let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
@@ -206,25 +213,50 @@ impl ZzzStroke {
             let idx = pixel_idx;
             let inside = mask[idx];
             let d = dists[idx];
+            let out_idx = pixel_idx * 4;
+
+            let src_a_raw = src[out_idx + 3] as f32 / 255.0;
 
             let stroke_alpha_local = match pos {
                 StrokePosition::Outer => {
-                    if inside {
+                    if blend_range <= 0.0 {
+                        if inside {
+                            0.0
+                        } else {
+                            gaussian_edge(sigma, w_px, d)
+                        }
+                    } else if src_a_raw <= lower_bound {
+                        gaussian_edge(sigma, w_px, d)
+                    } else if src_a_raw >= upper_bound {
                         0.0
                     } else {
-                        gaussian_edge(sigma, w_px, d)
+                        gaussian_edge(sigma, w_px, d) * (1.0 - src_a_raw)
                     }
                 }
                 StrokePosition::Inner => {
-                    if !inside {
+                    if blend_range <= 0.0 {
+                        if !inside {
+                            0.0
+                        } else {
+                            gaussian_edge(sigma, w_px, d)
+                        }
+                    } else if src_a_raw <= lower_bound {
                         0.0
-                    } else {
+                    } else if src_a_raw >= upper_bound {
                         gaussian_edge(sigma, w_px, d)
+                    } else {
+                        gaussian_edge(sigma, w_px, d) * (1.0 - src_a_raw)
                     }
                 }
                 StrokePosition::Center => {
                     let half_w = w_px * 0.5;
-                    gaussian_edge(sigma, half_w, d)
+                    if blend_range <= 0.0 {
+                        gaussian_edge(sigma, half_w, d)
+                    } else if src_a_raw <= lower_bound || src_a_raw >= upper_bound {
+                        0.0
+                    } else {
+                        gaussian_edge(sigma, half_w, d) * (1.0 - src_a_raw)
+                    }
                 }
             };
 
@@ -301,7 +333,6 @@ impl ZzzStroke {
                 (0.0, 0.0, 0.0)
             };
 
-            let out_idx = pixel_idx * 4;
             let src_r = src[out_idx] as f32 / 255.0;
             let src_g = src[out_idx + 1] as f32 / 255.0;
             let src_b = src[out_idx + 2] as f32 / 255.0;
@@ -342,34 +373,33 @@ impl ZzzStroke {
                         out[0] = (sr * 255.0).round() as u8;
                         out[1] = (sg * 255.0).round() as u8;
                         out[2] = (sb * 255.0).round() as u8;
-                        out[3] = (stencil_a * 255.0).round() as u8;
+                        out[3] = (stencil_a * src_opacity * 255.0).round() as u8;
                     } else {
                         out[0] = (blended_r * 255.0).round() as u8;
                         out[1] = (blended_g * 255.0).round() as u8;
                         out[2] = (blended_b * 255.0).round() as u8;
-                        out[3] = (stencil_a * 255.0).round() as u8;
+                        out[3] = (stencil_a * src_opacity * 255.0).round() as u8;
                     }
                 } else {
                     let inv = 1.0 - sa;
                     out[0] =
-                        ((blended_r * sa + src_r * inv).clamp(0.0, 1.0) * 255.0)
+                        ((blended_r * sa + src_r * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
                             .round() as u8;
                     out[1] =
-                        ((blended_g * sa + src_g * inv).clamp(0.0, 1.0) * 255.0)
+                        ((blended_g * sa + src_g * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
                             .round() as u8;
                     out[2] =
-                        ((blended_b * sa + src_b * inv).clamp(0.0, 1.0) * 255.0)
+                        ((blended_b * sa + src_b * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
                             .round() as u8;
-                    out[3] = src[out_idx + 3];
+                    out[3] = ((sa + src_a_raw * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
+                        .round() as u8;
                 }
             } else {
-                out[0] = (src_r * 255.0).round() as u8;
-                out[1] = (src_g * 255.0).round() as u8;
-                out[2] = (src_b * 255.0).round() as u8;
-                out[3] = src[out_idx + 3];
+                out[0] = (src_r * src_opacity * 255.0).round() as u8;
+                out[1] = (src_g * src_opacity * 255.0).round() as u8;
+                out[2] = (src_b * src_opacity * 255.0).round() as u8;
+                out[3] = (src_a_raw * src_opacity * 255.0).round() as u8;
             }
-
-            out[3] = (out[3] as f32 * src_opacity).round() as u8;
         });
 
         // Restore buffers to thread_local for reuse next frame

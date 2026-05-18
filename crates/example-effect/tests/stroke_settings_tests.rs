@@ -8,8 +8,8 @@ use example_effect::{StrokePosition, ZzzStrokeFullSettings};
 fn zzz_stroke_descriptors_count() {
     let list = SettingsList::<ZzzStrokeFullSettings>::new();
     let all: Vec<_> = list.all_descriptors().collect();
-    // 13 top-level + 12 gradient children = 25
-    assert_eq!(all.len(), 25);
+    // 13 top-level + 12 gradient children + 1 edge_blend = 26
+    assert_eq!(all.len(), 26);
 }
 
 #[test]
@@ -72,6 +72,7 @@ fn json_round_trip() {
     settings.stroke_color_r = 0.8;
     settings.stroke_color_g = 0.2;
     settings.stroke_color_b = 0.4;
+    settings.edge_blend = 0.5;
     settings.use_sharp_corners = true;
 
     let json = list.to_json_string(&settings).unwrap();
@@ -81,6 +82,7 @@ fn json_round_trip() {
     assert_eq!(parsed.stroke_color_r, 0.8);
     assert_eq!(parsed.stroke_color_g, 0.2);
     assert_eq!(parsed.stroke_color_b, 0.4);
+    assert_eq!(parsed.edge_blend, 0.5);
     assert!(parsed.use_sharp_corners);
 }
 
@@ -130,6 +132,7 @@ fn descriptor_labels() {
     assert!(labels.contains(&"Fill Mode"));
     assert!(labels.contains(&"Stroke Width"));
     assert!(labels.contains(&"Alpha Threshold"));
+    assert!(labels.contains(&"Edge Blend"));
     assert!(labels.contains(&"Blend Mode"));
     assert!(labels.contains(&"Gradient Settings"));
     assert!(labels.contains(&"Use Sharp Corners"));

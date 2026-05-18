@@ -115,6 +115,7 @@ pub struct ZzzStroke {
     pub stroke_color_b: f32,
     pub stroke_color_a: f32,
     pub alpha_threshold: f32,
+    pub edge_blend: f32,
     pub stroke_feathering: f32,
     pub source_opacity: f32,
     pub blend_mode: BlendMode,
@@ -134,6 +135,7 @@ impl Default for ZzzStroke {
             stroke_color_b: 1.0,
             stroke_color_a: 1.0,
             alpha_threshold: 0.5,
+            edge_blend: 1.0,
             stroke_feathering: 0.01,
             source_opacity: 1.0,
             blend_mode: BlendMode::Normal,
@@ -161,6 +163,7 @@ pub mod setting_id {
     pub const STROKE_COLOR_B:          SID = setting_id!(205, "stroke_color_b", stroke_color_b);
     pub const STROKE_COLOR_A:          SID = setting_id!(206, "stroke_color_a", stroke_color_a);
     pub const ALPHA_THRESHOLD:         SID = setting_id!(207, "alpha_threshold", alpha_threshold);
+    pub const EDGE_BLEND:              SID = setting_id!(225, "edge_blend", edge_blend);
     pub const STROKE_FEATHERING:       SID = setting_id!(208, "stroke_feathering", stroke_feathering);
     pub const SOURCE_OPACITY:          SID = setting_id!(209, "source_opacity", source_opacity);
     pub const BLEND_MODE:              SID = setting_id!(210, "blend_mode", blend_mode);
@@ -275,6 +278,12 @@ impl Settings for ZzzStrokeFullSettings {
                 description: Some("Alpha value above which pixels are considered inside the shape."),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::ALPHA_THRESHOLD,
+            },
+            SettingDescriptor {
+                label: "Edge Blend",
+                description: Some("Controls how the source edges blend with the stroke. 0 = hard edges, 1 = full blend."),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::EDGE_BLEND,
             },
             SettingDescriptor {
                 label: "Stroke Feathering",
