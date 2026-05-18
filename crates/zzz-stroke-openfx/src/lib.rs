@@ -214,6 +214,8 @@ unsafe extern "C" fn main_entry(
         Ok(())
     } else if action == kOfxActionInstanceChanged {
         action_instance_changed(effect, inArgs)
+    } else if action == kOfxImageEffectActionIsIdentity {
+        action_is_identity(effect, inArgs, outArgs)
     } else if action == kOfxImageEffectActionRender {
         action_render(effect, inArgs)
     } else {
@@ -412,7 +414,7 @@ unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResul
     let d = shared();
     let pi = d.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
     let ps = d.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
-    pi(outArgs, kOfxImageEffectFrameVarying.as_ptr(), 0, 1).ofx_ok()?;
+    pi(outArgs, kOfxImageEffectFrameVarying.as_ptr(), 0, 0).ofx_ok()?;
     ps(outArgs, kOfxImageEffectPropPreMultiplication.as_ptr(), 0, kOfxImageOpaque.as_ptr()).ofx_ok()?;
     Ok(())
 }
@@ -426,6 +428,38 @@ unsafe fn action_instance_changed(
     let mut r: c_int = 0;
     pg(inArgs, kOfxPropChangeReason.as_ptr(), 0, &mut r).ofx_ok()?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// IsIdentity
+// ---------------------------------------------------------------------------
+
+unsafe fn action_is_identity(
+    effect: OfxImageEffectHandle,
+    inArgs: OfxPropertySetHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    let d = shared();
+    let pss = d.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
+    let pgd = d.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+    let gps = d.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
+
+    let mut time: OfxTime = 0.0;
+    pgd(inArgs, kOfxPropTime.as_ptr(), 0, &mut time).ofx_ok()?;
+
+    let mut param_set: OfxParamSetHandle = ptr::null_mut();
+    gps(effect, &mut param_set).ofx_ok()?;
+
+    let mut settings = ZzzStrokeFullSettings::default();
+    apply_params(d, param_set, time, &mut settings)?;
+    let stroke: ZzzStroke = (&settings).into();
+
+    if stroke.is_identity() {
+        pss(outArgs, kOfxPropName.as_ptr(), 0, c"Source".as_ptr()).ofx_ok()?;
+        Ok(())
+    } else {
+        Err(OfxStat::kOfxStatReplyDefault)
+    }
 }
 
 // ---------------------------------------------------------------------------

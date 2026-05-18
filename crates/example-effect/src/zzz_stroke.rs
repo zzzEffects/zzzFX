@@ -30,6 +30,13 @@ thread_local! {
 }
 
 impl ZzzStroke {
+    pub fn is_identity(&self) -> bool {
+        let sw = self.stroke_width.clamp(0.0, 1.0);
+        let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
+        let src_opacity = self.source_opacity.clamp(0.0, 1.0);
+        (sw <= 0.0 || stroke_a <= 0.0) && src_opacity >= 1.0
+    }
+
     pub fn apply_effect(&self, src: &[u8], dst: &mut [u8], width: usize, height: usize) {
         let len = width * height * 4;
         assert!(src.len() >= len, "source buffer too small");
