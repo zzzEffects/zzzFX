@@ -178,7 +178,6 @@ pub trait SettingsEnum {}
 /// A fixed identifier that points to a given setting.
 #[derive(Debug, Clone)]
 pub struct SettingID<T: Settings> {
-    pub id: u32,
     pub name: &'static str,
     pub get: fn(settings: &T) -> AnySetting,
     pub set: fn(settings: &mut T, value: AnySetting) -> Result<(), GetSetFieldError>,
@@ -186,16 +185,13 @@ pub struct SettingID<T: Settings> {
 
 impl<T: Settings> std::hash::Hash for SettingID<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
         self.name.hash(state);
-        self.get.hash(state);
-        self.set.hash(state);
     }
 }
 
 impl<T: Settings> PartialEq for SettingID<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.name == other.name
+        self.name == other.name
     }
 }
 
@@ -203,20 +199,18 @@ impl<T: Settings> Eq for SettingID<T> {}
 
 impl<T: Settings> SettingID<T> {
     pub const fn new(
-        id: u32,
         name: &'static str,
         get: fn(settings: &T) -> AnySetting,
         set: fn(settings: &mut T, value: AnySetting) -> Result<(), GetSetFieldError>,
     ) -> Self {
-        Self { id, name, get, set }
+        Self { name, get, set }
     }
 }
 
 #[macro_export]
 macro_rules! setting_id {
-    ($id:expr, $name:expr, $($field_path:ident).+) => {
+    ($name:expr, $($field_path:ident).+) => {
         $crate::settings::SettingID::new(
-            $id,
             $name,
             |settings| $crate::settings::SettingField::upcast(settings.$($field_path).+),
             |settings, value| {
@@ -272,7 +266,7 @@ impl Display for GetSetFieldError {
                 "Tried to get or set field with type {requested_type}, but actual type is \
                  {actual_type}"
             ),
-            GetSetFieldError::NoSuchID(id) => write!(f, "No such field with ID {id}"),
+            GetSetFieldError::NoSuchID(name) => write!(f, "No such field with name {name}"),
         }
     }
 }

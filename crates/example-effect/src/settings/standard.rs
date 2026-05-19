@@ -73,15 +73,15 @@ pub mod setting_id {
     use super::ExampleEffectFullSettings;
     type SID = SettingID<ExampleEffectFullSettings>;
 
-    pub const BRIGHTNESS:     SID = setting_id!(0, "brightness", brightness);
-    pub const INVERT_COLORS:  SID = setting_id!(1, "invert_colors", invert_colors);
-    pub const TINT_R:         SID = setting_id!(2, "tint_r", tint_r);
-    pub const TINT_G:         SID = setting_id!(3, "tint_g", tint_g);
-    pub const TINT_B:         SID = setting_id!(4, "tint_b", tint_b);
-    pub const ADVANCED:       SID = setting_id!(5, "advanced", advanced.enabled);
-    pub const CONTRAST:       SID = setting_id!(6, "contrast", advanced.settings.contrast);
-    pub const SATURATION:     SID = setting_id!(7, "saturation", advanced.settings.saturation);
-    pub const COLOR_PRESET:   SID = setting_id!(8, "color_preset", color_preset);
+    pub const BRIGHTNESS:     SID = setting_id!("brightness", brightness);
+    pub const INVERT_COLORS:  SID = setting_id!("invert_colors", invert_colors);
+    pub const TINT_R:         SID = setting_id!("tint_r", tint_r);
+    pub const TINT_G:         SID = setting_id!("tint_g", tint_g);
+    pub const TINT_B:         SID = setting_id!("tint_b", tint_b);
+    pub const ADVANCED:       SID = setting_id!("advanced", advanced.enabled);
+    pub const CONTRAST:       SID = setting_id!("contrast", advanced.settings.contrast);
+    pub const SATURATION:     SID = setting_id!("saturation", advanced.settings.saturation);
+    pub const COLOR_PRESET:   SID = setting_id!("color_preset", color_preset);
 }
 
 // ---------------------------------------------------------------------------

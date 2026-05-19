@@ -105,13 +105,13 @@ impl SharedData {
         let mut menu_item_strings = HashMap::new();
         for descriptor in settings_list.all_descriptors() {
             let id = &descriptor.id;
-            let id_str = CString::new(descriptor.id.id.to_string()).unwrap();
+            let id_str = CString::new(descriptor.id.name).unwrap();
             let label = CString::new(descriptor.label).unwrap();
             let description = descriptor
                 .description
                 .map(|desc| CString::new(desc).unwrap());
             let group_name = if let SettingKind::Group { .. } = descriptor.kind {
-                Some(CString::new(format!("{}_group", descriptor.id.id)).unwrap())
+                Some(CString::new(format!("{}_group", descriptor.id.name)).unwrap())
             } else {
                 None
             };
@@ -1027,13 +1027,18 @@ unsafe fn apply_params(
     )
     .ofx_ok()?;
 
+    let td = &data.settings_list.setting_descriptors;
+    let find_id = |name: &str| -> &SettingID<SolidColorBlendFullSettings> {
+        &td.iter().find(|d| d.id.name == name).unwrap().id
+    };
+
     let mut r: f64 = 0.0; let mut g: f64 = 0.0;
     let mut b: f64 = 0.0; let mut a: f64 = 0.0;
     paramGetValueAtTime(rgba_param, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-    dst.set_field::<f32>(&data.settings_list.setting_descriptors[0].id, r as f32).unwrap();
-    dst.set_field::<f32>(&data.settings_list.setting_descriptors[1].id, g as f32).unwrap();
-    dst.set_field::<f32>(&data.settings_list.setting_descriptors[2].id, b as f32).unwrap();
-    dst.set_field::<f32>(&data.settings_list.setting_descriptors[3].id, a as f32).unwrap();
+    dst.set_field::<f32>(find_id("color_r"), r as f32).unwrap();
+    dst.set_field::<f32>(find_id("color_g"), g as f32).unwrap();
+    dst.set_field::<f32>(find_id("color_b"), b as f32).unwrap();
+    dst.set_field::<f32>(find_id("color_a"), a as f32).unwrap();
 
     // --- Read blend_mode choice param ---
     let mut mode_param: OfxParamHandle = ptr::null_mut();
@@ -1047,10 +1052,10 @@ unsafe fn apply_params(
 
     let mut selected_idx: c_int = 0;
     paramGetValueAtTime(mode_param, time, &mut selected_idx).ofx_ok()?;
-    let blend_mode_id = &data.settings_list.setting_descriptors[4]; // blend_mode is 5th descriptor
-    if let SettingKind::Enumeration { options } = &blend_mode_id.kind {
+    let blend_mode_desc = td.iter().find(|d| d.id.name == "blend_mode").unwrap();
+    if let SettingKind::Enumeration { options } = &blend_mode_desc.kind {
         dst.set_field::<EnumValue>(
-            &blend_mode_id.id,
+            &blend_mode_desc.id,
             EnumValue(options[selected_idx as usize].index),
         ).unwrap();
     }

@@ -44,7 +44,11 @@ trait IDExt {
 
 impl<T: Settings> IDExt for SettingID<T> {
     fn ae_id(&self) -> i32 {
-        self.id as i32 + 1
+        let mut hash: u32 = 5381;
+        for &b in self.name.as_bytes() {
+            hash = hash.wrapping_mul(33).wrapping_add(b as u32);
+        }
+        (hash & 0x7FFFFFFF) as i32
     }
 }
 

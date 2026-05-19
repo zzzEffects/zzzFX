@@ -36,22 +36,23 @@ static PLUGIN_INFO: OnceLock<OfxPlugin> = OnceLock::new();
 static SHARED_DATA: OnceLock<SharedData> = OnceLock::new();
 
 // Native OFX parameter names for grouped params
-const STROKE_COLOR_PARAM: &CStr = c"strokeColor";
-const GRADIENT_START_POS_PARAM: &CStr = c"gradientStartPos";
-const GRADIENT_START_COLOR_PARAM: &CStr = c"gradientStartColor";
-const GRADIENT_END_POS_PARAM: &CStr = c"gradientEndPos";
-const GRADIENT_END_COLOR_PARAM: &CStr = c"gradientEndColor";
-const GRADIENT_GROUP_PARAM: &CStr = c"gradientGroup";
+const STROKE_COLOR_PARAM: &CStr = c"stroke_color";
+const GRADIENT_START_POS_PARAM: &CStr = c"gradient_start_pos";
+const GRADIENT_START_COLOR_PARAM: &CStr = c"gradient_start_color";
+const GRADIENT_END_POS_PARAM: &CStr = c"gradient_end_pos";
+const GRADIENT_END_COLOR_PARAM: &CStr = c"gradient_end_color";
+const GRADIENT_GROUP_PARAM: &CStr = c"gradient_group";
 
-// Descriptor IDs handled by native params (not created as generic params)
-fn is_native_grouped(id: u32) -> bool {
+/// Returns true if the parameter with the given name is handled by a native
+/// OFX param type (RGBA or Double2D) rather than a generic single param.
+fn is_native_grouped_name(name: &str) -> bool {
     matches!(
-        id,
-        203 | 204 | 205 | 206 |        // stroke_color → RGBA
-        213 | 214 |                     // gradient_start → Double2D
-        215 | 216 | 217 | 218 |         // gradient_start_color → RGBA
-        219 | 220 |                     // gradient_end → Double2D
-        221 | 222 | 223 | 224           // gradient_end_color → RGBA
+        name,
+        "stroke_color_r" | "stroke_color_g" | "stroke_color_b" | "stroke_color_a" |
+        "gradient_start_x" | "gradient_start_y" |
+        "gradient_start_color_r" | "gradient_start_color_g" | "gradient_start_color_b" | "gradient_start_color_a" |
+        "gradient_end_x" | "gradient_end_y" |
+        "gradient_end_color_r" | "gradient_end_color_g" | "gradient_end_color_b" | "gradient_end_color_a"
     )
 }
 
@@ -111,11 +112,11 @@ impl SharedData {
         let mut menu_item_strings = HashMap::new();
         for descriptor in settings_list.all_descriptors() {
             let id = &descriptor.id;
-            let id_str = CString::new(descriptor.id.id.to_string()).unwrap();
+            let id_str = CString::new(descriptor.id.name).unwrap();
             let label = CString::new(descriptor.label).unwrap();
             let description = descriptor.description.map(|d| CString::new(d).unwrap());
             let group_name = if let SettingKind::Group { .. } = descriptor.kind {
-                Some(CString::new(format!("{}_group", descriptor.id.id)).unwrap())
+                Some(CString::new(format!("{}_group", descriptor.id.name)).unwrap())
             } else {
                 None
             };
@@ -283,18 +284,18 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     gp(desc, &mut param_set).ofx_ok()?;
 
-    // --- Block A: Params before Stroke Color (IDs 200-202) ---
+    // --- Block A: Params before Stroke Color ---
     for desc in d.settings_list.setting_descriptors.iter() {
-        if desc.id.id > 202 {
+        if desc.id.name == "stroke_color_r" {
             break;
         }
-        if is_native_grouped(desc.id.id) {
+        if is_native_grouped_name(desc.id.name) {
             continue;
         }
         define_single_param(d, param_set, desc, &defaults, c"")?;
     }
 
-    // --- Native RGBA: Stroke Color (descriptors 203-206) ---
+    // --- Native RGBA: Stroke Color ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
         pdef(param_set, kOfxParamTypeRGBA.as_ptr(), STROKE_COLOR_PARAM.as_ptr(), &mut pp).ofx_ok()?;
@@ -306,12 +307,17 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
     }
 
-    // --- Block C: Params after Stroke Color (IDs 207+) ---
+    // --- Block C: Params from alpha_threshold onwards ---
+    let mut after_stroke_color = false;
     for desc in d.settings_list.setting_descriptors.iter() {
-        if desc.id.id < 207 {
+        if desc.id.name == "stroke_color_r" {
+            after_stroke_color = true;
             continue;
         }
-        if is_native_grouped(desc.id.id) {
+        if !after_stroke_color || desc.id.name == "stroke_color_g" || desc.id.name == "stroke_color_b" || desc.id.name == "stroke_color_a" {
+            continue;
+        }
+        if is_native_grouped_name(desc.id.name) {
             continue;
         }
         if let SettingKind::Group { .. } = &desc.kind {
@@ -719,80 +725,86 @@ unsafe fn apply_params(
     let pgh = data.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = data.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
+    let td = &data.settings_list.setting_descriptors;
+    let find_id = |name: &str| -> SettingID<ZzzStrokeFullSettings> {
+        td.iter().find(|d| d.id.name == name).unwrap().id.clone()
+    };
+
     // Collect gradient children IDs from the group descriptor
     let grad_children = {
-        let td = &data.settings_list.setting_descriptors;
-        let group_desc = td.iter().find(|d| d.id.id == 211).unwrap();
+        let group_desc = td.iter().find(|d| d.id.name == "gradient").unwrap();
         if let SettingKind::Group { children } = &group_desc.kind {
             children.clone()
         } else {
             unreachable!()
         }
     };
+    let find_child = |name: &str| -> SettingID<ZzzStrokeFullSettings> {
+        grad_children.iter().find(|c| c.id.name == name).unwrap().id.clone()
+    };
 
-    // --- Native RGBA: Stroke Color (→ descriptors 203-206) ---
+    // --- Native RGBA: Stroke Color ---
     {
-        let td = &data.settings_list.setting_descriptors;
         let mut p: OfxParamHandle = ptr::null_mut();
         pgh(param_set, STROKE_COLOR_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&td[3].id, r as f32).unwrap();
-        dst.set_field::<f32>(&td[4].id, g as f32).unwrap();
-        dst.set_field::<f32>(&td[5].id, b as f32).unwrap();
-        dst.set_field::<f32>(&td[6].id, a as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_r"), r as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_g"), g as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_b"), b as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_a"), a as f32).unwrap();
     }
 
-    // --- Native Double2D: Gradient Start (→ descriptors 213-214) ---
+    // --- Native Double2D: Gradient Start ---
     {
         let mut p: OfxParamHandle = ptr::null_mut();
         pgh(param_set, GRADIENT_START_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&grad_children[0].id, x as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[1].id, y as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_x"), x as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_y"), y as f32).unwrap();
     }
 
-    // --- Native RGBA: Gradient Start Color (→ descriptors 215-218) ---
+    // --- Native RGBA: Gradient Start Color ---
     {
         let mut p: OfxParamHandle = ptr::null_mut();
         pgh(param_set, GRADIENT_START_COLOR_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&grad_children[2].id, r as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[3].id, g as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[4].id, b as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[5].id, a as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_r"), r as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_g"), g as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_b"), b as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_a"), a as f32).unwrap();
     }
 
-    // --- Native Double2D: Gradient End (→ descriptors 219-220) ---
+    // --- Native Double2D: Gradient End ---
     {
         let mut p: OfxParamHandle = ptr::null_mut();
         pgh(param_set, GRADIENT_END_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&grad_children[6].id, x as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[7].id, y as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_x"), x as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_y"), y as f32).unwrap();
     }
 
-    // --- Native RGBA: Gradient End Color (→ descriptors 221-224) ---
+    // --- Native RGBA: Gradient End Color ---
     {
         let mut p: OfxParamHandle = ptr::null_mut();
         pgh(param_set, GRADIENT_END_COLOR_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&grad_children[8].id, r as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[9].id, g as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[10].id, b as f32).unwrap();
-        dst.set_field::<f32>(&grad_children[11].id, a as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_r"), r as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_g"), g as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_b"), b as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_a"), a as f32).unwrap();
     }
 
     // --- Read remaining generic params (skip grouped + group checkbox handled separately) ---
     for desc in data.settings_list.setting_descriptors.iter() {
-        if is_native_grouped(desc.id.id) {
+        if is_native_grouped_name(desc.id.name) {
             continue;
         }
         if let SettingKind::Group { .. } = &desc.kind {

@@ -146,7 +146,7 @@ impl Default for ZzzStroke {
 }
 
 // ---------------------------------------------------------------------------
-// Setting IDs (200–224 range, avoids collisions with 0–8 and 100–104)
+// Setting IDs
 // ---------------------------------------------------------------------------
 
 #[rustfmt::skip]
@@ -155,32 +155,32 @@ pub mod setting_id {
     use super::ZzzStrokeFullSettings;
     type SID = SettingID<ZzzStrokeFullSettings>;
 
-    pub const STROKE_POSITION:         SID = setting_id!(200, "stroke_position", stroke_position);
-    pub const FILL_MODE:               SID = setting_id!(201, "fill_mode", fill_mode);
-    pub const STROKE_WIDTH:            SID = setting_id!(202, "stroke_width", stroke_width);
-    pub const STROKE_COLOR_R:          SID = setting_id!(203, "stroke_color_r", stroke_color_r);
-    pub const STROKE_COLOR_G:          SID = setting_id!(204, "stroke_color_g", stroke_color_g);
-    pub const STROKE_COLOR_B:          SID = setting_id!(205, "stroke_color_b", stroke_color_b);
-    pub const STROKE_COLOR_A:          SID = setting_id!(206, "stroke_color_a", stroke_color_a);
-    pub const ALPHA_THRESHOLD:         SID = setting_id!(207, "alpha_threshold", alpha_threshold);
-    pub const EDGE_BLEND:              SID = setting_id!(225, "edge_blend", edge_blend);
-    pub const STROKE_FEATHERING:       SID = setting_id!(208, "stroke_feathering", stroke_feathering);
-    pub const SOURCE_OPACITY:          SID = setting_id!(209, "source_opacity", source_opacity);
-    pub const BLEND_MODE:              SID = setting_id!(210, "blend_mode", blend_mode);
-    pub const GRADIENT:                SID = setting_id!(211, "gradient", gradient.enabled);
-    pub const USE_SHARP_CORNERS:       SID = setting_id!(212, "use_sharp_corners", use_sharp_corners);
-    pub const GRADIENT_START_X:        SID = setting_id!(213, "gradient_start_x", gradient.settings.start_x);
-    pub const GRADIENT_START_Y:        SID = setting_id!(214, "gradient_start_y", gradient.settings.start_y);
-    pub const GRADIENT_START_COLOR_R:  SID = setting_id!(215, "gradient_start_color_r", gradient.settings.start_color_r);
-    pub const GRADIENT_START_COLOR_G:  SID = setting_id!(216, "gradient_start_color_g", gradient.settings.start_color_g);
-    pub const GRADIENT_START_COLOR_B:  SID = setting_id!(217, "gradient_start_color_b", gradient.settings.start_color_b);
-    pub const GRADIENT_START_COLOR_A:  SID = setting_id!(218, "gradient_start_color_a", gradient.settings.start_color_a);
-    pub const GRADIENT_END_X:          SID = setting_id!(219, "gradient_end_x", gradient.settings.end_x);
-    pub const GRADIENT_END_Y:          SID = setting_id!(220, "gradient_end_y", gradient.settings.end_y);
-    pub const GRADIENT_END_COLOR_R:    SID = setting_id!(221, "gradient_end_color_r", gradient.settings.end_color_r);
-    pub const GRADIENT_END_COLOR_G:    SID = setting_id!(222, "gradient_end_color_g", gradient.settings.end_color_g);
-    pub const GRADIENT_END_COLOR_B:    SID = setting_id!(223, "gradient_end_color_b", gradient.settings.end_color_b);
-    pub const GRADIENT_END_COLOR_A:    SID = setting_id!(224, "gradient_end_color_a", gradient.settings.end_color_a);
+    pub const STROKE_POSITION:         SID = setting_id!("stroke_position", stroke_position);
+    pub const FILL_MODE:               SID = setting_id!("fill_mode", fill_mode);
+    pub const STROKE_WIDTH:            SID = setting_id!("stroke_width", stroke_width);
+    pub const STROKE_COLOR_R:          SID = setting_id!("stroke_color_r", stroke_color_r);
+    pub const STROKE_COLOR_G:          SID = setting_id!("stroke_color_g", stroke_color_g);
+    pub const STROKE_COLOR_B:          SID = setting_id!("stroke_color_b", stroke_color_b);
+    pub const STROKE_COLOR_A:          SID = setting_id!("stroke_color_a", stroke_color_a);
+    pub const ALPHA_THRESHOLD:         SID = setting_id!("alpha_threshold", alpha_threshold);
+    pub const EDGE_BLEND:              SID = setting_id!("edge_blend", edge_blend);
+    pub const STROKE_FEATHERING:       SID = setting_id!("stroke_feathering", stroke_feathering);
+    pub const SOURCE_OPACITY:          SID = setting_id!("source_opacity", source_opacity);
+    pub const BLEND_MODE:              SID = setting_id!("blend_mode", blend_mode);
+    pub const GRADIENT:                SID = setting_id!("gradient", gradient.enabled);
+    pub const USE_SHARP_CORNERS:       SID = setting_id!("use_sharp_corners", use_sharp_corners);
+    pub const GRADIENT_START_X:        SID = setting_id!("gradient_start_x", gradient.settings.start_x);
+    pub const GRADIENT_START_Y:        SID = setting_id!("gradient_start_y", gradient.settings.start_y);
+    pub const GRADIENT_START_COLOR_R:  SID = setting_id!("gradient_start_color_r", gradient.settings.start_color_r);
+    pub const GRADIENT_START_COLOR_G:  SID = setting_id!("gradient_start_color_g", gradient.settings.start_color_g);
+    pub const GRADIENT_START_COLOR_B:  SID = setting_id!("gradient_start_color_b", gradient.settings.start_color_b);
+    pub const GRADIENT_START_COLOR_A:  SID = setting_id!("gradient_start_color_a", gradient.settings.start_color_a);
+    pub const GRADIENT_END_X:          SID = setting_id!("gradient_end_x", gradient.settings.end_x);
+    pub const GRADIENT_END_Y:          SID = setting_id!("gradient_end_y", gradient.settings.end_y);
+    pub const GRADIENT_END_COLOR_R:    SID = setting_id!("gradient_end_color_r", gradient.settings.end_color_r);
+    pub const GRADIENT_END_COLOR_G:    SID = setting_id!("gradient_end_color_g", gradient.settings.end_color_g);
+    pub const GRADIENT_END_COLOR_B:    SID = setting_id!("gradient_end_color_b", gradient.settings.end_color_b);
+    pub const GRADIENT_END_COLOR_A:    SID = setting_id!("gradient_end_color_a", gradient.settings.end_color_a);
 }
 
 // ---------------------------------------------------------------------------

@@ -62,11 +62,11 @@ pub mod setting_id {
     use super::SolidColorBlendFullSettings;
     type SID = SettingID<SolidColorBlendFullSettings>;
 
-    pub const COLOR_R:    SID = setting_id!(100, "color_r", color_r);
-    pub const COLOR_G:    SID = setting_id!(101, "color_g", color_g);
-    pub const COLOR_B:    SID = setting_id!(102, "color_b", color_b);
-    pub const COLOR_A:    SID = setting_id!(103, "color_a", color_a);
-    pub const BLEND_MODE: SID = setting_id!(104, "blend_mode", blend_mode);
+    pub const COLOR_R:    SID = setting_id!("color_r", color_r);
+    pub const COLOR_G:    SID = setting_id!("color_g", color_g);
+    pub const COLOR_B:    SID = setting_id!("color_b", color_b);
+    pub const COLOR_A:    SID = setting_id!("color_a", color_a);
+    pub const BLEND_MODE: SID = setting_id!("blend_mode", blend_mode);
 }
 
 // ---------------------------------------------------------------------------
