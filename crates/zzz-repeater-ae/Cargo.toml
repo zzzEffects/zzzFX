@@ -1,0 +1,19 @@
+[package]
+name = "zzz-repeater-ae-plugin"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR ISC OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(any(windows, target_os="macos"))'.dependencies]
+after-effects = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
+premiere = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
+example-effect = { path = "../example-effect" }
+
+[build-dependencies]
+pipl = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
+
+[lints]
+workspace = true
