@@ -589,6 +589,10 @@ unsafe fn action_render(
         .property_suite
         .propGetDouble
         .ok_or(OfxStat::kOfxStatFailed)?;
+    let propGetString = data
+        .property_suite
+        .propGetString
+        .ok_or(OfxStat::kOfxStatFailed)?;
 
     let getParamSet = data
         .image_effect_suite
@@ -642,25 +646,104 @@ unsafe fn action_render(
     let src_stride = srcRowBytes.max(0) as usize;
     let dst_stride = dstRowBytes.max(0) as usize;
 
-    // Copy from source to contiguous buffer, apply effect, copy to dest
-    let row_bytes = width * 4;
-    let total = row_bytes * height;
-    let mut src_buf = vec![0u8; total];
-    let mut dst_buf = vec![0u8; total];
-    for y in 0..height {
-        ptr::copy_nonoverlapping(
-            (srcPtr as *const u8).add(y * src_stride),
-            src_buf.as_mut_ptr().add(y * row_bytes),
-            row_bytes,
-        );
+    // Determine pixel depth from the source image
+    let mut depth_ptr: *mut c_char = ptr::null_mut();
+    let depth = (|| {
+        propGetString(
+            srcImg,
+            kOfxImageEffectPropPixelDepth.as_ptr(),
+            0,
+            &mut depth_ptr,
+        )
+        .ofx_ok()
+        .ok()?;
+        let s = CStr::from_ptr(depth_ptr);
+        if s == kOfxBitDepthFloat {
+            Some(16usize) // 4 bytes/component × 4 components
+        } else if s == kOfxBitDepthShort {
+            Some(8usize) // 2 bytes/component × 4 components
+        } else if s == kOfxBitDepthByte {
+            Some(4usize) // 1 byte/component × 4 components
+        } else {
+            None
+        }
+    })()
+    .unwrap_or(4); // default to Byte on unrecognized depth
+
+    let row_bytes_u8 = width * 4;
+    let total_u8 = row_bytes_u8 * height;
+    let mut src_buf = vec![0u8; total_u8];
+    let mut dst_buf = vec![0u8; total_u8];
+
+    match depth {
+        4 => {
+            // Byte: direct copy — fast path
+            for y in 0..height {
+                ptr::copy_nonoverlapping(
+                    (srcPtr as *const u8).add(y * src_stride),
+                    src_buf.as_mut_ptr().add(y * row_bytes_u8),
+                    row_bytes_u8,
+                );
+            }
+        }
+        8 => {
+            // Short (u16): convert to u8 via (v * 255 + 32767) / 65535
+            for y in 0..height {
+                let host_row = (srcPtr as *const u8).add(y * src_stride) as *const u16;
+                let u8_row = src_buf.as_mut_ptr().add(y * row_bytes_u8);
+                for x in 0..(width * 4) {
+                    let v = *host_row.add(x) as u32;
+                    *u8_row.add(x) = ((v * 255 + 32767) / 65535) as u8;
+                }
+            }
+        }
+        _ => {
+            // Float (f32): convert to u8 via clamp(0,1) * 255 + round
+            for y in 0..height {
+                let host_row = (srcPtr as *const u8).add(y * src_stride) as *const f32;
+                let u8_row = src_buf.as_mut_ptr().add(y * row_bytes_u8);
+                for x in 0..(width * 4) {
+                    let v = *host_row.add(x);
+                    *u8_row.add(x) = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                }
+            }
+        }
     }
+
     blend.apply_effect(&src_buf, &mut dst_buf, width, height);
-    for y in 0..height {
-        ptr::copy_nonoverlapping(
-            dst_buf.as_ptr().add(y * row_bytes),
-            (dstPtr as *mut u8).add(y * dst_stride),
-            row_bytes,
-        );
+
+    match depth {
+        4 => {
+            // Byte: direct copy back — fast path
+            for y in 0..height {
+                ptr::copy_nonoverlapping(
+                    dst_buf.as_ptr().add(y * row_bytes_u8),
+                    (dstPtr as *mut u8).add(y * dst_stride),
+                    row_bytes_u8,
+                );
+            }
+        }
+        8 => {
+            // u8 to Short (u16): v * 257 (i.e. (v << 8) | v)
+            for y in 0..height {
+                let u8_row = dst_buf.as_ptr().add(y * row_bytes_u8);
+                let host_row = (dstPtr as *mut u8).add(y * dst_stride) as *mut u16;
+                for x in 0..(width * 4) {
+                    let v = *u8_row.add(x) as u16;
+                    *host_row.add(x) = (v << 8) | v;
+                }
+            }
+        }
+        _ => {
+            // u8 to Float (f32): v / 255.0
+            for y in 0..height {
+                let u8_row = dst_buf.as_ptr().add(y * row_bytes_u8);
+                let host_row = (dstPtr as *mut u8).add(y * dst_stride) as *mut f32;
+                for x in 0..(width * 4) {
+                    *host_row.add(x) = *u8_row.add(x) as f32 / 255.0;
+                }
+            }
+        }
     }
 
     clipReleaseImage(srcImg).ofx_ok()?;
