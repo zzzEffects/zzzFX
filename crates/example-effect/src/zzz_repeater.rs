@@ -31,6 +31,19 @@ impl super::ZzzRepeater {
             return;
         }
 
+        // GPU first — try wgpu compute; if unavailable or panics, fall through to CPU.
+        // catch_unwind prevents Rust panics from unwinding into the host's C FFI.
+        const MAX_GPU_LAYERS: usize = 32;
+        if layers.len() <= MAX_GPU_LAYERS {
+            let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::gpu::repeater::try_repeater_gpu_render(self, layers, dst, width, height)
+            }));
+            match gpu_result {
+                Ok(Ok(true)) => return,
+                _ => {} // GPU unavailable, errored, or panicked — fall through to CPU
+            }
+        }
+
         // Precompute layer ordering: whether to iterate oldest→newest or newest→oldest.
         // Above = old at bottom, new on top → process bottom-to-top (index 0..n)
         // Below = new at bottom, old on top → process bottom-to-top (index n-1..0)
