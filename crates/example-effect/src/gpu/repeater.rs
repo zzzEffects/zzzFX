@@ -192,15 +192,37 @@ pub fn try_repeater_gpu_render(
         guard.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    let staging_slice = guard.bufs.staging_buf.slice(..image_size);
-    staging_slice.map_async(wgpu::MapMode::Read, |_| {});
+    // Wait for the copy to complete before mapping
     let _ = guard.device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
     });
-    let mapped = staging_slice.get_mapped_range();
-    dst[..image_size as usize].copy_from_slice(&mapped);
-    drop(mapped);
+
+    let staging_slice = guard.bufs.staging_buf.slice(..image_size);
+    let (tx, rx) = std::sync::mpsc::channel();
+    staging_slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+
+    // Block until the map callback fires (must happen after a poll)
+    let _ = guard.device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+
+    let map_result = rx
+        .recv()
+        .map_err(|_| "GPU staging buffer map callback dropped".to_string())?;
+
+    if let Err(e) = map_result {
+        return Err(format!("GPU staging buffer map failed: {:?}", e));
+    }
+
+    {
+        let mapped = staging_slice.get_mapped_range();
+        dst[..image_size as usize].copy_from_slice(&mapped);
+    }
+
     guard.bufs.staging_buf.unmap();
 
     Ok(true)

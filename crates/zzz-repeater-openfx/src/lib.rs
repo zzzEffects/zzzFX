@@ -16,7 +16,7 @@ use std::{
 };
 
 use example_effect::{
-    ZzzRepeater, ZzzRepeaterFullSettings,
+    ZzzRepeater, ZzzRepeaterFullSettings, ZzzStrokeBlendMode,
     settings::{
         EnumValue, SettingDescriptor, SettingID, SettingKind, Settings, SettingsList,
     },
@@ -199,6 +199,8 @@ unsafe extern "C" fn main_entry(
         action_get_regions_of_interest(effect, inArgs, outArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
         action_get_clip_preferences(outArgs)
+    } else if action == kOfxImageEffectActionGetTimeDomain {
+        action_get_time_domain(inArgs, outArgs)
     } else if action == kOfxActionCreateInstance || action == kOfxActionDestroyInstance {
         Ok(())
     } else if action == kOfxActionInstanceChanged {
@@ -246,6 +248,10 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
     ps(ep, kOfxImageEffectPluginRenderThreadSafety.as_ptr(), 0, kOfxImageEffectRenderFullySafe.as_ptr()).ofx_ok()?;
     pi(ep, kOfxImageEffectPluginPropHostFrameThreading.as_ptr(), 0, 0).ofx_ok()?;
     pi(ep, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 0).ofx_ok()?;
+    // Signal that this effect needs random temporal access to source clips.
+    // Required by the OFX spec for kOfxImageEffectActionGetTimeDomain to be
+    // called, and prevents host-side caching based solely on parameter values.
+    pi(ep, kOfxImageEffectPropTemporalClipAccess.as_ptr(), 0, 1).ofx_ok()?;
     Ok(())
 }
 
@@ -339,6 +345,40 @@ unsafe fn action_get_regions_of_interest(
     Ok(())
 }
 
+unsafe fn action_get_time_domain(
+    inArgs: OfxPropertySetHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    let d = shared();
+    let pg = d.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+    let psn = d.property_suite.propSetDoubleN.ok_or(OfxStat::kOfxStatFailed)?;
+
+    let mut t: OfxTime = 0.0;
+    pg(inArgs, kOfxPropTime.as_ptr(), 0, &mut t).ofx_ok()?;
+
+    // Declare that we may access Source frames from time 0 up to the
+    // current render time. This is conservative but correct: the original
+    // layer accesses max(0, t - timeOffset), and repeat layers access
+    // kv + t - kt which falls in [0, t] for typical kv=0 keyframes.
+    //
+    // Implementing this action in combination with
+    // kOfxImageEffectPropTemporalClipAccess signals to the host (e.g.
+    // VEGAS Pro) that our output depends on source content across a
+    // time range, not just on current parameter values. This prevents
+    // hosts from incorrectly caching rendered frames when parameter
+    // values happen to be unchanged between keyframes.
+    let mut range = [0.0, t];
+    psn(
+        outArgs,
+        c"OfxImageClipPropFrameRange_Source".as_ptr(),
+        2,
+        range.as_mut_ptr() as *mut _,
+    )
+    .ofx_ok()?;
+
+    Ok(())
+}
+
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
     let d = shared();
     let pi = d.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
@@ -406,7 +446,26 @@ unsafe fn action_is_identity(
         true
     };
 
-    if !has_active_keyframes && settings.time_offset == 0.0 {
+    // Identity only when ALL of these conditions are met:
+    //   - No keyframes on Time Offset at t > 0 (no repeat layers)
+    //   - time_offset == 0 (original layer shows current source frame)
+    //   - position == (0.5, 0.5) (center, no offset)
+    //   - rotation == 0 (no rotation)
+    //   - blend_mode == Normal (passthrough blending)
+    //   - layer_order == Above (only one layer, order irrelevant, but be explicit)
+    //
+    // This is the ONLY configuration where the output is guaranteed
+    // identical to the source. A more lax check (e.g. ignoring position
+    // or blend mode) would cause the host to incorrectly skip rendering,
+    // producing visible "flash frame" artifacts in VEGAS Pro and other
+    // hosts that cache based on parameter values.
+    if !has_active_keyframes
+        && settings.time_offset == 0.0
+        && settings.position_x == 0.5
+        && settings.position_y == 0.5
+        && settings.rotation == 0.0
+        && settings.blend_mode == ZzzStrokeBlendMode::Normal
+    {
         pss(outArgs, kOfxPropName.as_ptr(), 0, c"Source".as_ptr()).ofx_ok()?;
         Ok(())
     } else {
