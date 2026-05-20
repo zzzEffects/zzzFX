@@ -1,4 +1,5 @@
 pub mod repeater;
+pub mod sprite_sheet;
 
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Mutex, OnceLock};
 

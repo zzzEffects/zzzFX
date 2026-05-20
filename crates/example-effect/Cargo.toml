@@ -14,9 +14,7 @@ rayon = "1.10"
 sval = { version = "2.14.1", features = ["std"] }
 sval_json = { version = "2.14.1", features = ["std"] }
 wgpu = { version = "29", features = ["wgsl"] }
-
-[dev-dependencies]
-image = { version = "0.25.1", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif", "ico"] }
 
 [lints]
 workspace = true

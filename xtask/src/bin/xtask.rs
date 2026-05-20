@@ -3,7 +3,7 @@
 
 use std::process;
 
-use xtask::{build_ofx_plugin, build_zzzrepeater_ofx_plugin, build_zzzstroke_ofx_plugin, macos_ae_plugin, macos_zzzrepeater_ae_plugin, macos_zzzstroke_ae_plugin};
+use xtask::{build_ofx_plugin, build_zzzrepeater_ofx_plugin, build_zzzsprite_sheet_ofx_plugin, build_zzzstroke_ofx_plugin, macos_ae_plugin, macos_zzzrepeater_ae_plugin, macos_zzzstroke_ae_plugin};
 
 fn main() {
     let cmd = clap::Command::new("xtask")
@@ -11,6 +11,7 @@ fn main() {
         .subcommand(build_ofx_plugin::command())
         .subcommand(build_zzzrepeater_ofx_plugin::command())
         .subcommand(build_zzzstroke_ofx_plugin::command())
+        .subcommand(build_zzzsprite_sheet_ofx_plugin::command())
         .subcommand(macos_ae_plugin::command())
         .subcommand(macos_zzzrepeater_ae_plugin::command())
         .subcommand(macos_zzzstroke_ae_plugin::command());
@@ -37,6 +38,9 @@ fn main() {
         }
         "build-zzzstroke-ofx-plugin" => {
             build_zzzstroke_ofx_plugin::main(args).unwrap();
+        }
+        "build-zzzsprite-sheet-ofx-plugin" => {
+            build_zzzsprite_sheet_ofx_plugin::main(args).unwrap();
         }
         _ => {
             println!("Invalid xtask: {task}");
