@@ -1,0 +1,21 @@
+[package]
+name = "zzzfx-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR ISC OR Apache-2.0"
+
+[dependencies]
+effect-settings = { path = "../effect-settings" }
+example-effect-macros = { path = "../macros" }
+num_enum = { version = "0.7.5", default-features = false }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+rayon = "1.10"
+wgpu = { version = "29", features = ["wgsl"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif", "ico"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+trybuild = "1.0"

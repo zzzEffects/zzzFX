@@ -366,9 +366,9 @@ impl Plugin {
                     });
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label,
+                        descriptor.label_key.en(),
                         ae::PopupDef::setup(|p| {
-                            p.set_options(&options.iter().map(|o| o.label).collect::<Vec<_>>());
+                            p.set_options(&options.iter().map(|o| o.label_key.en()).collect::<Vec<_>>());
                             p.set_default(default_idx);
                             p.set_value(legacy_default_idx);
                         }),
@@ -394,7 +394,7 @@ impl Plugin {
                     } * 100.0);
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label,
+                        descriptor.label_key.en(),
                         ae::FloatSliderDef::setup(|f| {
                             f.set_slider_min(0.0);
                             f.set_valid_min(0.0);
@@ -418,7 +418,7 @@ impl Plugin {
                         get_defaults::<i32>(default_settings, legacy_default_settings, descriptor)?;
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label,
+                        descriptor.label_key.en(),
                         ae::FloatSliderDef::setup(|f| {
                             f.set_slider_min(*range.start() as f32);
                             f.set_valid_min(*range.start() as f32);
@@ -450,7 +450,7 @@ impl Plugin {
                             });
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label,
+                        descriptor.label_key.en(),
                         ae::FloatSliderDef::setup(|f| {
                             f.set_slider_min(*range.start());
                             f.set_valid_min(*range.start());
@@ -476,11 +476,11 @@ impl Plugin {
                     )?;
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label,
+                        descriptor.label_key.en(),
                         ae::CheckBoxDef::setup(|c| {
                             c.set_default(default_value);
                             c.set_value(legacy_default_value);
-                            c.set_label(descriptor.label);
+                            c.set_label(descriptor.label_key.en());
                         }),
                         |p| {
                             p.set_id(descriptor.id.ae_id());
@@ -500,12 +500,12 @@ impl Plugin {
                     params.add_group(
                         ParamID::GroupStart(descriptor_id),
                         ParamID::GroupEnd(descriptor_id),
-                        descriptor.label,
+                        descriptor.label_key.en(),
                         false,
                         |g| {
                             g.add_customized(
                                 ParamID::Param(descriptor_id),
-                                descriptor.label,
+                                descriptor.label_key.en(),
                                 ae::CheckBoxDef::setup(|c| {
                                     c.set_default(default_value);
                                     c.set_value(legacy_default_value);

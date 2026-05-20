@@ -99,7 +99,7 @@ fn legacy_value_is_default() {
 #[test]
 fn descriptor_labels() {
     let descriptors = ExampleEffectFullSettings::setting_descriptors();
-    let labels: Vec<&str> = descriptors.iter().map(|d| d.label).collect();
+    let labels: Vec<&str> = descriptors.iter().map(|d| d.label_key.en()).collect();
     assert!(labels.contains(&"Brightness"));
     assert!(labels.contains(&"Invert Colors"));
     assert!(labels.contains(&"Color Preset"));
@@ -108,12 +108,12 @@ fn descriptor_labels() {
 #[test]
 fn descriptor_kinds() {
     let descriptors = ExampleEffectFullSettings::setting_descriptors();
-    let brightness = descriptors.iter().find(|d| d.label == "Brightness").unwrap();
+    let brightness = descriptors.iter().find(|d| d.label_key.en() == "Brightness").unwrap();
     assert!(matches!(brightness.kind, SettingKind::FloatRange { .. }));
 
-    let invert = descriptors.iter().find(|d| d.label == "Invert Colors").unwrap();
+    let invert = descriptors.iter().find(|d| d.label_key.en() == "Invert Colors").unwrap();
     assert!(matches!(invert.kind, SettingKind::Boolean));
 
-    let preset = descriptors.iter().find(|d| d.label == "Color Preset").unwrap();
+    let preset = descriptors.iter().find(|d| d.label_key.en() == "Color Preset").unwrap();
     assert!(matches!(preset.kind, SettingKind::Enumeration { .. }));
 }

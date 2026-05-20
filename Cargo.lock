@@ -728,6 +728,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
+name = "effect-settings"
+version = "0.1.0"
+dependencies = [
+ "hifijson",
+ "num_enum",
+ "sval",
+ "sval_json",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -811,16 +821,12 @@ dependencies = [
 name = "example-effect"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
+ "effect-settings",
  "example-effect-macros",
  "hifijson",
- "image",
  "num_enum",
- "pollster",
- "rayon",
  "sval",
  "sval_json",
- "wgpu",
 ]
 
 [[package]]
@@ -1574,6 +1580,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn",
@@ -3609,48 +3616,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "zzz-repeater-ae-plugin"
+name = "zzzfx-ae-plugin"
 version = "0.1.0"
 dependencies = [
  "after-effects",
- "example-effect",
  "pipl",
  "premiere",
+ "zzzfx-core",
 ]
 
 [[package]]
-name = "zzz-repeater-openfx-plugin"
+name = "zzzfx-core"
 version = "0.1.0"
 dependencies = [
- "bindgen 0.71.1",
- "example-effect",
+ "bytemuck",
+ "effect-settings",
+ "example-effect-macros",
+ "image",
+ "num_enum",
+ "pollster",
+ "rayon",
+ "trybuild",
+ "wgpu",
 ]
 
 [[package]]
-name = "zzz-sprite-sheet-openfx-plugin"
+name = "zzzfx-ofx-plugin"
 version = "0.1.0"
 dependencies = [
  "bindgen 0.71.1",
- "example-effect",
  "image",
  "rfd",
-]
-
-[[package]]
-name = "zzz-stroke-ae-plugin"
-version = "0.1.0"
-dependencies = [
- "after-effects",
- "example-effect",
- "pipl",
- "premiere",
-]
-
-[[package]]
-name = "zzz-stroke-openfx-plugin"
-version = "0.1.0"
-dependencies = [
- "bindgen 0.71.1",
- "example-effect",
  "trybuild",
+ "zzzfx-core",
 ]

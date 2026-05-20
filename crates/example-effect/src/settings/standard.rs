@@ -1,7 +1,7 @@
 use example_effect_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsBlock, SettingsEnum};
+use super::{ExTrKey, MenuItem, SettingDescriptor, SettingKind, Settings, SettingsBlock, SettingsEnum};
 
 // ---------------------------------------------------------------------------
 // Parameter types
@@ -89,11 +89,13 @@ pub mod setting_id {
 // ---------------------------------------------------------------------------
 
 impl Settings for ExampleEffectFullSettings {
+    type Key = ExTrKey;
+
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
             SettingDescriptor {
-                label: "Brightness",
-                description: Some("Overall brightness multiplier."),
+                label_key: ExTrKey::ParamBrightness,
+                description_key: Some(ExTrKey::ParamBrightnessDesc),
                 kind: SettingKind::FloatRange {
                     range: 0.0..=2.0,
                     logarithmic: false,
@@ -101,37 +103,37 @@ impl Settings for ExampleEffectFullSettings {
                 id: setting_id::BRIGHTNESS,
             },
             SettingDescriptor {
-                label: "Invert Colors",
-                description: Some("Invert all colors in the image."),
+                label_key: ExTrKey::ParamInvertColors,
+                description_key: Some(ExTrKey::ParamInvertColorsDesc),
                 kind: SettingKind::Boolean,
                 id: setting_id::INVERT_COLORS,
             },
             SettingDescriptor {
-                label: "Tint Red",
-                description: Some("Red channel tint multiplier."),
+                label_key: ExTrKey::ParamTintRed,
+                description_key: Some(ExTrKey::ParamTintRedDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::TINT_R,
             },
             SettingDescriptor {
-                label: "Tint Green",
-                description: Some("Green channel tint multiplier."),
+                label_key: ExTrKey::ParamTintGreen,
+                description_key: Some(ExTrKey::ParamTintGreenDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::TINT_G,
             },
             SettingDescriptor {
-                label: "Tint Blue",
-                description: Some("Blue channel tint multiplier."),
+                label_key: ExTrKey::ParamTintBlue,
+                description_key: Some(ExTrKey::ParamTintBlueDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::TINT_B,
             },
             SettingDescriptor {
-                label: "Advanced",
-                description: Some("Additional advanced settings."),
+                label_key: ExTrKey::ParamAdvanced,
+                description_key: Some(ExTrKey::ParamAdvancedDesc),
                 kind: SettingKind::Group {
                     children: vec![
                         SettingDescriptor {
-                            label: "Contrast",
-                            description: Some("Contrast adjustment."),
+                            label_key: ExTrKey::ParamContrast,
+                            description_key: Some(ExTrKey::ParamContrastDesc),
                             kind: SettingKind::FloatRange {
                                 range: 0.0..=4.0,
                                 logarithmic: false,
@@ -139,8 +141,8 @@ impl Settings for ExampleEffectFullSettings {
                             id: setting_id::CONTRAST,
                         },
                         SettingDescriptor {
-                            label: "Saturation",
-                            description: Some("Color saturation adjustment."),
+                            label_key: ExTrKey::ParamSaturation,
+                            description_key: Some(ExTrKey::ParamSaturationDesc),
                             kind: SettingKind::Percentage { logarithmic: true },
                             id: setting_id::SATURATION,
                         },
@@ -149,28 +151,28 @@ impl Settings for ExampleEffectFullSettings {
                 id: setting_id::ADVANCED,
             },
             SettingDescriptor {
-                label: "Color Preset",
-                description: Some("Choose a color preset."),
+                label_key: ExTrKey::ParamColorPreset,
+                description_key: Some(ExTrKey::ParamColorPresetDesc),
                 kind: SettingKind::Enumeration {
                     options: vec![
                         MenuItem {
-                            label: "None",
-                            description: Some("No color preset."),
+                            label_key: ExTrKey::MenuNone,
+                            description_key: Some(ExTrKey::MenuNoneDesc),
                             index: ColorPreset::None as u32,
                         },
                         MenuItem {
-                            label: "Warm",
-                            description: Some("Warm color tone."),
+                            label_key: ExTrKey::MenuWarm,
+                            description_key: Some(ExTrKey::MenuWarmDesc),
                             index: ColorPreset::Warm as u32,
                         },
                         MenuItem {
-                            label: "Cool",
-                            description: Some("Cool color tone."),
+                            label_key: ExTrKey::MenuCool,
+                            description_key: Some(ExTrKey::MenuCoolDesc),
                             index: ColorPreset::Cool as u32,
                         },
                         MenuItem {
-                            label: "Sepia",
-                            description: Some("Sepia color tone."),
+                            label_key: ExTrKey::MenuSepia,
+                            description_key: Some(ExTrKey::MenuSepiaDesc),
                             index: ColorPreset::Sepia as u32,
                         },
                     ],

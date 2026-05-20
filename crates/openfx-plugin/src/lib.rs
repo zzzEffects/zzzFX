@@ -106,10 +106,10 @@ impl SharedData {
         for descriptor in settings_list.all_descriptors() {
             let id = &descriptor.id;
             let id_str = CString::new(descriptor.id.name).unwrap();
-            let label = CString::new(descriptor.label).unwrap();
+            let label = CString::new(descriptor.label_key.en()).unwrap();
             let description = descriptor
-                .description
-                .map(|desc| CString::new(desc).unwrap());
+                .description_key
+                .map(|k| CString::new(k.en()).unwrap());
             let group_name = if let SettingKind::Group { .. } = descriptor.kind {
                 Some(CString::new(format!("{}_group", descriptor.id.name)).unwrap())
             } else {
@@ -119,14 +119,14 @@ impl SharedData {
 
             if let SettingKind::Enumeration { options } = &descriptor.kind {
                 for menu_item in options {
-                    let item_label = CString::new(menu_item.label).unwrap();
+                    let item_label = CString::new(menu_item.label_key.en()).unwrap();
                     menu_item_strings.insert(
                         (id.clone(), menu_item.index),
                         (
                             item_label,
                             menu_item
-                                .description
-                                .map(|desc| CString::new(desc).unwrap()),
+                                .description_key
+                                .map(|k| CString::new(k.en()).unwrap()),
                         ),
                     );
                 }

@@ -1,7 +1,6 @@
-/target
+target/
 .vscode
 .DS_Store
-/build
+build/
 
-.claude/settings.json
 .claude/settings.local.json

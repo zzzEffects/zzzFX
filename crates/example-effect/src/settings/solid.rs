@@ -1,7 +1,7 @@
 use example_effect_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
+use super::{ExTrKey, MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
 
 // ---------------------------------------------------------------------------
 // Blend mode enum
@@ -74,55 +74,57 @@ pub mod setting_id {
 // ---------------------------------------------------------------------------
 
 impl Settings for SolidColorBlendFullSettings {
+    type Key = ExTrKey;
+
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
             SettingDescriptor {
-                label: "Color Red",
-                description: Some("Red component of the solid color."),
+                label_key: ExTrKey::ParamColorRed,
+                description_key: Some(ExTrKey::ParamColorRedDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::COLOR_R,
             },
             SettingDescriptor {
-                label: "Color Green",
-                description: Some("Green component of the solid color."),
+                label_key: ExTrKey::ParamColorGreen,
+                description_key: Some(ExTrKey::ParamColorGreenDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::COLOR_G,
             },
             SettingDescriptor {
-                label: "Color Blue",
-                description: Some("Blue component of the solid color."),
+                label_key: ExTrKey::ParamColorBlue,
+                description_key: Some(ExTrKey::ParamColorBlueDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::COLOR_B,
             },
             SettingDescriptor {
-                label: "Blend Amount",
-                description: Some("Alpha channel blending. 0% = original image, 100% = solid color."),
+                label_key: ExTrKey::ParamBlendAmount,
+                description_key: Some(ExTrKey::ParamBlendAmountDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::COLOR_A,
             },
             SettingDescriptor {
-                label: "Blend Mode",
-                description: Some("How the solid color is blended with the image."),
+                label_key: ExTrKey::ParamExampleBlendMode,
+                description_key: Some(ExTrKey::ParamExampleBlendModeDesc),
                 kind: SettingKind::Enumeration {
                     options: vec![
                         MenuItem {
-                            label: "Normal",
-                            description: Some("Linear interpolation between image and solid color."),
+                            label_key: ExTrKey::MenuNormal,
+                            description_key: Some(ExTrKey::MenuExampleNormalDesc),
                             index: BlendMode::Normal as u32,
                         },
                         MenuItem {
-                            label: "Multiply",
-                            description: Some("Multiplies the image by the solid color."),
+                            label_key: ExTrKey::MenuMultiply,
+                            description_key: Some(ExTrKey::MenuExampleMultiplyDesc),
                             index: BlendMode::Multiply as u32,
                         },
                         MenuItem {
-                            label: "Screen",
-                            description: Some("Screens the image with the solid color (inverse multiply)."),
+                            label_key: ExTrKey::MenuScreen,
+                            description_key: Some(ExTrKey::MenuExampleScreenDesc),
                             index: BlendMode::Screen as u32,
                         },
                         MenuItem {
-                            label: "Overlay",
-                            description: Some("Combines Multiply and Screen based on image brightness."),
+                            label_key: ExTrKey::MenuOverlay,
+                            description_key: Some(ExTrKey::MenuExampleOverlayDesc),
                             index: BlendMode::Overlay as u32,
                         },
                     ],

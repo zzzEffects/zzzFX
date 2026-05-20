@@ -1,0 +1,22 @@
+[package]
+name = "zzzfx-ofx-plugin"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR ISC OR Apache-2.0"
+
+[dependencies]
+zzzfx-core = { path = "../zzzfx-core" }
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff", "webp", "gif", "ico"] }
+
+[build-dependencies]
+bindgen = "0.71"
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+trybuild = "1.0"
