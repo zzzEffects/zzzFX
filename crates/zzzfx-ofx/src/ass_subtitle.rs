@@ -4,10 +4,10 @@ use std::{
     sync::OnceLock,
 };
 
-use zzzfx_core::settings::TrKey;
 use zzzfx_core::{
-    ZzzSpriteSheet, ZzzSpriteSheetFullSettings,
-    settings::{SettingID, SettingKind, Settings, SettingsList},
+    ZzzAssSubtitle, ZzzAssSubtitleFullSettings,
+    ass_subtitle::{AssScript, FontCache, RenderCache, parse_ass_file, render_ass_subtitle_frame},
+    settings::{SettingID, SettingKind, Settings, SettingsList, TrKey},
 };
 
 use crate::bindings::*;
@@ -22,20 +22,19 @@ use crate::shared::{
 // Native OFX parameter names
 // ---------------------------------------------------------------------------
 
-const SPRITE_RANGE_PARAM: &CStr = c"sprite_range";
-const REPEAT_RANGE_PARAM: &CStr = c"repeat_range";
-const SPRITES_CUT_PARAM: &CStr = c"sprites_cut";
-const FILE_SELECT_PARAM: &CStr = c"file_select";
+const FILE_SELECT_PARAM: &CStr = c"select_file";
 const FILE_PATH_PARAM: &CStr = c"file_path";
+const FONT_OVERRIDE_CHOICE_PARAM: &CStr = c"font_override_choice";
+const FONT_OVERRIDE_STRING_PARAM: &CStr = c"font_override_name";
 const PAGE_NAME: &CStr = c"Controls";
 
-fn is_native_grouped_name(name: &str) -> bool {
-    matches!(
-        name,
-        "sprite_range_start" | "sprite_range_end"
-        | "repeat_range_start" | "repeat_range_end"
-        | "sprites_cut_x" | "sprites_cut_y"
-    )
+/// Global cache of installed font names, built lazily on first access.
+fn cached_font_names() -> &'static Vec<String> {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let cache = FontCache::new();
+        cache.list_font_names()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -43,21 +42,13 @@ fn is_native_grouped_name(name: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 struct InstanceData {
+    ass_script: Option<AssScript>,
     file_path: String,
-    decoded_rgba: Vec<u8>,
-    sheet_width: u32,
-    sheet_height: u32,
-    cached_dst: Vec<u8>,
-    cache_valid: bool,
-    cached_crop_x: u32,
-    cached_crop_y: u32,
-    cached_crop_w: u32,
-    cached_crop_h: u32,
-    cached_scale: f32,
-    cached_filter: u32,
-    cached_output_w: usize,
-    cached_output_h: usize,
-    cached_file_path: String,
+    font_cache: FontCache,
+    font_override: Option<String>,
+    available_fonts: Vec<String>,
+    render_cache: RenderCache,
+    dst_buf: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,15 +59,67 @@ static PLUGIN_INFO: OnceLock<OfxPlugin> = OnceLock::new();
 
 struct EffectData {
     suites: SuiteCache,
-    settings_list: SettingsList<ZzzSpriteSheetFullSettings>,
-    strings: StringCache<ZzzSpriteSheetFullSettings>,
-    menu_item_strings: MenuItemCache<ZzzSpriteSheetFullSettings>,
+    settings_list: SettingsList<ZzzAssSubtitleFullSettings>,
+    strings: StringCache<ZzzAssSubtitleFullSettings>,
+    menu_item_strings: MenuItemCache<ZzzAssSubtitleFullSettings>,
 }
 
 static EFFECT_DATA: OnceLock<EffectData> = OnceLock::new();
 
 fn data() -> &'static EffectData {
-    EFFECT_DATA.get().expect("SpriteSheet EffectData not initialized")
+    EFFECT_DATA.get().expect("AssSubtitle EffectData not initialized")
+}
+
+// ---------------------------------------------------------------------------
+// File encoding helpers
+// ---------------------------------------------------------------------------
+
+/// Decode an ASS file from raw bytes, handling common encodings:
+/// UTF-8 BOM, UTF-16 LE BOM, GBK (CP 936), or plain UTF-8.
+fn decode_ass_file(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        return String::from_utf8(bytes[3..].to_vec()).map_err(|e| e.to_string());
+    }
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16(&u16s).map_err(|e| e.to_string());
+    }
+    // Try UTF-8 first
+    if let Ok(s) = String::from_utf8(bytes.to_vec()) {
+        return Ok(s);
+    }
+    // Try GBK (CP 936) on Windows
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(s) = decode_codepage(bytes, 936) {
+            return Ok(s);
+        }
+    }
+    // Fall back to lossy UTF-8 (preserves ASCII structure, CJK garbled)
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+#[cfg(target_os = "windows")]
+fn decode_codepage(bytes: &[u8], codepage: u32) -> Option<String> {
+    unsafe {
+        unsafe extern "system" {
+            fn MultiByteToWideChar(
+                CodePage: u32, dwFlags: u32,
+                lpMultiByteStr: *const u8, cbMultiByte: i32,
+                lpWideCharStr: *mut u16, cchWideChar: i32,
+            ) -> i32;
+        }
+        let len = MultiByteToWideChar(codepage, 0, bytes.as_ptr(), bytes.len() as i32, std::ptr::null_mut(), 0);
+        if len <= 0 { return None; }
+        let mut wide: Vec<u16> = vec![0; len as usize];
+        let ret = MultiByteToWideChar(codepage, 0, bytes.as_ptr(), bytes.len() as i32, wide.as_mut_ptr(), len);
+        if ret <= 0 { return None; }
+        String::from_utf16(&wide).ok()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +131,7 @@ pub fn get_plugin() -> *const OfxPlugin {
     let pi = PLUGIN_INFO.get_or_init(|| OfxPlugin {
         pluginApi: kOfxImageEffectPluginApi.as_ptr(),
         apiVersion: 1,
-        pluginIdentifier: c"com.example:zzzSpriteSheet".as_ptr(),
+        pluginIdentifier: c"com.example:zzzAssSubtitle".as_ptr(),
         pluginVersionMajor: 0,
         pluginVersionMinor: 1,
         setHost: Some(set_host_info),
@@ -108,7 +151,7 @@ unsafe fn set_host_info_inner(host: *mut OfxHost) -> OfxResult<()> {
 
     let host_info = HostInfo { host: h, fetch_suite: fs };
     let suites = SuiteCache::new(host_info)?;
-    let settings_list = SettingsList::<ZzzSpriteSheetFullSettings>::new();
+    let settings_list = SettingsList::<ZzzAssSubtitleFullSettings>::new();
     i18n::set_lang(i18n::detect_system_lang());
     let (strings, menu_item_strings) = build_string_cache(&settings_list);
 
@@ -175,9 +218,9 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
     let ps = su.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
     let pi = su.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
 
-    ps(ep, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::EffectSpritesheetName).as_ptr()).ofx_ok()?;
+    ps(ep, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::EffectAssSubtitleName).as_ptr()).ofx_ok()?;
     ps(ep, kOfxImageEffectPluginPropGrouping.as_ptr(), 0, c"zzzFX".as_ptr()).ofx_ok()?;
-    ps(ep, kOfxPropPluginDescription.as_ptr(), 0, i18n::tr_cstr(TrKey::EffectSpritesheetDesc).as_ptr()).ofx_ok()?;
+    ps(ep, kOfxPropPluginDescription.as_ptr(), 0, i18n::tr_cstr(TrKey::EffectAssSubtitleDesc).as_ptr()).ofx_ok()?;
     ps(ep, kOfxImageEffectPropSupportedContexts.as_ptr(), 0, kOfxImageEffectContextGenerator.as_ptr()).ofx_ok()?;
     ps(ep, kOfxImageEffectPropSupportedPixelDepths.as_ptr(), 0, kOfxBitDepthFloat.as_ptr()).ofx_ok()?;
     ps(ep, kOfxImageEffectPropSupportedPixelDepths.as_ptr(), 1, kOfxBitDepthShort.as_ptr()).ofx_ok()?;
@@ -196,8 +239,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let gp = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
     let ps = su.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
     let pi = su.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
+    let pd = su.property_suite.propSetDouble.ok_or(OfxStat::kOfxStatFailed)?;
     let pdef = su.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
-    let defaults = ZzzSpriteSheetFullSettings::default();
+    let defaults = ZzzAssSubtitleFullSettings::default();
 
     // --- Output clip only (no Source for Generator) ---
     let mut props: OfxPropertySetHandle = ptr::null_mut();
@@ -216,58 +260,93 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeControls).as_ptr()).ofx_ok()?;
     }
 
-    // --- Native PushButton: fileSelect ---
+    // --- Native PushButton: select_file ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
         pdef(param_set, kOfxParamTypePushButton.as_ptr(), FILE_SELECT_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeSelectSpriteSheet).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeSelectSpriteSheetHint).as_ptr()).ofx_ok()?;
+        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeSelectAssFile).as_ptr()).ofx_ok()?;
+        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeSelectAssFileHint).as_ptr()).ofx_ok()?;
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
-    // --- Single-pass param definition with interleaved native Int2Ds ---
-    let mut defined_range = false;
-    let mut defined_repeat = false;
-    let mut defined_cut = false;
-
+    // --- Block A: Generic params before Position (time_offset_s, scale) ---
     for desc in d.settings_list.setting_descriptors.iter() {
-        if !defined_range && desc.id.name == "sprite_range_start" {
-            define_native_int2d(
-                su, param_set, SPRITE_RANGE_PARAM,
-                i18n::tr_cstr(TrKey::NativeSpriteRange),
-                i18n::tr_cstr(TrKey::NativeSpriteRangeHint),
-                defaults.sprite_range_start, defaults.sprite_range_end, 0, 9999,
-            )?;
-            defined_range = true;
-        }
-        if !defined_repeat && desc.id.name == "repeat_range_start" {
-            define_native_int2d(
-                su, param_set, REPEAT_RANGE_PARAM,
-                i18n::tr_cstr(TrKey::NativeRepeatRange),
-                i18n::tr_cstr(TrKey::NativeRepeatRangeHint),
-                defaults.repeat_range_start, defaults.repeat_range_end, 0, 9999,
-            )?;
-            defined_repeat = true;
-        }
-        if !defined_cut && desc.id.name == "sprites_cut_x" {
-            define_native_int2d(
-                su, param_set, SPRITES_CUT_PARAM,
-                i18n::tr_cstr(TrKey::NativeSpritesCut),
-                i18n::tr_cstr(TrKey::NativeSpritesCutHint),
-                defaults.sprites_cut_x, defaults.sprites_cut_y, 1, 99,
-            )?;
-            defined_cut = true;
-        }
-
-        if is_native_grouped_name(desc.id.name) { continue; }
+        if desc.id.name == "position_x" { break; }
         define_single_param(su, param_set, desc, &defaults, PAGE_NAME, &d.strings, &d.menu_item_strings)?;
     }
 
-    // --- Native String (hidden): filePath ---
+    // --- Native Double2D: Position ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), c"position".as_ptr(), &mut pp).ofx_ok()?;
+        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeAssPosition).as_ptr()).ofx_ok()?;
+        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeAssPositionHint).as_ptr()).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.5).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.5).ofx_ok()?;
+    }
+
+    // --- Block B: Params between Position and Font Scale (blend_mode) ---
+    let mut after_position = false;
+    for desc in d.settings_list.setting_descriptors.iter() {
+        if desc.id.name == "position_x" { after_position = true; continue; }
+        if !after_position { continue; }
+        if desc.id.name == "font_scale_x" { break; }
+        if desc.id.name == "position_y" { continue; }
+        define_single_param(su, param_set, desc, &defaults, PAGE_NAME, &d.strings, &d.menu_item_strings)?;
+    }
+
+    // --- Native Double2D: Font Scale ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), c"font_scale".as_ptr(), &mut pp).ofx_ok()?;
+        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeAssFontScale).as_ptr()).ofx_ok()?;
+        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeAssFontScaleHint).as_ptr()).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
+    }
+
+    // --- Block C: Remaining params after Font Scale (use_native_size) ---
+    let mut after_font_scale = false;
+    for desc in d.settings_list.setting_descriptors.iter() {
+        if desc.id.name == "font_scale_x" { after_font_scale = true; continue; }
+        if !after_font_scale || desc.id.name == "font_scale_y" { continue; }
+        define_single_param(su, param_set, desc, &defaults, PAGE_NAME, &d.strings, &d.menu_item_strings)?;
+    }
+
+    // --- Native String (hidden): file_path ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
         pdef(param_set, kOfxParamTypeString.as_ptr(), FILE_PATH_PARAM.as_ptr(), &mut pp).ofx_ok()?;
         ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeFilePath).as_ptr()).ofx_ok()?;
+        pi(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
+        pi(pp, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
+        ps(pp, kOfxParamPropDefault.as_ptr(), 0, c"".as_ptr()).ofx_ok()?;
+        ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
+    }
+
+    // --- Native Choice: font_override_choice ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(param_set, kOfxParamTypeChoice.as_ptr(), FONT_OVERRIDE_CHOICE_PARAM.as_ptr(), &mut pp).ofx_ok()?;
+        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeFontOverride).as_ptr()).ofx_ok()?;
+        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeFontOverrideHint).as_ptr()).ofx_ok()?;
+        // Option 0: "Use font from ASS file"
+        ps(pp, kOfxParamPropChoiceOption.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeFontOverrideChoice).as_ptr()).ofx_ok()?;
+        // Options 1..N: installed font names (cached globally, built once)
+        let font_names = cached_font_names();
+        let name_cstrs: Vec<CString> = font_names.iter().map(|n| CString::new(n.as_str()).unwrap()).collect();
+        for (i, name_cstr) in name_cstrs.iter().enumerate() {
+            ps(pp, kOfxParamPropChoiceOption.as_ptr(), (i + 1) as i32, name_cstr.as_ptr()).ofx_ok()?;
+        }
+        pi(pp, kOfxParamPropDefault.as_ptr(), 0, 0).ofx_ok()?;
+        ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
+    }
+
+    // --- Native String (hidden): font_override_name ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(param_set, kOfxParamTypeString.as_ptr(), FONT_OVERRIDE_STRING_PARAM.as_ptr(), &mut pp).ofx_ok()?;
+        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::ParamAssFontOverrideString).as_ptr()).ofx_ok()?;
         pi(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
         pi(pp, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
         ps(pp, kOfxParamPropDefault.as_ptr(), 0, c"".as_ptr()).ofx_ok()?;
@@ -291,13 +370,13 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
     gp(effect, &mut ep).ofx_ok()?;
 
     let idata = Box::new(InstanceData {
-        file_path: String::new(), decoded_rgba: Vec::new(),
-        sheet_width: 0, sheet_height: 0,
-        cached_dst: Vec::new(), cache_valid: false,
-        cached_crop_x: 0, cached_crop_y: 0, cached_crop_w: 0, cached_crop_h: 0,
-        cached_scale: 0.0, cached_filter: 0,
-        cached_output_w: 0, cached_output_h: 0,
-        cached_file_path: String::new(),
+        ass_script: None,
+        file_path: String::new(),
+        font_cache: FontCache::new(),
+        font_override: None,
+        available_fonts: cached_font_names().clone(),
+        render_cache: RenderCache::new(),
+        dst_buf: Vec::new(),
     });
     psp(ep, kOfxPropInstanceData.as_ptr(), 0, Box::into_raw(idata) as *mut c_void).ofx_ok()?;
     Ok(())
@@ -342,27 +421,36 @@ unsafe fn action_instance_changed(
     let propGetPointer = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
     let paramGetHandle = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let paramSetValue = su.parameter_suite.paramSetValue.ok_or(OfxStat::kOfxStatFailed)?;
+    let paramGetValueAtTime = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
     let mut target_type: *mut c_char = ptr::null_mut();
-    propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok()?;
+    if propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok().is_err() {
+        return Ok(()); // not an error we need to handle
+    }
+    if target_type.is_null() { return Ok(()); }
 
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     getParamSet(effect, &mut param_set).ofx_ok()?;
 
     if CStr::from_ptr(target_type) == kOfxTypeParameter {
         let mut target_name: *mut c_char = ptr::null_mut();
-        propGetString(inArgs, kOfxPropName.as_ptr(), 0, &mut target_name).ofx_ok()?;
+        if propGetString(inArgs, kOfxPropName.as_ptr(), 0, &mut target_name).ofx_ok().is_err() {
+            return Ok(());
+        }
+        if target_name.is_null() { return Ok(()); }
 
         if FILE_SELECT_PARAM == CStr::from_ptr(target_name) {
             let Some(path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp", "gif", "ico"])
+                .add_filter("ASS Subtitles", &["ass", "ssa"])
                 .pick_file()
             else { return Ok(()); };
 
-            let img = image::open(&path).map_err(|_| OfxStat::kOfxStatFailed)?.to_rgba8();
-            let (w, h) = img.dimensions();
-            let rgba = img.into_raw();
             let path_str = path.to_string_lossy().to_string();
+
+            // Read file bytes (handle UTF-8 / UTF-8 BOM / UTF-16 LE)
+            let file_bytes = std::fs::read(&path).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let content = decode_ass_file(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let ass_script = parse_ass_file(&content).map_err(|_| OfxStat::kOfxStatFailed)?;
 
             let mut ep: OfxPropertySetHandle = ptr::null_mut();
             (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
@@ -370,16 +458,55 @@ unsafe fn action_instance_changed(
             propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
             if !data_ptr.is_null() {
                 let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.ass_script = Some(ass_script);
                 idata.file_path = path_str.clone();
-                idata.decoded_rgba = rgba;
-                idata.sheet_width = w;
-                idata.sheet_height = h;
             }
 
             let mut p: OfxParamHandle = ptr::null_mut();
             paramGetHandle(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
             let path_cstr = CString::new(path_str).unwrap();
             paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+
+            return Ok(());
+        }
+
+        if FONT_OVERRIDE_CHOICE_PARAM == CStr::from_ptr(target_name) {
+            // Read the selected choice index
+            let mut p: OfxParamHandle = ptr::null_mut();
+            paramGetHandle(param_set, FONT_OVERRIDE_CHOICE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+            let mut choice_idx: c_int = 0;
+            paramGetValueAtTime(p, 0.0, &mut choice_idx).ofx_ok()?;
+
+            let font_name = if choice_idx == 0 {
+                String::new()
+            } else {
+                let mut ep: OfxPropertySetHandle = ptr::null_mut();
+                (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
+                let mut data_ptr: *mut c_void = ptr::null_mut();
+                propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+                if !data_ptr.is_null() {
+                    let idata = &*(data_ptr as *const InstanceData);
+                    idata.available_fonts.get((choice_idx - 1) as usize).cloned().unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            };
+
+            // Update instance data
+            let mut ep: OfxPropertySetHandle = ptr::null_mut();
+            (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
+            let mut data_ptr: *mut c_void = ptr::null_mut();
+            propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+            if !data_ptr.is_null() {
+                let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.font_override = if font_name.is_empty() { None } else { Some(font_name.clone()) };
+            }
+
+            // Persist to hidden string param
+            let mut sp: OfxParamHandle = ptr::null_mut();
+            paramGetHandle(param_set, FONT_OVERRIDE_STRING_PARAM.as_ptr(), &mut sp, ptr::null_mut()).ofx_ok()?;
+            let name_cstr = CString::new(&*font_name).unwrap();
+            paramSetValue(sp, name_cstr.as_ptr() as *const c_void).ofx_ok()?;
 
             return Ok(());
         }
@@ -413,7 +540,7 @@ unsafe fn action_render(
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     gps(effect, &mut param_set).ofx_ok()?;
 
-    let mut settings = ZzzSpriteSheetFullSettings::default();
+    let mut settings = ZzzAssSubtitleFullSettings::default();
     apply_params(param_set, time, &mut settings)?;
 
     // Retrieve instance data
@@ -425,8 +552,8 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
-    // Try to recover from hidden String param if instance data is empty
-    if matches!(&idata, None) || idata.as_deref().is_some_and(|i| i.decoded_rgba.is_empty()) {
+    // Try to recover from hidden String param if instance data has no ASS file loaded
+    if matches!(&idata, None) || idata.as_deref().is_some_and(|i| i.ass_script.is_none()) {
         let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
         let pgvt = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
         let mut p: OfxParamHandle = ptr::null_mut();
@@ -435,16 +562,32 @@ unsafe fn action_render(
         if pgvt(p, 0.0, &mut path_ptr).ofx_ok().is_ok() && !path_ptr.is_null() {
             let path = CStr::from_ptr(path_ptr).to_string_lossy();
             if !path.is_empty() {
-                if let Ok(img) = image::open(std::path::Path::new(path.as_ref())) {
-                    let rgba = img.to_rgba8();
-                    let (w, h) = rgba.dimensions();
-                    let raw = rgba.into_raw();
-                    if let Some(idata) = &mut idata {
-                        idata.file_path = path.into_owned();
-                        idata.decoded_rgba = raw;
-                        idata.sheet_width = w;
-                        idata.sheet_height = h;
+                if let Ok(file_bytes) = std::fs::read(std::path::Path::new(path.as_ref())) {
+                    if let Ok(content) = decode_ass_file(&file_bytes) {
+                        if let Ok(ass_script) = parse_ass_file(&content) {
+                            if let Some(idata) = &mut idata {
+                                idata.ass_script = Some(ass_script);
+                                idata.file_path = path.into_owned();
+                            }
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    // Try to recover font_override from hidden string param
+    if let Some(ref mut idata_inner) = idata {
+        if idata_inner.font_override.is_none() {
+            let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+            let pgvt = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
+            let mut p: OfxParamHandle = ptr::null_mut();
+            pgh(param_set, FONT_OVERRIDE_STRING_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+            let mut name_ptr: *mut c_char = ptr::null_mut();
+            if pgvt(p, 0.0, &mut name_ptr).ofx_ok().is_ok() && !name_ptr.is_null() {
+                let name = CStr::from_ptr(name_ptr).to_string_lossy();
+                if !name.is_empty() {
+                    idata_inner.font_override = Some(name.into_owned());
                 }
             }
         }
@@ -473,83 +616,77 @@ unsafe fn action_render(
     );
     let num_components = if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 };
 
-    let mut frame_rate: f64 = 1.0;
+    // Read project frame rate for time normalization.
+    // Some hosts (e.g. VEGAS Pro) give generator plugins a fixed 1000 fps
+    // instead of the real project frame rate. Using time / rate normalises
+    // the timeline, matching the approach in zzzSpriteSheet.
+    let mut frame_rate: f64 = 30.0;
     let _ = pgd(ep, kOfxImageEffectPropFrameRate.as_ptr(), 0, &mut frame_rate);
+    let rate = if frame_rate > 0.0 { frame_rate } else { 30.0 };
 
-    let ss: ZzzSpriteSheet = (&settings).into();
-    let is_static = (ss.sprite_rows == 1 && ss.sprite_columns == 1)
-        || ss.sprite_range_start == ss.sprite_range_end
-        || ss.speed == 0.0;
-    let filter_discriminant = ss.scale_algorithm as u32;
+    let ss: ZzzAssSubtitle = (&settings).into();
+    // Normalize time: time may be frame numbers (VEGAS) or seconds.
+    // Dividing by frame_rate converts to seconds regardless of what the host
+    // passes, because if time=frameN and rate=1000 (fake), the ratio still
+    // gives seconds-like units. The user can compensate with time_offset_s.
+    let time_ms = (time / rate * 1000.0) as i64 + (ss.time_offset_s * 1000.0) as i64;
 
-    let mut dst_buf = vec![0u8; width * height * 4];
-
-    let cache_hit = 'cache: {
-        if !is_static { break 'cache false; }
-        let idata_ref = idata.as_deref();
-        let Some(idata_ref) = idata_ref else { break 'cache false };
-        if !idata_ref.cache_valid
-            || idata_ref.cached_output_w != width
-            || idata_ref.cached_output_h != height
-            || idata_ref.cached_scale != ss.scale
-            || idata_ref.cached_filter != filter_discriminant
-            || idata_ref.cached_file_path != idata_ref.file_path
-        { break 'cache false; }
-        if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_ref.sheet_width, idata_ref.sheet_height) {
-            if crop_rect == (idata_ref.cached_crop_x, idata_ref.cached_crop_y, idata_ref.cached_crop_w, idata_ref.cached_crop_h) {
-                dst_buf.copy_from_slice(&idata_ref.cached_dst);
-                break 'cache true;
+    // Phase A: Render into reusable buffer
+    {
+        if let Some(ref mut idata_inner) = idata {
+            let buf_size = width * height * 4;
+            if idata_inner.dst_buf.len() != buf_size {
+                idata_inner.dst_buf.resize(buf_size, 0);
             }
-        }
-        false
-    };
+            idata_inner.dst_buf.fill(0);
 
-    let mut rendered_rect: Option<(u32, u32, u32, u32)> = None;
-
-    if !cache_hit {
-        if let Some(ref idata_inner) = idata {
-            if !idata_inner.decoded_rgba.is_empty() {
-                if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_inner.sheet_width, idata_inner.sheet_height) {
-                    ss.render_sprite(
-                        crop_rect, &idata_inner.decoded_rgba,
-                        idata_inner.sheet_width, idata_inner.sheet_height,
-                        &mut dst_buf, width, height,
+            if let Some(ref ass_script) = idata_inner.ass_script {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    render_ass_subtitle_frame(
+                        ass_script,
+                        time_ms,
+                        &mut idata_inner.font_cache,
+                        ss.scale,
+                        ss.position_x,
+                        ss.position_y,
+                        ss.font_scale_x,
+                        ss.font_scale_y,
+                        ss.blend_mode,
+                        idata_inner.font_override.as_deref(),
+                        ss.use_native_size,
+                        &mut idata_inner.dst_buf,
+                        width,
+                        height,
+                        &mut idata_inner.render_cache,
                     );
-                    rendered_rect = Some(crop_rect);
-                }
-            }
-        }
-
-        let cache_file_path = idata.as_deref().map(|i| i.file_path.clone()).unwrap_or_default();
-        if let Some(crop_rect) = rendered_rect {
-            if is_static {
-                if let Some(ref mut idata_inner) = idata {
-                    idata_inner.cached_dst = dst_buf.clone();
-                    idata_inner.cache_valid = true;
-                    idata_inner.cached_crop_x = crop_rect.0;
-                    idata_inner.cached_crop_y = crop_rect.1;
-                    idata_inner.cached_crop_w = crop_rect.2;
-                    idata_inner.cached_crop_h = crop_rect.3;
-                    idata_inner.cached_scale = ss.scale;
-                    idata_inner.cached_filter = filter_discriminant;
-                    idata_inner.cached_output_w = width;
-                    idata_inner.cached_output_h = height;
-                    idata_inner.cached_file_path = cache_file_path;
-                }
-            }
-        } else if !is_static {
-            if let Some(ref mut idata_inner) = idata {
-                idata_inner.cache_valid = false;
+                }));
             }
         }
     }
 
+    // Phase B: Get dst slice for post-processing
+    let mut fallback_dst;
+    let dst_buf: &mut [u8] = if let Some(ref mut idata_inner) = idata {
+        &mut idata_inner.dst_buf[..]
+    } else {
+        fallback_dst = vec![0u8; width * height * 4];
+        &mut fallback_dst[..]
+    };
+
+    // Premultiply alpha (matching sprite_sheet.rs convention)
     if num_components == 4 {
         for pixel in dst_buf.chunks_exact_mut(4) {
-            let a = pixel[3] as f32 / 255.0;
-            pixel[0] = (pixel[0] as f32 * a).round() as u8;
-            pixel[1] = (pixel[1] as f32 * a).round() as u8;
-            pixel[2] = (pixel[2] as f32 * a).round() as u8;
+            let a = pixel[3];
+            if a == 0 {
+                pixel[0] = 0;
+                pixel[1] = 0;
+                pixel[2] = 0;
+            } else if a != 255 {
+                let a32 = a as u32;
+                pixel[0] = ((pixel[0] as u32 * a32 + 127) / 255) as u8;
+                pixel[1] = ((pixel[1] as u32 * a32 + 127) / 255) as u8;
+                pixel[2] = ((pixel[2] as u32 * a32 + 127) / 255) as u8;
+            }
         }
     }
 
@@ -605,89 +742,32 @@ unsafe fn action_render(
 }
 
 // ---------------------------------------------------------------------------
-// Native Int2D helper
-// ---------------------------------------------------------------------------
-
-unsafe fn define_native_int2d(
-    suites: &SuiteCache,
-    param_set: OfxParamSetHandle,
-    name: &CStr,
-    label: &CStr,
-    hint: &CStr,
-    default_x: i32,
-    default_y: i32,
-    min: i32,
-    max: i32,
-) -> OfxResult<()> {
-    let pdef = suites.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
-    let ps = suites.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
-    let pi = suites.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
-    let mut pp: OfxPropertySetHandle = ptr::null_mut();
-    pdef(param_set, kOfxParamTypeInteger2D.as_ptr(), name.as_ptr(), &mut pp).ofx_ok()?;
-    ps(pp, kOfxPropLabel.as_ptr(), 0, label.as_ptr()).ofx_ok()?;
-    ps(pp, kOfxParamPropHint.as_ptr(), 0, hint.as_ptr()).ofx_ok()?;
-    pi(pp, kOfxParamPropDefault.as_ptr(), 0, default_x).ofx_ok()?;
-    pi(pp, kOfxParamPropDefault.as_ptr(), 1, default_y).ofx_ok()?;
-    pi(pp, kOfxParamPropMin.as_ptr(), 0, min).ofx_ok()?;
-    pi(pp, kOfxParamPropMin.as_ptr(), 1, min).ofx_ok()?;
-    pi(pp, kOfxParamPropMax.as_ptr(), 0, max).ofx_ok()?;
-    pi(pp, kOfxParamPropMax.as_ptr(), 1, max).ofx_ok()?;
-    ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // Parameter reading
 // ---------------------------------------------------------------------------
 
 unsafe fn apply_params(
     param_set: OfxParamSetHandle,
     time: f64,
-    dst: &mut ZzzSpriteSheetFullSettings,
+    dst: &mut ZzzAssSubtitleFullSettings,
 ) -> OfxResult<()> {
     let d = data();
     let su = &d.suites;
-    let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
-    let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
-    let find_id = |name: &str| -> SettingID<ZzzSpriteSheetFullSettings> {
-        d.settings_list.setting_descriptors.iter().find(|d| d.id.name == name).unwrap().id.clone()
+    let find_id = |name: &str| -> SettingID<ZzzAssSubtitleFullSettings> {
+        d.settings_list.setting_descriptors.iter()
+            .find(|desc| desc.id.name == name)
+            .map(|desc| desc.id.clone())
+            .unwrap()
     };
 
-    // --- Native Integer2D: spriteRange ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, SPRITE_RANGE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut x: c_int = 0; let mut y: c_int = 0;
-        pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("sprite_range_start"), x.clamp(0, 9999)).unwrap();
-        dst.set_field::<i32>(&find_id("sprite_range_end"), y.clamp(0, 9999)).unwrap();
-    }
-
-    // --- Native Integer2D: repeatRange ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, REPEAT_RANGE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut x: c_int = 0; let mut y: c_int = 0;
-        pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("repeat_range_start"), x.clamp(0, 9999)).unwrap();
-        dst.set_field::<i32>(&find_id("repeat_range_end"), y.clamp(0, 9999)).unwrap();
-    }
-
-    // --- Native Integer2D: spritesCut ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, SPRITES_CUT_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut x: c_int = 0; let mut y: c_int = 0;
-        pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("sprites_cut_x"), x.clamp(1, 99)).unwrap();
-        dst.set_field::<i32>(&find_id("sprites_cut_y"), y.clamp(1, 99)).unwrap();
-    }
-
-    // --- Read generic params ---
+    // Read all generic params, skipping those handled by native Double2D controls
     for desc in d.settings_list.setting_descriptors.iter() {
-        if is_native_grouped_name(desc.id.name) { continue; }
+        if matches!(desc.id.name, "position_x" | "position_y" | "font_scale_x" | "font_scale_y") {
+            continue;
+        }
         if let SettingKind::Group { .. } = &desc.kind {
+            let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+            let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
             let ds = d.strings.get(&desc.id).unwrap();
             let id_cstr = ds.0.as_c_str();
             let mut p: OfxParamHandle = ptr::null_mut();
@@ -698,6 +778,32 @@ unsafe fn apply_params(
         } else {
             read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
         }
+    }
+
+    // --- Native Double2D: Position ---
+    {
+        let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+        let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(param_set, c"position".as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+        let mut x: f64 = 0.5;
+        let mut y: f64 = 0.5;
+        pgv(p, time, &mut x, &mut y).ofx_ok()?;
+        dst.set_field::<f32>(&find_id("position_x"), x.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("position_y"), y.clamp(0.0, 1.0) as f32).unwrap();
+    }
+
+    // --- Native Double2D: Font Scale ---
+    {
+        let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+        let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(param_set, c"font_scale".as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+        let mut x: f64 = 1.0;
+        let mut y: f64 = 1.0;
+        pgv(p, time, &mut x, &mut y).ofx_ok()?;
+        dst.set_field::<f32>(&find_id("font_scale_x"), (x as f32).clamp(0.01, 5.0)).unwrap();
+        dst.set_field::<f32>(&find_id("font_scale_y"), (y as f32).clamp(0.01, 5.0)).unwrap();
     }
 
     Ok(())

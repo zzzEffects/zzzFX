@@ -282,5 +282,50 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuLanczos3 => c"Lanczos3",
         TrKey::MenuLanczos3Desc => c"最高质量，3 瓣 Lanczos。",
         TrKey::MenuPlaybackNormalDesc => c"按正常顺序播放精灵。",
+
+        // ── ASS Subtitle: effect labels ──────────────────
+        TrKey::EffectAssSubtitleName => c"zzzFX ASS 字幕",
+        TrKey::EffectAssSubtitleDesc => c"读取 ASS/SSA 字幕文件并渲染到输出，支持样式和混合选项。",
+
+        // ── ASS Subtitle: native param labels & hints ─────
+        TrKey::NativeSelectAssFile => c"选择 ASS 文件...",
+        TrKey::NativeSelectAssFileHint => c"选择要渲染的 .ass 或 .ssa 字幕文件。",
+
+        // ── ASS Subtitle: generic param labels ────────────
+        TrKey::ParamAssTimeOffsetS => c"时间偏移（秒）",
+        TrKey::ParamAssTimeOffsetSDesc => c"应用于字幕时间戳的偏移量，以秒为单位。调整此值使字幕事件与项目时间轴对齐。",
+        TrKey::ParamAssScale => c"缩放",
+        TrKey::ParamAssScaleDesc => c"所有字幕的全局缩放因子（1.0 = 原始大小）。",
+        TrKey::ParamAssPositionX => c"位置 X",
+        TrKey::ParamAssPositionXDesc => c"所有字幕的水平偏移（0 = 左，1 = 右）。",
+        TrKey::ParamAssPositionY => c"位置 Y",
+        TrKey::ParamAssPositionYDesc => c"所有字幕的垂直偏移（0 = 上，1 = 下）。",
+        TrKey::ParamAssFontScaleX => c"字体缩放 X",
+        TrKey::ParamAssFontScaleXDesc => c"水平字体缩放因子（1.0 = 原始）。",
+        TrKey::ParamAssFontScaleY => c"字体缩放 Y",
+        TrKey::ParamAssFontScaleYDesc => c"垂直字体缩放因子（1.0 = 原始）。",
+        TrKey::ParamAssBlendMode => c"混合模式",
+        TrKey::ParamAssBlendModeDesc => c"字幕与输出的合成方式。",
+
+        // ── ASS Subtitle: blend mode menu descriptions ────
+        TrKey::MenuAssBlendNormalDesc => c"标准 Alpha 混合到输出。",
+        TrKey::MenuAssBlendAddDesc => c"将字幕像素值加到输出。",
+        TrKey::MenuAssBlendScreenDesc => c"将字幕与输出进行滤色（反向乘法，提亮）。",
+        TrKey::MenuAssBlendMultiplyDesc => c"将字幕与输出进行正片叠底（变暗）。",
+        TrKey::MenuAssBlendOverlayDesc => c"根据输出亮度结合正片叠底和滤色。",
+
+        // ── ASS Subtitle: font override ──────────────────
+        TrKey::NativeFontOverride => c"字体覆盖",
+        TrKey::NativeFontOverrideHint => c"使用系统字体覆盖字幕文件中的字体。",
+        TrKey::NativeFontOverrideChoice => c"使用字幕文件中的字体",
+        TrKey::ParamAssFontOverrideString => c"字体覆盖名称",
+
+        TrKey::NativeAssPosition => c"位置",
+        TrKey::NativeAssPositionHint => c"字幕的位置（0-1 归一化）。",
+        TrKey::NativeAssFontScale => c"字体缩放",
+        TrKey::NativeAssFontScaleHint => c"应用于字体渲染的缩放因子（1.0 = 原始）。",
+
+        TrKey::ParamAssUseNativeSize => c"使用生成器的帧大小",
+        TrKey::ParamAssUseNativeSizeDesc => c"启用时，字幕以生成器的输出大小渲染。禁用时，使用ASS PlayRes进行坐标映射，保持原始布局。",
     }
 }

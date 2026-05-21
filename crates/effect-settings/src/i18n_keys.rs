@@ -333,6 +333,51 @@ i18n_keys! {
         MenuLanczos3 = "Lanczos3";
         MenuLanczos3Desc = "Highest quality, 3-lobe Lanczos.";
         MenuPlaybackNormalDesc = "Play sprites in normal order.";
+
+        // ── ASS Subtitle: effect labels ──────────────────
+        EffectAssSubtitleName = "zzzFX ASS Subtitle";
+        EffectAssSubtitleDesc = "Renders ASS/SSA subtitle files onto the output with style support and blending options.";
+
+        // ── ASS Subtitle: native param labels & hints ─────
+        NativeSelectAssFile = "Select ASS File...";
+        NativeSelectAssFileHint = "Choose an .ass or .ssa subtitle file to render.";
+
+        // ── ASS Subtitle: generic param labels ────────────
+        ParamAssTimeOffsetS = "Time Offset (s)";
+        ParamAssTimeOffsetSDesc = "Offset applied to subtitle timestamps in seconds. Adjust this so that subtitle events align with the project timeline.";
+        ParamAssScale = "Scale";
+        ParamAssScaleDesc = "Global scale factor for all subtitles (1.0 = original size).";
+        ParamAssPositionX = "Position X";
+        ParamAssPositionXDesc = "Horizontal offset for all subtitles (0 = left, 1 = right).";
+        ParamAssPositionY = "Position Y";
+        ParamAssPositionYDesc = "Vertical offset for all subtitles (0 = top, 1 = bottom).";
+        ParamAssFontScaleX = "Font Scale X";
+        ParamAssFontScaleXDesc = "Horizontal font scale factor (1.0 = original).";
+        ParamAssFontScaleY = "Font Scale Y";
+        ParamAssFontScaleYDesc = "Vertical font scale factor (1.0 = original).";
+        ParamAssBlendMode = "Blend Mode";
+        ParamAssBlendModeDesc = "How subtitles are composited with the output.";
+
+        // ── ASS Subtitle: blend mode menu descriptions ────
+        MenuAssBlendNormalDesc = "Standard alpha blending onto the output.";
+        MenuAssBlendAddDesc = "Adds subtitle pixel values to the output.";
+        MenuAssBlendScreenDesc = "Screens subtitle with output (inverse multiply, lightens).";
+        MenuAssBlendMultiplyDesc = "Multiplies subtitle with output (darkens).";
+        MenuAssBlendOverlayDesc = "Combines Multiply and Screen based on output brightness.";
+
+        // ── ASS Subtitle: font override ──────────────────
+        NativeFontOverride = "Font Override";
+        NativeFontOverrideHint = "Override the ASS file's font with a system font.";
+        NativeFontOverrideChoice = "Use font from ASS file";
+        ParamAssFontOverrideString = "Font Override Name";
+
+        NativeAssPosition = "Position";
+        NativeAssPositionHint = "Position of the subtitles (0-1 normalized).";
+        NativeAssFontScale = "Font Scale";
+        NativeAssFontScaleHint = "Scale factor applied to font rendering (1.0 = original).";
+
+        ParamAssUseNativeSize = "Use Generator Frame Size";
+        ParamAssUseNativeSizeDesc = "When enabled, subtitles are rendered at the generator's output size. When disabled, ASS PlayRes is used for coordinate mapping to preserve original layout.";
     }
 }
 

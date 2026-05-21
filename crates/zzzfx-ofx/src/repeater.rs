@@ -79,10 +79,10 @@ unsafe fn set_host_info_inner(host: *mut OfxHost) -> OfxResult<()> {
     let host_info = HostInfo { host: h, fetch_suite: fs };
     let suites = SuiteCache::new(host_info)?;
     let settings_list = SettingsList::<ZzzRepeaterFullSettings>::new();
+    i18n::set_lang(i18n::detect_system_lang());
     let (strings, menu_item_strings) = build_string_cache(&settings_list);
 
     EFFECT_DATA.get_or_init(|| EffectData { suites, settings_list, strings, menu_item_strings });
-    i18n::set_lang(i18n::detect_system_lang());
     Ok(())
 }
 

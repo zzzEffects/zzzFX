@@ -8,9 +8,13 @@ pub use effect_settings::setting_id;
 mod stroke;
 mod repeater;
 mod sprite_sheet;
+pub mod ass_subtitle;
 
 pub use repeater::CompositorLayer;
 
+pub use settings::ass_subtitle::{
+    AssBlendMode, ZzzAssSubtitle, ZzzAssSubtitleFullSettings,
+};
 pub use settings::repeater::{
     LayerOrder, ZzzRepeater, ZzzRepeaterFullSettings,
 };

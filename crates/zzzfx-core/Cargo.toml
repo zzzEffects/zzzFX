@@ -10,6 +10,10 @@ example-effect-macros = { path = "../macros" }
 num_enum = { version = "0.7.5", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
+ab_glyph = "0.2"
+ttf-parser = "0.25"
+ass-core = "0.1.1"
+font-kit = "0.14.3"
 rayon = "1.10"
 wgpu = { version = "29", features = ["wgsl"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif", "ico"] }

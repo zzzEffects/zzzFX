@@ -1,3 +1,4 @@
+pub mod ass_subtitle;
 pub mod repeater;
 pub mod sprite_sheet;
 pub mod stroke;
