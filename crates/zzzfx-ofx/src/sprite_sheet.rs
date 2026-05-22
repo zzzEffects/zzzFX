@@ -24,7 +24,7 @@ use crate::shared::{
 
 const SPRITE_RANGE_PARAM: &CStr = c"sprite_range";
 const REPEAT_RANGE_PARAM: &CStr = c"repeat_range";
-const SPRITES_CUT_PARAM: &CStr = c"sprites_cut";
+const DISPLACEMENT_PARAM: &CStr = c"displacement";
 const FILE_SELECT_PARAM: &CStr = c"file_select";
 const FILE_PATH_PARAM: &CStr = c"file_path";
 const PAGE_NAME: &CStr = c"Controls";
@@ -34,7 +34,7 @@ fn is_native_grouped_name(name: &str) -> bool {
         name,
         "sprite_range_start" | "sprite_range_end"
         | "repeat_range_start" | "repeat_range_end"
-        | "sprites_cut_x" | "sprites_cut_y"
+        | "displacement_x" | "displacement_y"
     )
 }
 
@@ -58,6 +58,11 @@ struct InstanceData {
     cached_output_w: usize,
     cached_output_h: usize,
     cached_file_path: String,
+    // Selection mode overlay state
+    first_click_frame: Option<i32>,
+    second_click_frame: Option<i32>,
+    selection_range_start: Option<i32>,
+    selection_range_end: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +191,9 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
     pi(ep, kOfxImageEffectPluginPropHostFrameThreading.as_ptr(), 0, 0).ofx_ok()?;
     pi(ep, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 1).ofx_ok()?;
     pi(ep, kOfxImageEffectPropTemporalClipAccess.as_ptr(), 0, 0).ofx_ok()?;
+    // Register overlay interact (V1 — receives image effect handle directly)
+    let pp = su.property_suite.propSetPointer.ok_or(OfxStat::kOfxStatFailed)?;
+    pp(ep, kOfxImageEffectPluginPropOverlayInteractV1.as_ptr(), 0, overlay_main as *mut c_void).ofx_ok()?;
     Ok(())
 }
 
@@ -228,7 +236,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     // --- Single-pass param definition with interleaved native Int2Ds ---
     let mut defined_range = false;
     let mut defined_repeat = false;
-    let mut defined_cut = false;
+    let mut defined_displacement = false;
 
     for desc in d.settings_list.setting_descriptors.iter() {
         if !defined_range && desc.id.name == "sprite_range_start" {
@@ -249,16 +257,16 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
             )?;
             defined_repeat = true;
         }
-        if !defined_cut && desc.id.name == "sprites_cut_x" {
-            define_native_int2d(
-                su, param_set, SPRITES_CUT_PARAM,
-                i18n::tr_cstr(TrKey::NativeSpritesCut),
-                i18n::tr_cstr(TrKey::NativeSpritesCutHint),
-                defaults.sprites_cut_x, defaults.sprites_cut_y, 1, 99,
+        if !defined_displacement && desc.id.name == "displacement_x" {
+            define_native_double2d(
+                su, param_set, DISPLACEMENT_PARAM,
+                i18n::tr_cstr(TrKey::ParamSpriteDisplacement),
+                i18n::tr_cstr(TrKey::ParamSpriteDisplacementDesc),
+                defaults.displacement_x as f64, defaults.displacement_y as f64,
+                0.0, 1.0,
             )?;
-            defined_cut = true;
+            defined_displacement = true;
         }
-
         if is_native_grouped_name(desc.id.name) { continue; }
         define_single_param(su, param_set, desc, &defaults, PAGE_NAME, &d.strings, &d.menu_item_strings)?;
     }
@@ -298,6 +306,10 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
         cached_scale: 0.0, cached_filter: 0,
         cached_output_w: 0, cached_output_h: 0,
         cached_file_path: String::new(),
+        first_click_frame: None,
+        second_click_frame: None,
+        selection_range_start: None,
+        selection_range_end: None,
     });
     psp(ep, kOfxPropInstanceData.as_ptr(), 0, Box::into_raw(idata) as *mut c_void).ofx_ok()?;
     Ok(())
@@ -476,7 +488,62 @@ unsafe fn action_render(
     let mut frame_rate: f64 = 1.0;
     let _ = pgd(ep, kOfxImageEffectPropFrameRate.as_ptr(), 0, &mut frame_rate);
 
-    let ss: ZzzSpriteSheet = (&settings).into();
+    let mut ss: ZzzSpriteSheet = (&settings).into();
+
+    // Apply pending selection from overlay clicks
+    if ss.selection_mode {
+        if let Some(ref idata_inner) = idata {
+            if let (Some(start), Some(end)) = (idata_inner.selection_range_start, idata_inner.selection_range_end) {
+                ss.sprite_range_start = start;
+                ss.sprite_range_end = end;
+            }
+        }
+    }
+
+    // --- Compute integrated speed offset (trapezoidal integration) ---
+    let rate = if frame_rate > 0.0 { frame_rate } else { 1.0 };
+    let integrated_speed_offset: Option<f64> = if ss.speed == 0.0 || ss.selection_mode {
+        None // static or selection mode: use instantaneous speed
+    } else {
+        let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+        let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
+        // Find the speed descriptor to get its OFX param name
+        let speed_desc = d.settings_list.setting_descriptors.iter()
+            .find(|desc| desc.id.name == "speed");
+        if let Some(speed_desc) = speed_desc {
+            let ds = d.strings.get(&speed_desc.id);
+            if let Some(ds) = ds {
+                let mut speed_handle: OfxParamHandle = ptr::null_mut();
+                pgh(param_set, ds.0.as_c_str().as_ptr(), &mut speed_handle, ptr::null_mut()).ofx_ok()?;
+                let n_frames = (time * rate).ceil() as usize;
+                let mut integral = 0.0f64;
+                let mut prev_speed: f64 = 0.0;
+                let mut prev_t: f64 = 0.0;
+                for i in 1..=n_frames {
+                    let t = (i as f64) / rate;
+                    let mut sp: f64 = 0.0;
+                    pgv(speed_handle, t, &mut sp).ofx_ok()?;
+                    let dt = t - prev_t;
+                    integral += (prev_speed + sp) * 0.5 * dt / rate;
+                    prev_speed = sp;
+                    prev_t = t;
+                }
+                // Add final segment from last sample to exact time
+                if prev_t < time {
+                    let mut sp: f64 = 0.0;
+                    pgv(speed_handle, time, &mut sp).ofx_ok()?;
+                    let dt = time - prev_t;
+                    integral += (prev_speed + sp) * 0.5 * dt / rate;
+                }
+                Some(integral)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
     let is_static = (ss.sprite_rows == 1 && ss.sprite_columns == 1)
         || ss.sprite_range_start == ss.sprite_range_end
         || ss.speed == 0.0;
@@ -484,62 +551,79 @@ unsafe fn action_render(
 
     let mut dst_buf = vec![0u8; width * height * 4];
 
-    let cache_hit = 'cache: {
-        if !is_static { break 'cache false; }
-        let idata_ref = idata.as_deref();
-        let Some(idata_ref) = idata_ref else { break 'cache false };
-        if !idata_ref.cache_valid
-            || idata_ref.cached_output_w != width
-            || idata_ref.cached_output_h != height
-            || idata_ref.cached_scale != ss.scale
-            || idata_ref.cached_filter != filter_discriminant
-            || idata_ref.cached_file_path != idata_ref.file_path
-        { break 'cache false; }
-        if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_ref.sheet_width, idata_ref.sheet_height) {
-            if crop_rect == (idata_ref.cached_crop_x, idata_ref.cached_crop_y, idata_ref.cached_crop_w, idata_ref.cached_crop_h) {
-                dst_buf.copy_from_slice(&idata_ref.cached_dst);
-                break 'cache true;
-            }
-        }
-        false
-    };
-
-    let mut rendered_rect: Option<(u32, u32, u32, u32)> = None;
-
-    if !cache_hit {
+    // Selection mode: render full sheet with grid
+    if ss.selection_mode {
         if let Some(ref idata_inner) = idata {
             if !idata_inner.decoded_rgba.is_empty() {
-                if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_inner.sheet_width, idata_inner.sheet_height) {
-                    ss.render_sprite(
-                        crop_rect, &idata_inner.decoded_rgba,
-                        idata_inner.sheet_width, idata_inner.sheet_height,
-                        &mut dst_buf, width, height,
-                    );
-                    rendered_rect = Some(crop_rect);
-                }
+                ss.render_selection_mode(
+                    &idata_inner.decoded_rgba,
+                    idata_inner.sheet_width, idata_inner.sheet_height,
+                    &mut dst_buf, width, height,
+                );
             }
         }
-
-        let cache_file_path = idata.as_deref().map(|i| i.file_path.clone()).unwrap_or_default();
-        if let Some(crop_rect) = rendered_rect {
-            if is_static {
-                if let Some(ref mut idata_inner) = idata {
-                    idata_inner.cached_dst = dst_buf.clone();
-                    idata_inner.cache_valid = true;
-                    idata_inner.cached_crop_x = crop_rect.0;
-                    idata_inner.cached_crop_y = crop_rect.1;
-                    idata_inner.cached_crop_w = crop_rect.2;
-                    idata_inner.cached_crop_h = crop_rect.3;
-                    idata_inner.cached_scale = ss.scale;
-                    idata_inner.cached_filter = filter_discriminant;
-                    idata_inner.cached_output_w = width;
-                    idata_inner.cached_output_h = height;
-                    idata_inner.cached_file_path = cache_file_path;
+        // Invalidate cache in selection mode
+        if let Some(ref mut idata_inner) = idata {
+            idata_inner.cache_valid = false;
+        }
+    } else {
+        let cache_hit = 'cache: {
+            if !is_static { break 'cache false; }
+            let idata_ref = idata.as_deref();
+            let Some(idata_ref) = idata_ref else { break 'cache false };
+            if !idata_ref.cache_valid
+                || idata_ref.cached_output_w != width
+                || idata_ref.cached_output_h != height
+                || idata_ref.cached_scale != ss.scale
+                || idata_ref.cached_filter != filter_discriminant
+                || idata_ref.cached_file_path != idata_ref.file_path
+            { break 'cache false; }
+            if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_ref.sheet_width, idata_ref.sheet_height, None) {
+                if crop_rect == (idata_ref.cached_crop_x, idata_ref.cached_crop_y, idata_ref.cached_crop_w, idata_ref.cached_crop_h) {
+                    dst_buf.copy_from_slice(&idata_ref.cached_dst);
+                    break 'cache true;
                 }
             }
-        } else if !is_static {
-            if let Some(ref mut idata_inner) = idata {
-                idata_inner.cache_valid = false;
+            false
+        };
+
+        let mut rendered_rect: Option<(u32, u32, u32, u32)> = None;
+
+        if !cache_hit {
+            if let Some(ref idata_inner) = idata {
+                if !idata_inner.decoded_rgba.is_empty() {
+                    if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_inner.sheet_width, idata_inner.sheet_height, integrated_speed_offset) {
+                        ss.render_sprite(
+                            crop_rect, &idata_inner.decoded_rgba,
+                            idata_inner.sheet_width, idata_inner.sheet_height,
+                            &mut dst_buf, width, height,
+                        );
+                        rendered_rect = Some(crop_rect);
+                    }
+                }
+            }
+
+            let cache_file_path = idata.as_deref().map(|i| i.file_path.clone()).unwrap_or_default();
+            if let Some(crop_rect) = rendered_rect {
+                if is_static {
+                    if let Some(ref mut idata_inner) = idata {
+                        idata_inner.cached_dst = dst_buf.clone();
+                        idata_inner.cache_valid = true;
+                        idata_inner.cached_crop_x = crop_rect.0;
+                        idata_inner.cached_crop_y = crop_rect.1;
+                        idata_inner.cached_crop_w = crop_rect.2;
+                        idata_inner.cached_crop_h = crop_rect.3;
+                        idata_inner.cached_scale = ss.scale;
+                        idata_inner.cached_filter = filter_discriminant;
+                        idata_inner.cached_output_w = width;
+                        idata_inner.cached_output_h = height;
+                        idata_inner.cached_file_path = cache_file_path;
+                    }
+                }
+            } else if !is_static {
+                if let Some(ref mut idata_inner) = idata {
+                    idata_inner.cache_valid = false;
+                }
             }
         }
     }
@@ -636,6 +720,34 @@ unsafe fn define_native_int2d(
     Ok(())
 }
 
+unsafe fn define_native_double2d(
+    suites: &SuiteCache,
+    param_set: OfxParamSetHandle,
+    name: &CStr,
+    label: &CStr,
+    hint: &CStr,
+    default_x: f64,
+    default_y: f64,
+    min: f64,
+    max: f64,
+) -> OfxResult<()> {
+    let pdef = suites.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
+    let ps = suites.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
+    let pd = suites.property_suite.propSetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+    let mut pp: OfxPropertySetHandle = ptr::null_mut();
+    pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), name.as_ptr(), &mut pp).ofx_ok()?;
+    ps(pp, kOfxPropLabel.as_ptr(), 0, label.as_ptr()).ofx_ok()?;
+    ps(pp, kOfxParamPropHint.as_ptr(), 0, hint.as_ptr()).ofx_ok()?;
+    pd(pp, kOfxParamPropDefault.as_ptr(), 0, default_x).ofx_ok()?;
+    pd(pp, kOfxParamPropDefault.as_ptr(), 1, default_y).ofx_ok()?;
+    pd(pp, kOfxParamPropMin.as_ptr(), 0, min).ofx_ok()?;
+    pd(pp, kOfxParamPropMin.as_ptr(), 1, min).ofx_ok()?;
+    pd(pp, kOfxParamPropMax.as_ptr(), 0, max).ofx_ok()?;
+    pd(pp, kOfxParamPropMax.as_ptr(), 1, max).ofx_ok()?;
+    ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Parameter reading
 // ---------------------------------------------------------------------------
@@ -674,18 +786,18 @@ unsafe fn apply_params(
         dst.set_field::<i32>(&find_id("repeat_range_end"), y.clamp(0, 9999)).unwrap();
     }
 
-    // --- Native Integer2D: spritesCut ---
+    // --- Native Double2D: displacement ---
     {
         let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, SPRITES_CUT_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut x: c_int = 0; let mut y: c_int = 0;
+        pgh(param_set, DISPLACEMENT_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+        let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("sprites_cut_x"), x.clamp(1, 99)).unwrap();
-        dst.set_field::<i32>(&find_id("sprites_cut_y"), y.clamp(1, 99)).unwrap();
+        dst.set_field::<f32>(&find_id("displacement_x"), x.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("displacement_y"), y.clamp(0.0, 1.0) as f32).unwrap();
     }
 
     // --- Read generic params ---
-    for desc in d.settings_list.setting_descriptors.iter() {
+    for desc in d.settings_list.all_descriptors() {
         if is_native_grouped_name(desc.id.name) { continue; }
         if let SettingKind::Group { .. } = &desc.kind {
             let ds = d.strings.get(&desc.id).unwrap();
@@ -698,6 +810,106 @@ unsafe fn apply_params(
         } else {
             read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
         }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Overlay Interact (V1 — receives image effect handle directly)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn overlay_main(
+    action: *const c_char,
+    handle: *const c_void,
+    inArgs: OfxPropertySetHandle,
+    _outArgs: OfxPropertySetHandle,
+) -> OfxStatus {
+    let effect = handle as OfxImageEffectHandle;
+    let action = CStr::from_ptr(action);
+    if action == kOfxInteractActionPenDown {
+        match interact_pen_down(effect, inArgs) {
+            Ok(()) => OfxStat::kOfxStatOK,
+            Err(_) => OfxStat::kOfxStatReplyDefault,
+        }
+    } else if action == kOfxInteractActionDraw
+        || action == kOfxInteractActionPenUp
+        || action == kOfxInteractActionPenMotion
+    {
+        // Grid is rendered in the output image; overlay draw is a no-op.
+        OfxStat::kOfxStatOK
+    } else {
+        OfxStat::kOfxStatReplyDefault
+    }
+}
+
+unsafe fn interact_pen_down(
+    effect: OfxImageEffectHandle,
+    inArgs: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    let d = data();
+    let su = &d.suites;
+
+    // Get instance data
+    let gp = su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
+    let gph = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
+    let gps = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
+
+    let mut ep: OfxPropertySetHandle = ptr::null_mut();
+    gp(effect, &mut ep).ofx_ok()?;
+    let mut data_ptr: *mut c_void = ptr::null_mut();
+    gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+    if data_ptr.is_null() { return Ok(()); }
+    let idata = &mut *(data_ptr as *mut InstanceData);
+
+    // Read current params to check selection mode
+    let mut param_set: OfxParamSetHandle = ptr::null_mut();
+    gps(effect, &mut param_set).ofx_ok()?;
+    let mut settings = ZzzSpriteSheetFullSettings::default();
+    let _ = apply_params(param_set, 0.0, &mut settings);
+    let ss: ZzzSpriteSheet = (&settings).into();
+
+    if !ss.selection_mode {
+        return Ok(());
+    }
+
+    // Read pen position
+    let pgd = su.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+    let mut pen_x: f64 = 0.0;
+    let mut pen_y: f64 = 0.0;
+    pgd(inArgs, c"OfxInteractPropPenPosition".as_ptr(), 0, &mut pen_x).ofx_ok()?;
+    pgd(inArgs, c"OfxInteractPropPenPosition".as_ptr(), 1, &mut pen_y).ofx_ok()?;
+
+    // Convert to grid cell index
+    let columns = ss.sprite_columns.max(1);
+    let rows = ss.sprite_rows.max(1);
+    let cut_x = ss.sprites_cut_x.max(1);
+    let cut_y = ss.sprites_cut_y.max(1);
+    let total_cols = columns * cut_x;
+    let total_rows = rows * cut_y;
+
+    let col = ((pen_x * total_cols as f64).floor() as i32).clamp(0, total_cols - 1);
+    let row = ((pen_y * total_rows as f64).floor() as i32).clamp(0, total_rows - 1);
+    let frame_idx = row * total_cols + col;
+
+    // Two-click selection: first click sets start, second click sets end
+    if idata.first_click_frame.is_none() {
+        idata.first_click_frame = Some(frame_idx);
+        idata.second_click_frame = None;
+    } else if idata.second_click_frame.is_none() {
+        let start = idata.first_click_frame.unwrap();
+        let end = frame_idx;
+        idata.second_click_frame = Some(frame_idx);
+
+        // Store the selected range for use in action_render
+        let lo = start.min(end);
+        let hi = start.max(end);
+        idata.selection_range_start = Some(lo);
+        idata.selection_range_end = Some(hi);
+    } else {
+        // Reset: start new selection
+        idata.first_click_frame = Some(frame_idx);
+        idata.second_click_frame = None;
     }
 
     Ok(())

@@ -277,7 +277,7 @@ i18n_keys! {
         ParamSpriteRangeEnd = "Sprite Range End";
         ParamSpriteRangeEndDesc = "Index of the last sprite in the animation.";
         ParamFrameOffset = "Frame Offset";
-        ParamFrameOffsetDesc = "Output frame number for the first sprite.";
+        ParamFrameOffsetDesc = "Frame offset (floored). Shift the animation by partial or whole frames.";
         ParamSpeed = "Speed";
         ParamSpeedDesc = "Playback speed. 0 = paused.";
         ParamReadingDirection = "Reading Direction";
@@ -300,6 +300,22 @@ i18n_keys! {
         ParamScaleDesc = "Scale factor applied to the output sprite (1.0 = original size).";
         ParamScaleAlgorithm = "Scale Algorithm";
         ParamScaleAlgorithmDesc = "Resampling algorithm used when scaling.";
+        ParamSpriteDisplacementX = "Displacement X";
+        ParamSpriteDisplacementXDesc = "Horizontal pixel offset applied after scaling and centering.";
+        ParamSpriteDisplacementY = "Displacement Y";
+        ParamSpriteDisplacementYDesc = "Vertical pixel offset applied after scaling and centering.";
+        ParamSpriteDisplacement = "Displacement";
+        ParamSpriteDisplacementDesc = "Normalized position offset (0-1, default 0.5 = center).";
+        ParamSpriteRotation = "Rotation";
+        ParamSpriteRotationDesc = "Rotation angle in degrees around the image center.";
+        ParamSpriteDisplacementPixelBased = "Pixel-Based Displacement";
+        ParamSpriteDisplacementPixelBasedDesc = "Quantize displacement to the scaled pixel grid for pixel-art movement.";
+        ParamSpriteRotationPixelBased = "Pixel-Based Rotation";
+        ParamSpriteRotationPixelBasedDesc = "Use RotSprite pixel-art rotation preserving sharp edges.";
+        ParamSpriteSelectionMode = "Selection Mode";
+        ParamSpriteSelectionModeDesc = "Interactive sprite selection with grid overlay and frame picking.";
+        ParamSpriteFitToOutput = "Fit Sprite Sheet to Output";
+        ParamSpriteFitToOutputDesc = "Scale the full sprite sheet to fit within output bounds while preserving aspect ratio.";
 
         // Sprite sheet menu items
         MenuHForward = "H. Forward";

@@ -59,7 +59,7 @@ pub struct ZzzSpriteSheet {
     pub sprite_rows: i32,
     pub sprite_range_start: i32,
     pub sprite_range_end: i32,
-    pub frame_offset: i32,
+    pub frame_offset: f32,
     pub speed: f32,
     pub reading_direction: ReadingDirection,
     pub playback_mode: PlaybackMode,
@@ -71,6 +71,13 @@ pub struct ZzzSpriteSheet {
     pub sprites_cut_y: i32,
     pub scale: f32,
     pub scale_algorithm: ScaleAlgorithm,
+    pub displacement_x: f32,
+    pub displacement_y: f32,
+    pub rotation: f32,
+    pub displacement_pixel_based: bool,
+    pub rotation_pixel_based: bool,
+    pub selection_mode: bool,
+    pub fit_sprite_sheet_to_output: bool,
 }
 
 impl Default for ZzzSpriteSheet {
@@ -80,7 +87,7 @@ impl Default for ZzzSpriteSheet {
             sprite_rows: 1,
             sprite_range_start: 0,
             sprite_range_end: 0,
-            frame_offset: 0,
+            frame_offset: 0.0,
             speed: 1.0,
             reading_direction: ReadingDirection::HForward,
             playback_mode: PlaybackMode::Normal,
@@ -92,6 +99,13 @@ impl Default for ZzzSpriteSheet {
             sprites_cut_y: 1,
             scale: 1.0,
             scale_algorithm: ScaleAlgorithm::Nearest,
+            displacement_x: 0.5,
+            displacement_y: 0.5,
+            rotation: 0.0,
+            displacement_pixel_based: true,
+            rotation_pixel_based: true,
+            selection_mode: false,
+            fit_sprite_sheet_to_output: true,
         }
     }
 }
@@ -120,8 +134,15 @@ pub mod setting_id {
     pub const REPEAT_COUNT:       SID = setting_id!("repeat_count", repeat_count);
     pub const SPRITES_CUT_X:      SID = setting_id!("sprites_cut_x", sprites_cut_x);
     pub const SPRITES_CUT_Y:      SID = setting_id!("sprites_cut_y", sprites_cut_y);
-    pub const SCALE:              SID = setting_id!("scale", scale);
-    pub const SCALE_ALGORITHM:    SID = setting_id!("scale_algorithm", scale_algorithm);
+    pub const SCALE:                       SID = setting_id!("scale", scale);
+    pub const SCALE_ALGORITHM:             SID = setting_id!("scale_algorithm", scale_algorithm);
+    pub const DISPLACEMENT_X:              SID = setting_id!("displacement_x", displacement_x);
+    pub const DISPLACEMENT_Y:              SID = setting_id!("displacement_y", displacement_y);
+    pub const ROTATION:                    SID = setting_id!("rotation", rotation);
+    pub const DISPLACEMENT_PIXEL_BASED:    SID = setting_id!("displacement_pixel_based", displacement_pixel_based);
+    pub const ROTATION_PIXEL_BASED:        SID = setting_id!("rotation_pixel_based", rotation_pixel_based);
+    pub const SELECTION_MODE:              SID = setting_id!("selection_mode", selection_mode);
+    pub const FIT_SPRITE_SHEET_TO_OUTPUT:   SID = setting_id!("fit_sprite_sheet_to_output", fit_sprite_sheet_to_output);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +167,21 @@ impl Settings for ZzzSpriteSheetFullSettings {
                 id: setting_id::SPRITE_ROWS,
             },
             SettingDescriptor {
+                label_key: TrKey::ParamSpriteSelectionMode,
+                description_key: Some(TrKey::ParamSpriteSelectionModeDesc),
+                kind: SettingKind::Group {
+                    children: vec![
+                        SettingDescriptor {
+                            label_key: TrKey::ParamSpriteFitToOutput,
+                            description_key: Some(TrKey::ParamSpriteFitToOutputDesc),
+                            kind: SettingKind::Boolean,
+                            id: setting_id::FIT_SPRITE_SHEET_TO_OUTPUT,
+                        },
+                    ],
+                },
+                id: setting_id::SELECTION_MODE,
+            },
+            SettingDescriptor {
                 label_key: TrKey::ParamSpriteRangeStart,
                 description_key: Some(TrKey::ParamSpriteRangeStartDesc),
                 kind: SettingKind::IntRange { range: 0..=9999 },
@@ -160,7 +196,10 @@ impl Settings for ZzzSpriteSheetFullSettings {
             SettingDescriptor {
                 label_key: TrKey::ParamFrameOffset,
                 description_key: Some(TrKey::ParamFrameOffsetDesc),
-                kind: SettingKind::IntRange { range: -9999..=9999 },
+                kind: SettingKind::FloatRange {
+                    range: -9999.0..=9999.0,
+                    logarithmic: false,
+                },
                 id: setting_id::FRAME_OFFSET,
             },
             SettingDescriptor {
@@ -236,6 +275,46 @@ impl Settings for ZzzSpriteSheetFullSettings {
                 description_key: Some(TrKey::ParamSpritesCutYDesc),
                 kind: SettingKind::IntRange { range: 1..=99 },
                 id: setting_id::SPRITES_CUT_Y,
+            },
+            // Marker descriptors for native Double2D placement (skipped in OFX via is_native_grouped_name)
+            SettingDescriptor {
+                label_key: TrKey::ParamSpriteDisplacementX,
+                description_key: Some(TrKey::ParamSpriteDisplacementXDesc),
+                kind: SettingKind::FloatRange {
+                    range: 0.0..=1.0,
+                    logarithmic: false,
+                },
+                id: setting_id::DISPLACEMENT_X,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamSpriteDisplacementY,
+                description_key: Some(TrKey::ParamSpriteDisplacementYDesc),
+                kind: SettingKind::FloatRange {
+                    range: 0.0..=1.0,
+                    logarithmic: false,
+                },
+                id: setting_id::DISPLACEMENT_Y,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamSpriteDisplacementPixelBased,
+                description_key: Some(TrKey::ParamSpriteDisplacementPixelBasedDesc),
+                kind: SettingKind::Boolean,
+                id: setting_id::DISPLACEMENT_PIXEL_BASED,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamSpriteRotation,
+                description_key: Some(TrKey::ParamSpriteRotationDesc),
+                kind: SettingKind::FloatRange {
+                    range: -3600.0..=3600.0,
+                    logarithmic: false,
+                },
+                id: setting_id::ROTATION,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamSpriteRotationPixelBased,
+                description_key: Some(TrKey::ParamSpriteRotationPixelBasedDesc),
+                kind: SettingKind::Boolean,
+                id: setting_id::ROTATION_PIXEL_BASED,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamScale,

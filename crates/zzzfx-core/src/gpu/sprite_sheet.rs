@@ -19,6 +19,8 @@ struct SpriteSheetUniforms {
     crop_h: u32,
     scale: f32,
     filter_mode: u32, // 0 = nearest, 1 = bilinear
+    displacement_x: f32,
+    displacement_y: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +63,9 @@ pub fn try_sprite_sheet_gpu_render(
     sheet_h: u32,
     scale: f32,
     filter_mode: u32,
+    displacement_x: f32,
+    displacement_y: f32,
+    displacement_pixel_based: bool,
     dst: &mut [u8],
     dst_w: u32,
     dst_h: u32,
@@ -94,6 +99,19 @@ pub fn try_sprite_sheet_gpu_render(
         guard.bufs = create_buffers(guard.device, dst_w, dst_h, sheet_byte_size);
     }
 
+    // Quantize displacement if pixel_based
+    let pixel_scale = scale.max(0.01);
+    let dx = if displacement_pixel_based {
+        (displacement_x / pixel_scale).round() * pixel_scale
+    } else {
+        displacement_x
+    };
+    let dy = if displacement_pixel_based {
+        (displacement_y / pixel_scale).round() * pixel_scale
+    } else {
+        displacement_y
+    };
+
     let uniforms = SpriteSheetUniforms {
         dst_w,
         dst_h,
@@ -105,6 +123,8 @@ pub fn try_sprite_sheet_gpu_render(
         crop_h: ch,
         scale,
         filter_mode,
+        displacement_x: dx,
+        displacement_y: dy,
     };
 
     // Upload sheet and uniforms

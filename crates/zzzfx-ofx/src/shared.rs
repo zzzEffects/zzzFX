@@ -42,6 +42,10 @@ pub struct SuiteCache {
     #[allow(dead_code)]
     pub memory_suite: &'static OfxMemorySuiteV1,
     pub parameter_suite: &'static OfxParameterSuiteV1,
+    #[allow(dead_code)]
+    pub interact_suite: Option<&'static OfxInteractSuiteV1>,
+    #[allow(dead_code)]
+    pub draw_suite: Option<&'static OfxDrawSuiteV1>,
     pub supports_multiple_clip_depths: AtomicBool,
 }
 
@@ -67,6 +71,16 @@ impl SuiteCache {
             kOfxParameterSuite.as_ptr(),
             1,
         ) as *const OfxParameterSuiteV1;
+        let interact_suite = (host_info.fetch_suite)(
+            host_info.host as *const _ as _,
+            c"OfxInteractSuite".as_ptr(),
+            1,
+        ) as *const OfxInteractSuiteV1;
+        let draw_suite = (host_info.fetch_suite)(
+            host_info.host as *const _ as _,
+            c"OfxDrawSuite".as_ptr(),
+            1,
+        ) as *const OfxDrawSuiteV1;
 
         Ok(Self {
             host_info,
@@ -82,6 +96,8 @@ impl SuiteCache {
             parameter_suite: parameter_suite
                 .as_ref()
                 .ok_or(OfxStat::kOfxStatErrMissingHostFeature)?,
+            interact_suite: unsafe { interact_suite.as_ref() },
+            draw_suite: unsafe { draw_suite.as_ref() },
             supports_multiple_clip_depths: AtomicBool::new(false),
         })
     }

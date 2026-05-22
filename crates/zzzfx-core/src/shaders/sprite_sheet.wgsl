@@ -1,4 +1,4 @@
-// zzzSpriteSheetReader GPU render: single-pass crop + scale + center.
+// zzzSpriteSheetReader GPU render: single-pass crop + scale + center + displacement.
 // Uses shared.wgsl for unpack_rgba8 and pack_rgba8.
 
 struct Uniforms {
@@ -12,6 +12,8 @@ struct Uniforms {
     crop_h: u32,
     scale: f32,
     filter_mode: u32,  // 0 = nearest, 1 = bilinear
+    displacement_x: f32,
+    displacement_y: f32,
 }
 
 @group(0) @binding(0) var<storage, read> sheet: array<u32>;
@@ -35,18 +37,26 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let out_w = max(1u, u32(round(f32(uniforms.crop_w) * uniforms.scale)));
     let out_h = max(1u, u32(round(f32(uniforms.crop_h) * uniforms.scale)));
 
-    let offset_x = if uniforms.dst_w >= out_w { (uniforms.dst_w - out_w) / 2u } else { 0u };
-    let offset_y = if uniforms.dst_h >= out_h { (uniforms.dst_h - out_h) / 2u } else { 0u };
+    // Signed centering — scaled sprite is always centered; may overflow all sides.
+    var offset_x = (i32(uniforms.dst_w) - i32(out_w)) / 2;
+    var offset_y = (i32(uniforms.dst_h) - i32(out_h)) / 2;
 
-    if gid.x < offset_x || gid.x >= offset_x + out_w
-        || gid.y < offset_y || gid.y >= offset_y + out_h
+    // Apply displacement (quantization already done on CPU side)
+    offset_x += i32(round(uniforms.displacement_x));
+    offset_y += i32(round(uniforms.displacement_y));
+
+    let gx = i32(gid.x);
+    let gy = i32(gid.y);
+
+    if gx < offset_x || gx >= offset_x + i32(out_w)
+        || gy < offset_y || gy >= offset_y + i32(out_h)
     {
         dst[out_idx] = 0u;
         return;
     }
 
-    let sx = gid.x - offset_x;
-    let sy = gid.y - offset_y;
+    let sx = u32(gx - offset_x);
+    let sy = u32(gy - offset_y);
 
     if uniforms.filter_mode == 0u {
         // Nearest-neighbor
