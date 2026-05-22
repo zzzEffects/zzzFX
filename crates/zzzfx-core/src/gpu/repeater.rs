@@ -34,6 +34,7 @@ struct GpuContext {
     queue: &'static wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     bufs: GpuBuffers,
+    bind_group: Option<wgpu::BindGroup>,
 }
 
 struct GpuBuffers {
@@ -84,6 +85,7 @@ pub fn try_repeater_gpu_render(
 
     if guard.bufs.width != w || guard.bufs.height != h {
         guard.bufs = create_buffers(guard.device, w, h);
+        guard.bind_group = None; // Invalidate cached bind group
     }
 
     let center_x = w as f32 * 0.5;
@@ -114,26 +116,28 @@ pub fn try_repeater_gpu_render(
     let workgroup_count_y = (h + 15) / 16;
     let layout = guard.pipeline.get_bind_group_layout(0);
 
-    // E3: Create a single bind group (reused for all layers — references buffers by handle).
-    // Buffer contents change between passes, but bind group references remain valid.
-    let bind_group = guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("repeater"),
-        layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: guard.bufs.src_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: guard.bufs.uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: guard.bufs.dst_buf.as_entire_binding(),
-            },
-        ],
-    });
+    // Create or reuse bind group (references buffers by handle, valid across frames)
+    if guard.bind_group.is_none() {
+        guard.bind_group = Some(guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("repeater"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: guard.bufs.src_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: guard.bufs.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: guard.bufs.dst_buf.as_entire_binding(),
+                },
+            ],
+        }));
+    }
+    let bind_group = guard.bind_group.as_ref().unwrap();
 
     // One submit per layer so per-layer uniform writes are visible
     for i in 0..layers.len() {
@@ -170,7 +174,7 @@ pub fn try_repeater_gpu_render(
                 timestamp_writes: None,
             });
             pass.set_pipeline(&guard.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
         guard.queue.submit(std::iter::once(encoder.finish()));
@@ -244,6 +248,7 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         queue,
         pipeline,
         bufs,
+        bind_group: None,
     }));
     Ok(GPU_CTX.get().unwrap())
 }

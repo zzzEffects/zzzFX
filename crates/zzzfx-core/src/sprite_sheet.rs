@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use crate::settings::sprite_sheet::{
     PlaybackMode, ReadingDirection, ScaleAlgorithm, ZzzSpriteSheet,
 };
@@ -12,6 +14,27 @@ fn positive_mod(a: i64, b: i64) -> i64 {
     } else {
         (b - (a.abs() % b)) % b
     }
+}
+
+// Per-thread reusable buffers to avoid allocation churn across frames.
+struct SpriteBufs {
+    crop_buf: Vec<u8>,
+    scaled_buf: Vec<u8>,
+    rotated_buf: Vec<u8>,
+}
+
+impl Default for SpriteBufs {
+    fn default() -> Self {
+        Self {
+            crop_buf: Vec::new(),
+            scaled_buf: Vec::new(),
+            rotated_buf: Vec::new(),
+        }
+    }
+}
+
+thread_local! {
+    static SPRITE_BUFS: RefCell<SpriteBufs> = RefCell::new(SpriteBufs::default());
 }
 
 impl ZzzSpriteSheet {
@@ -50,8 +73,10 @@ impl ZzzSpriteSheet {
         };
         let rr_start = self.repeat_range_start.max(sr_lo).min(sr_hi);
         let rr_end = self.repeat_range_end.max(sr_lo).min(sr_hi);
-        let m = (rr_end - rr_start).unsigned_abs() as i32 + 1;
-        let repeat_offset_in_cycle = rr_start - self.sprite_range_start;
+        let rr_actual_start = rr_start.min(rr_end);
+        let rr_actual_end = rr_start.max(rr_end);
+        let m = (rr_actual_end - rr_actual_start).unsigned_abs() as i32 + 1;
+        let repeat_offset_in_cycle = rr_actual_start - self.sprite_range_start;
 
         // Adjust n for NormalReverseMerge (last frame = first frame merged)
         let n_adj = if self.playback_mode == PlaybackMode::NormalReverseMerge {
@@ -110,14 +135,18 @@ impl ZzzSpriteSheet {
             ) as i32;
         }
 
-        // Handle repeat range: extract repeat frames from the cycle index
-        let j = if m > 0 {
-            (i - repeat_offset_in_cycle) / m
-        } else {
-            0
-        };
-        let j = if j < 0 { 0 } else { j };
-        i = i - std::cmp::min(j, self.repeat_count) * m;
+        // Handle repeat range: fold repeat blocks back to the base occurrence
+        if m > 0 {
+            let repeat_end_in_cycle = repeat_offset_in_cycle + m * (self.repeat_count + 1);
+            if i >= repeat_offset_in_cycle && i < repeat_end_in_cycle {
+                // Inside the repeat zone: fold to the base block
+                let rel = i - repeat_offset_in_cycle;
+                i = repeat_offset_in_cycle + (rel % m);
+            } else if i >= repeat_end_in_cycle {
+                // Past all repeat blocks: skip back
+                i = i - self.repeat_count * m;
+            }
+        }
 
         // Map to absolute sprite index in the sheet
         let abs_idx = if self.sprite_range_start <= self.sprite_range_end {
@@ -126,50 +155,50 @@ impl ZzzSpriteSheet {
             self.sprite_range_start - i
         };
 
-        // Grid layout computation
-        let columns = self.sprite_columns.max(1) as u32;
-        let rows = self.sprite_rows.max(1) as u32;
-        let sw = (sheet_w / columns).max(1) as i32;
-        let sh = (sheet_h / rows).max(1) as i32;
+        // Grid layout computation with ceiling division to handle non-divisible cuts
+        let columns = self.sprite_columns.max(1) as i32;
+        let rows = self.sprite_rows.max(1) as i32;
+        let sw = (sheet_w / columns as u32).max(1) as i32;
+        let sh = (sheet_h / rows as u32).max(1) as i32;
         let cut_x = self.sprites_cut_x.max(1);
         let cut_y = self.sprites_cut_y.max(1);
 
-        let cols = if vertical_read {
-            (sheet_h as i32 / sh / cut_y).max(1)
+        // Per-block dimensions (ceiling division — last block may have fewer cells)
+        let phys_cols_per_block = (columns + cut_x - 1) / cut_x;
+        let phys_rows_per_block = (rows + cut_y - 1) / cut_y;
+        let cells_per_block = phys_cols_per_block * phys_rows_per_block;
+
+        // Reading-direction dimensions
+        let (rd_cols, rd_rows) = if vertical_read {
+            (phys_rows_per_block, phys_cols_per_block)
         } else {
-            (sheet_w as i32 / sw / cut_x).max(1)
+            (phys_cols_per_block, phys_rows_per_block)
         };
 
-        let sum = (sheet_h as i32 / sh / cut_y) * (sheet_w as i32 / sw / cut_x);
-        let sum = sum.max(1);
-
-        let rows_per_block = (sum / cols).max(1);
-
-        let mut r = abs_idx / cols % rows_per_block;
-        let mut c = abs_idx % cols;
+        let mut c = abs_idx % rd_cols;
+        let mut r = (abs_idx / rd_cols) % rd_rows;
 
         if backward_read {
-            c = cols - 1 - c;
+            c = rd_cols - 1 - c;
         }
-
         if s_shaped {
             let start_offset =
-                (self.sprite_range_start / cols % rows_per_block).unsigned_abs() as i32;
+                (self.sprite_range_start / rd_cols % rd_rows).unsigned_abs() as i32;
             if ((r + start_offset) % 2) != 0 {
-                c = cols - 1 - c;
+                c = rd_cols - 1 - c;
             }
         }
 
         // SpritesCut block handling
-        let block_idx = abs_idx / sum;
+        let block_idx = abs_idx / cells_per_block;
         let cols_crop = if vertical_read { cut_y } else { cut_x }.max(1);
         let rr = block_idx / cols_crop;
         let mut cc = block_idx % cols_crop;
         if backward_read {
             cc = cols_crop - 1 - cc;
         }
-        r += rr * rows_per_block;
-        c += cc * cols;
+        r += rr * rd_rows;
+        c += cc * rd_cols;
 
         // Swap row/column for vertical reading
         if vertical_read {
@@ -190,7 +219,7 @@ impl ZzzSpriteSheet {
 
     /// Compute the absolute frame index for a grid cell using only column/row,
     /// reading direction, and sprites cut. No range or loop-offset filtering.
-    fn get_absolute_index(&self, grid_row: i32, grid_col: i32) -> i32 {
+    pub fn get_absolute_index(&self, grid_row: i32, grid_col: i32) -> i32 {
         use ReadingDirection::*;
         let dir = self.reading_direction;
         let vertical_read = matches!(dir, VForward | VBackward | VForwardS | VBackwardS);
@@ -202,11 +231,10 @@ impl ZzzSpriteSheet {
         let cut_x = self.sprites_cut_x.max(1);
         let cut_y = self.sprites_cut_y.max(1);
 
-        // Per-block dimensions in physical grid coordinates
-        let phys_cols_per_block = total_cols / cut_x;
-        let phys_rows_per_block = total_rows / cut_y;
+        // Per-block dimensions with ceiling division (matches get_crop_rect)
+        let phys_cols_per_block = (total_cols + cut_x - 1) / cut_x;
+        let phys_rows_per_block = (total_rows + cut_y - 1) / cut_y;
 
-        // Reading-direction dimensions (swapped for vertical read)
         let (rd_cols, rd_rows_per_block) = if vertical_read {
             (phys_rows_per_block, phys_cols_per_block)
         } else {
@@ -260,6 +288,23 @@ impl ZzzSpriteSheet {
             return;
         }
 
+        // Fast path: identity transform (full sheet, no transform, centered)
+        if self.scale == 1.0
+            && self.rotation == 0.0
+            && self.displacement_x == 0.5
+            && self.displacement_y == 0.5
+            && cx == 0
+            && cy == 0
+            && cw == sheet_w
+            && ch == sheet_h
+            && dst_w == cw as usize
+            && dst_h == ch as usize
+        {
+            let copy_len = (dst_w * dst_h * 4).min(sheet_rgba.len()).min(dst.len());
+            dst[..copy_len].copy_from_slice(&sheet_rgba[..copy_len]);
+            return;
+        }
+
         // --- GPU path (only when no pre-scale transforms needed) ---
         let can_use_gpu = self.rotation == 0.0
             && !self.displacement_pixel_based
@@ -293,8 +338,19 @@ impl ZzzSpriteSheet {
         let _out_w = out_w.max(1);
         let _out_h = out_h.max(1);
 
+        // Take buffers from thread-local storage, resize as needed, return after use
+        let (mut crop_buf, mut scaled_buf, mut rotated_buf) = SPRITE_BUFS.with(|bufs_cell| {
+            let bufs = &mut *bufs_cell.borrow_mut();
+            let crop_buf = std::mem::take(&mut bufs.crop_buf);
+            let scaled_buf = std::mem::take(&mut bufs.scaled_buf);
+            let rotated_buf = std::mem::take(&mut bufs.rotated_buf);
+            (crop_buf, scaled_buf, rotated_buf)
+        });
+
         // Build crop buffer in original pixel coords
-        let mut crop_buf = vec![0u8; (cw as usize) * (ch as usize) * 4];
+        let crop_size = (cw as usize) * (ch as usize) * 4;
+        crop_buf.resize(crop_size, 0u8);
+        crop_buf.fill(0);
         let sh_usize = sheet_h as usize;
         let sw_usize = sheet_w as usize;
         use rayon::prelude::*;
@@ -323,7 +379,7 @@ impl ZzzSpriteSheet {
         // Pixel-based displacement: convert normalized→output pixels, quantize to original pixel grid
         let mut pre_offset_x: i32 = 0;
         let mut pre_offset_y: i32 = 0;
-        if self.displacement_pixel_based && (self.displacement_x - 0.5).abs() > 0.0001 || (0.5 - self.displacement_y).abs() > 0.0001 {
+        if self.displacement_pixel_based && ((self.displacement_x - 0.5).abs() > 0.0001 || (0.5 - self.displacement_y).abs() > 0.0001) {
             let dx_out = (self.displacement_x - 0.5) * dst_w as f32;
             let dy_out = (0.5 - self.displacement_y) * dst_h as f32;
             let scale = self.scale.max(0.01);
@@ -351,9 +407,9 @@ impl ZzzSpriteSheet {
         let pre_buf = pre_rotated.as_ref().unwrap_or(&crop_buf);
 
         // --- Step 2: Scale ---
-        let scaled = if self.scale != 1.0 {
+        if self.scale != 1.0 {
             let (pw, ph) = if pre_rotated.is_some() { (sw as u32, sh as u32) } else { (cw, ch) };
-            let src_img = image::RgbaImage::from_raw(pw, ph, pre_buf.clone())
+            let src_img = image::RgbaImage::from_raw(pw, ph, pre_buf.to_vec())
                 .unwrap_or_else(|| image::RgbaImage::new(pw, ph));
             let filter = match self.scale_algorithm {
                 ScaleAlgorithm::Nearest => image::imageops::FilterType::Nearest,
@@ -367,13 +423,15 @@ impl ZzzSpriteSheet {
             let resized = image::imageops::resize(&src_img, out_w_s.max(1), out_h_s.max(1), filter);
             sw = resized.width() as usize;
             sh = resized.height() as usize;
-            resized.into_raw()
+            scaled_buf = resized.into_raw();
         } else {
-            pre_buf.clone()
+            scaled_buf.clear();
+            scaled_buf.extend_from_slice(pre_buf);
         };
+        let scaled = &scaled_buf;
 
         // --- Step 3: Post-scale transforms (non-pixel-based) ---
-        let final_buf = if !self.rotation_pixel_based && self.rotation != 0.0 {
+        let final_buf: &[u8] = if !self.rotation_pixel_based && self.rotation != 0.0 {
             let src_w = sw;
             let src_h = sh;
             let angle_rad = self.rotation as f64 * std::f64::consts::PI / 180.0;
@@ -387,8 +445,12 @@ impl ZzzSpriteSheet {
             let cy_src = src_h as f64 / 2.0;
             let cx_dst = new_w as f64 / 2.0;
             let cy_dst = new_h as f64 / 2.0;
-            let src_img = &scaled;
-            let mut rotated = vec![0u8; sw * sh * 4];
+            let src_img = scaled;
+            let rot_size = sw * sh * 4;
+            if rotated_buf.len() < rot_size {
+                rotated_buf.resize(rot_size, 0u8);
+            }
+            rotated_buf[..rot_size].fill(0);
             for dy in 0..new_h as usize {
                 for dx in 0..new_w as usize {
                     let rx = dx as f64 - cx_dst;
@@ -412,12 +474,12 @@ impl ZzzSpriteSheet {
                         for c in 0..4 {
                             let top = src_img[i00 + c] as f32 * (1.0 - fx) + src_img[i10 + c] as f32 * fx;
                             let bot = src_img[i01 + c] as f32 * (1.0 - fx) + src_img[i11 + c] as f32 * fx;
-                            rotated[di + c] = (top * (1.0 - fy) + bot * fy).round() as u8;
+                            rotated_buf[di + c] = (top * (1.0 - fy) + bot * fy).round() as u8;
                         }
                     }
                 }
             }
-            rotated
+            &rotated_buf[..rot_size]
         } else {
             scaled
         };
@@ -453,6 +515,14 @@ impl ZzzSpriteSheet {
                     dst_row[dst_idx..dst_idx + 4].copy_from_slice(&final_buf[src_idx..src_idx + 4]);
                 }
             }
+        });
+
+        // Restore buffers to thread_local for reuse next frame
+        SPRITE_BUFS.with(|bufs_cell| {
+            let bufs = &mut *bufs_cell.borrow_mut();
+            bufs.crop_buf = crop_buf;
+            bufs.scaled_buf = scaled_buf;
+            bufs.rotated_buf = rotated_buf;
         });
     }
 
@@ -617,7 +687,7 @@ impl ZzzSpriteSheet {
         };
 
         // Cut boundaries: every (columns/cut_x) for vertical, every (rows/cut_y) for horizontal
-        let block_cols = columns / cut_x;
+        let block_cols = (columns / cut_x).max(1);
         let block_rows = rows / cut_y;
 
         // Draw vertical lines

@@ -97,10 +97,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let blended_b = blend_channel(uniforms.blend_mode, acc_b, sb, sa, rng3);
 
         let inv = 1.0 - sa;
-        acc_r = clamp(blended_r * sa + acc_r * inv, 0.0, 1.0);
-        acc_g = clamp(blended_g * sa + acc_g * inv, 0.0, 1.0);
-        acc_b = clamp(blended_b * sa + acc_b * inv, 0.0, 1.0);
-        acc_a = clamp(sa + acc_a * inv, 0.0, 1.0);
+        acc_r = clamp(fma(blended_r, sa, acc_r * inv), 0.0, 1.0);
+        acc_g = clamp(fma(blended_g, sa, acc_g * inv), 0.0, 1.0);
+        acc_b = clamp(fma(blended_b, sa, acc_b * inv), 0.0, 1.0);
+        acc_a = clamp(fma(sa, 1.0, acc_a * inv), 0.0, 1.0);
     }
 
     // F1: Use built-in pack4xU8

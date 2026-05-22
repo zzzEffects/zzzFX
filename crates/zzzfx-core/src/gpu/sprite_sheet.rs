@@ -34,6 +34,7 @@ struct GpuContext {
     queue: &'static wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     bufs: GpuBuffers,
+    bind_group: Option<wgpu::BindGroup>,
 }
 
 struct GpuBuffers {
@@ -97,6 +98,7 @@ pub fn try_sprite_sheet_gpu_render(
         || guard.bufs.sheet_size < sheet_byte_size
     {
         guard.bufs = create_buffers(guard.device, dst_w, dst_h, sheet_byte_size);
+        guard.bind_group = None; // Invalidate cached bind group
     }
 
     // Quantize displacement if pixel_based
@@ -135,26 +137,29 @@ pub fn try_sprite_sheet_gpu_render(
         .queue
         .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
-    // Bind group
-    let layout = guard.pipeline.get_bind_group_layout(0);
-    let bind_group = guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("sprite_sheet"),
-        layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: guard.bufs.sheet_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: guard.bufs.uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: guard.bufs.dst_buf.as_entire_binding(),
-            },
-        ],
-    });
+    // Create or reuse bind group (references buffers by handle, valid across frames)
+    if guard.bind_group.is_none() {
+        let layout = guard.pipeline.get_bind_group_layout(0);
+        guard.bind_group = Some(guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprite_sheet"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: guard.bufs.sheet_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: guard.bufs.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: guard.bufs.dst_buf.as_entire_binding(),
+                },
+            ],
+        }));
+    }
+    let bind_group = guard.bind_group.as_ref().unwrap();
 
     // Dispatch
     {
@@ -167,7 +172,7 @@ pub fn try_sprite_sheet_gpu_render(
                 timestamp_writes: None,
             });
             pass.set_pipeline(&guard.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups((dst_w + 15) / 16, (dst_h + 15) / 16, 1);
         }
         guard.queue.submit(std::iter::once(encoder.finish()));
@@ -227,6 +232,7 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         queue,
         pipeline,
         bufs,
+        bind_group: None,
     }));
     Ok(GPU_CTX.get().unwrap())
 }

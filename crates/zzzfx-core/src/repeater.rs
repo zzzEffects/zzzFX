@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 
-use crate::blend::{self, blend_channel, IS_STENCIL_OR_OUTLINE, RECIP_255};
+use crate::blend::{self, blend_channel, fast_u32_to_f32, IS_STENCIL_OR_OUTLINE, RECIP_255};
 use crate::settings::repeater::LayerOrder;
 use crate::settings::stroke::BlendMode;
 
@@ -28,6 +28,18 @@ impl super::ZzzRepeater {
     ) {
         if layers.is_empty() {
             dst.fill(0);
+            return;
+        }
+
+        // Fast path: single layer with Normal blend at identity transform → direct copy
+        if layers.len() == 1
+            && self.blend_mode == BlendMode::Normal
+            && layers[0].position_x == 0.5
+            && layers[0].position_y == 0.5
+            && layers[0].rotation_deg == 0.0
+        {
+            let len = (width * height * 4).min(layers[0].rgba.len()).min(dst.len());
+            dst[..len].copy_from_slice(&layers[0].rgba[..len]);
             return;
         }
 
@@ -147,7 +159,7 @@ impl super::ZzzRepeater {
 
 /// Process one layer for one pixel. Extracted to avoid code duplication between
 /// the Above and Below iteration orders.
-#[inline]
+#[inline(always)]
 fn process_layer(
     layers: &[CompositorLayer],
     layer_params: &[((f32, f32), (f32, f32))],
@@ -239,11 +251,4 @@ fn process_layer(
         acc[2] = (blended_b * sa + acc[2] * inv).clamp(0.0, 1.0);
         acc[3] = (sa + acc[3] * inv).clamp(0.0, 1.0);
     }
-}
-
-/// Fast f32 conversion from u32 for RNG values in [0, 1).
-/// Uses bit manipulation instead of float division (ntsc-rs technique).
-#[inline]
-fn fast_u32_to_f32(input: u32) -> f32 {
-    f32::from_bits((input >> 9) | 0x3F800000) - 1.0
 }

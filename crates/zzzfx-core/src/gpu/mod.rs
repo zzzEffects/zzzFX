@@ -133,6 +133,8 @@ struct GpuBuffers {
     mask_uniform_buf: wgpu::Buffer,
     width: u32,
     height: u32,
+    // Cached bind groups — only recreated when buffers are recreated
+    bind_groups: Option<(wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup)>,
 }
 
 static GPU_CTX: OnceLock<Mutex<GpuContext>> = OnceLock::new();
@@ -173,6 +175,8 @@ pub fn try_gpu_render(
 
     if guard.bufs.width != w || guard.bufs.height != h {
         guard.bufs = create_buffers(&guard.device, w, h);
+        // Invalidate cached bind groups since buffers changed
+        guard.bufs.bind_groups = None;
     }
 
     let uniforms = build_uniforms(settings, w, h);
@@ -198,9 +202,12 @@ pub fn try_gpu_render(
         .queue
         .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
-    // Build bind groups
+    // Build or reuse bind groups (only recreate when buffers change dimensions)
+    if guard.bufs.bind_groups.is_none() {
+        guard.bufs.bind_groups = Some(create_bind_groups(&guard, &guard.device));
+    }
     let (bg_mask, bg_jfa_from_a, bg_jfa_from_b, bg_compose_a, bg_compose_b) =
-        create_bind_groups(&guard, &guard.device);
+        guard.bufs.bind_groups.as_ref().unwrap();
 
     let workgroup_count_x = (w + 15) / 16;
     let workgroup_count_y = (h + 15) / 16;
@@ -221,7 +228,7 @@ pub fn try_gpu_render(
                 timestamp_writes: None,
             });
             pass.set_pipeline(&guard.pipeline_mask);
-            pass.set_bind_group(0, &bg_mask, &[]);
+            pass.set_bind_group(0, bg_mask, &[]);
             pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
         guard.queue.submit(std::iter::once(encoder.finish()));
@@ -242,9 +249,9 @@ pub fn try_gpu_render(
             .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&jfa_uniforms));
 
         let bind_group = if pass_idx % 2 == 0 {
-            &bg_jfa_from_a
+            bg_jfa_from_a
         } else {
-            &bg_jfa_from_b
+            bg_jfa_from_b
         };
 
         let mut encoder =
@@ -270,9 +277,9 @@ pub fn try_gpu_render(
             .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
         let compose_bg = if jfa_passes % 2 == 0 {
-            &bg_compose_a
+            bg_compose_a
         } else {
-            &bg_compose_b
+            bg_compose_b
         };
 
         let mut encoder =
@@ -453,6 +460,7 @@ fn create_buffers(device: &wgpu::Device, width: u32, height: u32) -> GpuBuffers 
         }),
         width,
         height,
+        bind_groups: None,
     }
 }
 
@@ -563,11 +571,11 @@ fn create_bind_groups(
     ctx: &GpuContext,
     device: &wgpu::Device,
 ) -> (
-    wgpu::BindGroup,   // mask
-    wgpu::BindGroup,   // jfa_from_a (read a, write b)
-    wgpu::BindGroup,   // jfa_from_b (read b, write a)
-    wgpu::BindGroup,   // compose_a (seeds = a)
-    wgpu::BindGroup,   // compose_b (seeds = b)
+    wgpu::BindGroup,
+    wgpu::BindGroup,
+    wgpu::BindGroup,
+    wgpu::BindGroup,
+    wgpu::BindGroup,
 ) {
     // Get bind group layouts from pipelines (index 0 for all since we use single bind group)
     let mask_layout = &ctx.pipeline_mask.get_bind_group_layout(0);

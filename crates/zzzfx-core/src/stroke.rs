@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use rayon::prelude::*;
 
-use crate::blend::{self, blend_channel, IS_STENCIL_OR_OUTLINE, RECIP_255};
+use crate::blend::{self, blend_channel, fast_u32_to_f32, IS_STENCIL_OR_OUTLINE, RECIP_255};
 use crate::gpu;
 use crate::settings::stroke::{
     BlendMode, FillMode, StrokePosition, ZzzStroke,
@@ -409,7 +409,7 @@ impl ZzzStroke {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn try_update(
     dists: &mut [f32],
     nearest_cols: &mut [u32],
@@ -417,14 +417,18 @@ fn try_update(
     neighbor: usize,
     weight: f32,
 ) {
-    let new_dist = dists[neighbor] + weight;
-    if new_dist < dists[idx] {
-        dists[idx] = new_dist;
-        nearest_cols[idx] = nearest_cols[neighbor];
+    // SAFETY: idx and neighbor are both proven in-bounds by the loop structure
+    // (y in 0..height, x in 0..width with neighbor guards checking edge conditions).
+    unsafe {
+        let new_dist = dists.get_unchecked(neighbor) + weight;
+        if new_dist < *dists.get_unchecked(idx) {
+            *dists.get_unchecked_mut(idx) = new_dist;
+            *nearest_cols.get_unchecked_mut(idx) = *nearest_cols.get_unchecked(neighbor);
+        }
     }
 }
 
-#[inline]
+#[inline(always)]
 fn gaussian_edge(sigma: f32, center: f32, d: f32) -> f32 {
     if sigma <= 0.0 {
         return if d <= center { 1.0 } else { 0.0 };
@@ -437,11 +441,4 @@ fn gaussian_edge(sigma: f32, center: f32, d: f32) -> f32 {
         return 1.0;
     }
     1.0 / (1.0 + x.exp())
-}
-
-/// Fast f32 conversion from u32 for RNG values in [0, 1).
-/// Uses bit manipulation instead of float division (ntsc-rs technique).
-#[inline]
-fn fast_u32_to_f32(input: u32) -> f32 {
-    f32::from_bits((input >> 9) | 0x3F800000) - 1.0
 }

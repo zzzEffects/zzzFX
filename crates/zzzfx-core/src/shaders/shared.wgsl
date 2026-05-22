@@ -13,7 +13,7 @@ fn hash(pixel_idx: u32) -> f32 {
 // ---- Color ----
 
 fn luminance(r: f32, g: f32, b: f32) -> f32 {
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return fma(0.2126, r, fma(0.7152, g, 0.0722 * b));
 }
 
 fn unpack_rgba8(packed: u32) -> vec4<f32> {
@@ -147,9 +147,9 @@ fn blend_pixel(mode: u32, src_px: vec4<f32>, dst_in: vec4<f32>) -> vec4<f32> {
         }
         let inv_out_a = 1.0 / out_a;
         return vec4<f32>(
-            (src_px.r + dst_in.r * (1.0 - src_px.a)) * inv_out_a,
-            (src_px.g + dst_in.g * (1.0 - src_px.a)) * inv_out_a,
-            (src_px.b + dst_in.b * (1.0 - src_px.a)) * inv_out_a,
+            fma(dst_in.r, 1.0 - src_px.a, src_px.r) * inv_out_a,
+            fma(dst_in.g, 1.0 - src_px.a, src_px.g) * inv_out_a,
+            fma(dst_in.b, 1.0 - src_px.a, src_px.b) * inv_out_a,
             out_a,
         );
     }
@@ -189,9 +189,9 @@ fn blend_pixel(mode: u32, src_px: vec4<f32>, dst_in: vec4<f32>) -> vec4<f32> {
     if out_a < 0.001 { return vec4<f32>(0.0); }
     let inv_out_a = 1.0 / out_a;
     return vec4<f32>(
-        (src_px.r + dst_in.r * (1.0 - src_px.a)) * inv_out_a,
-        (src_px.g + dst_in.g * (1.0 - src_px.a)) * inv_out_a,
-        (src_px.b + dst_in.b * (1.0 - src_px.a)) * inv_out_a,
+        fma(dst_in.r, 1.0 - src_px.a, src_px.r) * inv_out_a,
+        fma(dst_in.g, 1.0 - src_px.a, src_px.g) * inv_out_a,
+        fma(dst_in.b, 1.0 - src_px.a, src_px.b) * inv_out_a,
         out_a,
     );
 }

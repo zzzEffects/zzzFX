@@ -216,10 +216,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         } else {
             let inv = 1.0 - sa;
-            out_r = clamp(blended_r * sa + src_r * uniforms.source_opacity * inv, 0.0, 1.0);
-            out_g = clamp(blended_g * sa + src_g * uniforms.source_opacity * inv, 0.0, 1.0);
-            out_b = clamp(blended_b * sa + src_b * uniforms.source_opacity * inv, 0.0, 1.0);
-            out_a = clamp(sa + src_a * uniforms.source_opacity * inv, 0.0, 1.0);
+            out_r = clamp(fma(blended_r, sa, src_r * uniforms.source_opacity * inv), 0.0, 1.0);
+            out_g = clamp(fma(blended_g, sa, src_g * uniforms.source_opacity * inv), 0.0, 1.0);
+            out_b = clamp(fma(blended_b, sa, src_b * uniforms.source_opacity * inv), 0.0, 1.0);
+            out_a = clamp(fma(sa, 1.0, src_a * uniforms.source_opacity * inv), 0.0, 1.0);
         }
     } else {
         out_r = src_r * uniforms.source_opacity;

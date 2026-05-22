@@ -490,7 +490,7 @@ unsafe fn action_render(
 
     let mut ss: ZzzSpriteSheet = (&settings).into();
 
-    // Apply pending selection from overlay clicks
+    // Apply pending selection from overlay clicks, or clear if mode toggled off
     if ss.selection_mode {
         if let Some(ref idata_inner) = idata {
             if let (Some(start), Some(end)) = (idata_inner.selection_range_start, idata_inner.selection_range_end) {
@@ -498,6 +498,12 @@ unsafe fn action_render(
                 ss.sprite_range_end = end;
             }
         }
+    } else if let Some(ref mut idata_inner) = idata {
+        // Clear stale selection state when selection mode is off
+        idata_inner.first_click_frame = None;
+        idata_inner.second_click_frame = None;
+        idata_inner.selection_range_start = None;
+        idata_inner.selection_range_end = None;
     }
 
     // --- Compute integrated speed offset (trapezoidal integration) ---
@@ -880,17 +886,12 @@ unsafe fn interact_pen_down(
     pgd(inArgs, c"OfxInteractPropPenPosition".as_ptr(), 0, &mut pen_x).ofx_ok()?;
     pgd(inArgs, c"OfxInteractPropPenPosition".as_ptr(), 1, &mut pen_y).ofx_ok()?;
 
-    // Convert to grid cell index
+    // Convert pen coords to grid cell using reading-direction-aware absolute index
     let columns = ss.sprite_columns.max(1);
     let rows = ss.sprite_rows.max(1);
-    let cut_x = ss.sprites_cut_x.max(1);
-    let cut_y = ss.sprites_cut_y.max(1);
-    let total_cols = columns * cut_x;
-    let total_rows = rows * cut_y;
-
-    let col = ((pen_x * total_cols as f64).floor() as i32).clamp(0, total_cols - 1);
-    let row = ((pen_y * total_rows as f64).floor() as i32).clamp(0, total_rows - 1);
-    let frame_idx = row * total_cols + col;
+    let col = ((pen_x * columns as f64).floor() as i32).clamp(0, columns - 1);
+    let row = ((pen_y * rows as f64).floor() as i32).clamp(0, rows - 1);
+    let frame_idx = ss.get_absolute_index(row, col);
 
     // Two-click selection: first click sets start, second click sets end
     if idata.first_click_frame.is_none() {
@@ -907,9 +908,11 @@ unsafe fn interact_pen_down(
         idata.selection_range_start = Some(lo);
         idata.selection_range_end = Some(hi);
     } else {
-        // Reset: start new selection
+        // Reset: start new selection, clear stale range
         idata.first_click_frame = Some(frame_idx);
         idata.second_click_frame = None;
+        idata.selection_range_start = None;
+        idata.selection_range_end = None;
     }
 
     Ok(())
