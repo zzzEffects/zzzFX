@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use ab_glyph::Font;
 use ass_core::{Script, Section};
+use rayon::prelude::*;
 
+use crate::blend::RECIP_255;
 use crate::settings::ass_subtitle::AssBlendMode;
 
 // ---------------------------------------------------------------------------
@@ -452,8 +454,8 @@ fn convert_event(e: &ass_core::parser::Event<'_>) -> OwnedEvent {
 pub fn ass_color_to_rgba(hex: &str) -> [f32; 4] {
     match ass_core::utils::parse_bgr_color(hex) {
         Ok([r, g, b, a_byte]) => {
-            let a = 1.0 - a_byte as f32 / 255.0;
-            [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a]
+            let a = 1.0 - a_byte as f32 * RECIP_255;
+            [r as f32 * RECIP_255, g as f32 * RECIP_255, b as f32 * RECIP_255, a]
         }
         Err(_) => [1.0, 1.0, 1.0, 1.0],
     }
@@ -755,14 +757,14 @@ fn parse_alpha_hex(v: &str) -> Option<f32> {
     let hex = v.trim().trim_start_matches("&H").trim_start_matches("&h");
     if let Ok(val) = u32::from_str_radix(hex, 16) {
         let a_byte = (val & 0xFF) as u8;
-        Some(1.0 - a_byte as f32 / 255.0)
+        Some(1.0 - a_byte as f32 * RECIP_255)
     } else {
         None
     }
 }
 
 fn parse_alpha_str(s: &str) -> f32 {
-    s.parse::<f32>().ok().map(|v| v / 255.0).unwrap_or_else(|| parse_alpha_hex(s).unwrap_or(1.0))
+    s.parse::<f32>().ok().map(|v| v * RECIP_255).unwrap_or_else(|| parse_alpha_hex(s).unwrap_or(1.0))
 }
 
 fn apply_alpha_channel(tags: &mut ParsedTags, channel: u8, v: &str) {
@@ -1532,8 +1534,6 @@ pub fn render_ass_subtitle_frame(
     stats
 }
 
-/// Precomputed 1.0 / 255.0 — turns divisions into multiplications.
-const RECIP_255: f32 = 1.0 / 255.0;
 
 /// Direct source-over composite with fast transparent-dst path.
 #[inline]
@@ -1578,52 +1578,64 @@ fn cpu_composite_dirty_rect(
     dirty: &DirtyRect,
     blend_mode: AssBlendMode,
 ) {
-    for y in dirty.min_y..=dirty.max_y {
-        let row_start = y as usize * width * 4;
-        for x in dirty.min_x..=dirty.max_x {
-            let idx = row_start + x as usize * 4;
-            let sa = src[idx + 3];
-            if sa == 0 { continue; }
+    // D4: Parallelized by row — split dst into non-overlapping row chunks
+    assert_eq!(dst.len() % (width * 4), 0);
+    let row_stride = width * 4;
+    let min_y = dirty.min_y.max(0) as usize;
+    let max_y = (dirty.max_y as usize).min(dst.len() / row_stride).saturating_sub(1);
+    if min_y > max_y { return; }
 
-            // Fast path: opaque src pixel — just copy
-            if sa == 255 {
-                dst[idx] = src[idx];
-                dst[idx + 1] = src[idx + 1];
-                dst[idx + 2] = src[idx + 2];
-                dst[idx + 3] = 255;
-                continue;
+    dst[min_y * row_stride..=(max_y * row_stride + row_stride - 1)]
+        .par_chunks_mut(row_stride)
+        .enumerate()
+        .for_each(|(rel_y, dst_row)| {
+            let y = (min_y + rel_y) as i32;
+            let row_start = y as usize * width * 4;
+            for x in dirty.min_x..=dirty.max_x {
+                let col_offset = x as usize * 4;
+                let idx = row_start + col_offset;
+                let sa = src[idx + 3];
+                if sa == 0 { continue; }
+
+                // Fast path: opaque src pixel
+                if sa == 255 {
+                    dst_row[col_offset] = src[idx];
+                    dst_row[col_offset + 1] = src[idx + 1];
+                    dst_row[col_offset + 2] = src[idx + 2];
+                    dst_row[col_offset + 3] = 255;
+                    continue;
+                }
+
+                // Fast path: transparent dst
+                if dst_row[col_offset + 3] == 0 {
+                    dst_row[col_offset] = src[idx];
+                    dst_row[col_offset + 1] = src[idx + 1];
+                    dst_row[col_offset + 2] = src[idx + 2];
+                    dst_row[col_offset + 3] = sa;
+                    continue;
+                }
+
+                let sa_f = sa as f32 * RECIP_255;
+                let sr = src[idx] as f32 * RECIP_255;
+                let sg = src[idx + 1] as f32 * RECIP_255;
+                let sb = src[idx + 2] as f32 * RECIP_255;
+
+                let da = dst_row[col_offset + 3] as f32 * RECIP_255;
+                let dr = dst_row[col_offset] as f32 * RECIP_255;
+                let dg = dst_row[col_offset + 1] as f32 * RECIP_255;
+                let db = dst_row[col_offset + 2] as f32 * RECIP_255;
+
+                let src_px = [sr * sa_f, sg * sa_f, sb * sa_f, sa_f];
+                let dst_px = [dr * da, dg * da, db * da, da];
+
+                let blended = blend_pixel(blend_mode, src_px, dst_px);
+
+                dst_row[col_offset] = (blended[0] * 255.0 + 0.5) as u8;
+                dst_row[col_offset + 1] = (blended[1] * 255.0 + 0.5) as u8;
+                dst_row[col_offset + 2] = (blended[2] * 255.0 + 0.5) as u8;
+                dst_row[col_offset + 3] = (blended[3] * 255.0 + 0.5) as u8;
             }
-
-            // Fast path: transparent dst — just copy src
-            if dst[idx + 3] == 0 {
-                dst[idx] = src[idx];
-                dst[idx + 1] = src[idx + 1];
-                dst[idx + 2] = src[idx + 2];
-                dst[idx + 3] = sa;
-                continue;
-            }
-
-            let sa_f = sa as f32 * RECIP_255;
-            let sr = src[idx] as f32 * RECIP_255;
-            let sg = src[idx + 1] as f32 * RECIP_255;
-            let sb = src[idx + 2] as f32 * RECIP_255;
-
-            let da = dst[idx + 3] as f32 * RECIP_255;
-            let dr = dst[idx] as f32 * RECIP_255;
-            let dg = dst[idx + 1] as f32 * RECIP_255;
-            let db = dst[idx + 2] as f32 * RECIP_255;
-
-            let src_px = [sr * sa_f, sg * sa_f, sb * sa_f, sa_f];
-            let dst_px = [dr * da, dg * da, db * da, da];
-
-            let blended = blend_pixel(blend_mode, src_px, dst_px);
-
-            dst[idx] = (blended[0] * 255.0 + 0.5) as u8;
-            dst[idx + 1] = (blended[1] * 255.0 + 0.5) as u8;
-            dst[idx + 2] = (blended[2] * 255.0 + 0.5) as u8;
-            dst[idx + 3] = (blended[3] * 255.0 + 0.5) as u8;
-        }
-    }
+        });
 }
 
 fn apply_fade_to_color(color: [f32; 4], fade_alpha: f32) -> [f32; 4] {

@@ -232,21 +232,30 @@ impl ZzzSpriteSheet {
         let out_w = out_w.max(1);
         let out_h = out_h.max(1);
 
-        // Build an intermediate RGBA8 buffer for the unscaled sprite crop
+        // Build an intermediate RGBA8 buffer for the unscaled sprite crop (D3: parallelized by row)
         let mut crop_buf = vec![0u8; (cw as usize) * (ch as usize) * 4];
+        let sh_usize = sheet_h as usize;
+        let sw_usize = sheet_w as usize;
 
-        for row in 0..ch as usize {
-            let src_y = cy as usize + row;
-            for col in 0..cw as usize {
-                let src_x = cx as usize + col;
-                let dst_idx = (row * cw as usize + col) * 4;
-                if src_x < sheet_w as usize && src_y < sheet_h as usize {
-                    let src_idx = (src_y * sheet_w as usize + src_x) * 4;
-                    crop_buf[dst_idx..dst_idx + 4]
-                        .copy_from_slice(&sheet_rgba[src_idx..src_idx + 4]);
+        use rayon::prelude::*;
+        crop_buf
+            .par_chunks_mut(cw as usize * 4)
+            .enumerate()
+            .for_each(|(row, row_data)| {
+                let src_y = cy as usize + row;
+                if src_y >= sh_usize {
+                    return;
                 }
-            }
-        }
+                for col in 0..cw as usize {
+                    let src_x = cx as usize + col;
+                    let dst_idx = col * 4;
+                    if src_x < sw_usize {
+                        let src_idx = (src_y * sw_usize + src_x) * 4;
+                        row_data[dst_idx..dst_idx + 4]
+                            .copy_from_slice(&sheet_rgba[src_idx..src_idx + 4]);
+                    }
+                }
+            });
 
         // Scale if needed, using the image crate
         let scaled = if self.scale != 1.0 {
@@ -276,21 +285,23 @@ impl ZzzSpriteSheet {
         let offset_x = if dst_w >= sw { (dst_w - sw) / 2 } else { 0 };
         let offset_y = if dst_h >= sh { (dst_h - sh) / 2 } else { 0 };
 
-        for row in 0..sh {
-            let dst_y = offset_y + row;
-            if dst_y >= dst_h {
-                break;
-            }
-            for col in 0..sw {
-                let dst_x = offset_x + col;
-                if dst_x >= dst_w {
-                    break;
+        // Parallelized row-wise copy from scaled buffer to output
+        let copyable_rows = sh.min(dst_h.saturating_sub(offset_y));
+        dst.par_chunks_mut(dst_w * 4)
+            .skip(offset_y)
+            .take(copyable_rows)
+            .enumerate()
+            .for_each(|(row, dst_row)| {
+                let copy_width = sw.min(dst_w.saturating_sub(offset_x)) * 4;
+                let src_start = row * sw * 4;
+                let dst_start = offset_x * 4;
+                if copy_width > 0
+                    && src_start + copy_width <= scaled.len()
+                    && dst_start + copy_width <= dst_row.len()
+                {
+                    dst_row[dst_start..dst_start + copy_width]
+                        .copy_from_slice(&scaled[src_start..src_start + copy_width]);
                 }
-                let src_idx = (row * sw + col) * 4;
-                let dst_idx = (dst_y * dst_w + dst_x) * 4;
-                dst[dst_idx..dst_idx + 4]
-                    .copy_from_slice(&scaled[src_idx..src_idx + 4]);
-            }
-        }
+            });
     }
 }

@@ -203,7 +203,7 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ass_subtitle"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ass_subtitle.wgsl").into()),
+        source: super::load_shader(include_str!("../shaders/ass_subtitle.wgsl")),
     });
 
     Ok(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

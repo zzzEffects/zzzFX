@@ -5,6 +5,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use zzzfx_core::blend::RECIP_255;
 use zzzfx_core::settings::TrKey;
 use zzzfx_core::settings::{
     EnumValue, SettingDescriptor, SettingID, SettingKind, Settings, SettingsList,
@@ -512,7 +513,7 @@ pub unsafe fn copy_u8_to_output(
                 let u8_row = src.as_ptr().add(y * row_bytes_u8);
                 let host_row = (dp as *mut u8).add(y * dst_stride) as *mut f32;
                 for x in 0..(width * 4) {
-                    *host_row.add(x) = *u8_row.add(x) as f32 / 255.0;
+                    *host_row.add(x) = *u8_row.add(x) as f32 * RECIP_255;
                 }
             }
         }

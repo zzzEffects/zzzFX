@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use rayon::prelude::*;
 
-use crate::blend::{self, blend_channel, is_stencil_or_outline};
+use crate::blend::{self, blend_channel, IS_STENCIL_OR_OUTLINE, RECIP_255};
 use crate::gpu;
 use crate::settings::stroke::{
     BlendMode, FillMode, StrokePosition, ZzzStroke,
@@ -111,10 +111,12 @@ impl ZzzStroke {
             let dists = &mut bufs.dists;
             let nearest_cols = &mut bufs.nearest_cols;
 
-            // Stage 1: Build binary mask (sequential — trivially cheap)
-            for (i, chunk) in src.chunks(4).enumerate() {
-                mask[i] = (chunk[3] as f32 / 255.0) >= threshold;
-            }
+            // Stage 1: Build binary mask (parallelized)
+            mask.par_iter_mut()
+                .enumerate()
+                .for_each(|(i, m)| {
+                    *m = (src[i * 4 + 3] as f32 * RECIP_255) >= threshold;
+                });
 
             // Stage 2+3: Edge detection + two-pass distance transform (sequential)
             for y in 0..height {
@@ -185,11 +187,9 @@ impl ZzzStroke {
                 }
             }
 
-            // Scale distances
+            // Scale distances (parallelized)
             let scale = if self.use_sharp_corners { 1.0 } else { 3.0 };
-            for d in dists.iter_mut() {
-                *d /= scale;
-            }
+            dists.par_iter_mut().for_each(|d| *d /= scale);
 
             // Take ownership of the data buffers for rayon parallel composition
             let mask_out = std::mem::take(&mut bufs.mask);
@@ -206,6 +206,8 @@ impl ZzzStroke {
         let fmode = self.fill_mode;
         let gradient = self.gradient.clone();
         let bmode = self.blend_mode;
+        let is_dissolve = bmode == BlendMode::Dissolve;
+        let stencil_mode = IS_STENCIL_OR_OUTLINE[bmode as usize];
 
         dst.par_chunks_mut(4).enumerate().for_each(|(pixel_idx, out)| {
             let x = pixel_idx % width;
@@ -215,7 +217,7 @@ impl ZzzStroke {
             let d = dists[idx];
             let out_idx = pixel_idx * 4;
 
-            let src_a_raw = src[out_idx + 3] as f32 / 255.0;
+            let src_a_raw = src[out_idx + 3] as f32 * RECIP_255;
 
             let stroke_alpha_local = match pos {
                 StrokePosition::Outer => {
@@ -320,9 +322,9 @@ impl ZzzStroke {
                         let src_idx = (y * width + nc) * 4;
                         if src_idx + 2 < src.len() {
                             (
-                                src[src_idx] as f32 / 255.0,
-                                src[src_idx + 1] as f32 / 255.0,
-                                src[src_idx + 2] as f32 / 255.0,
+                                src[src_idx] as f32 * RECIP_255,
+                                src[src_idx + 1] as f32 * RECIP_255,
+                                src[src_idx + 2] as f32 * RECIP_255,
                             )
                         } else {
                             (stroke_r, stroke_g, stroke_b)
@@ -333,31 +335,29 @@ impl ZzzStroke {
                 (0.0, 0.0, 0.0)
             };
 
-            let src_r = src[out_idx] as f32 / 255.0;
-            let src_g = src[out_idx + 1] as f32 / 255.0;
-            let src_b = src[out_idx + 2] as f32 / 255.0;
+            let src_r = src[out_idx] as f32 * RECIP_255;
+            let src_g = src[out_idx + 1] as f32 * RECIP_255;
+            let src_b = src[out_idx + 2] as f32 * RECIP_255;
 
             if sa > 0.0 {
-                let h = (pixel_idx as u32).wrapping_mul(0x45d9f3b);
-                let h = (h ^ (h >> 16)).wrapping_mul(0x85ebca6b);
-                let h = h ^ (h >> 13);
-                let rng_base = h as f32 / u32::MAX as f32;
-
-                let rng1 = rng_base;
-                let rng2 = {
-                    let h2 = (h ^ 0xDEADBEEF) as f32 / u32::MAX as f32;
-                    h2
-                };
-                let rng3 = {
-                    let h3 = (h ^ 0xCAFEBABE) as f32 / u32::MAX as f32;
-                    h3
+                // Only compute RNG when using Dissolve mode
+                let (rng1, rng2, rng3) = if is_dissolve {
+                    let h = (pixel_idx as u32).wrapping_mul(0x45d9f3b);
+                    let h = (h ^ (h >> 16)).wrapping_mul(0x85ebca6b);
+                    let h = h ^ (h >> 13);
+                    let rng_base = fast_u32_to_f32(h);
+                    let rng2 = fast_u32_to_f32(h ^ 0xDEADBEEF);
+                    let rng3 = fast_u32_to_f32(h ^ 0xCAFEBABE);
+                    (rng_base, rng2, rng3)
+                } else {
+                    (0.0, 0.0, 0.0)
                 };
 
-                let blended_r = blend_channel(bmode, src_r, sr, sa, &mut || rng1);
-                let blended_g = blend_channel(bmode, src_g, sg, sa, &mut || rng2);
-                let blended_b = blend_channel(bmode, src_b, sb, sa, &mut || rng3);
+                let blended_r = blend_channel(bmode, src_r, sr, sa, rng1);
+                let blended_g = blend_channel(bmode, src_g, sg, sa, rng2);
+                let blended_b = blend_channel(bmode, src_b, sb, sa, rng3);
 
-                if is_stencil_or_outline(bmode) {
+                if stencil_mode {
                     let stencil_a = match bmode {
                         BlendMode::StencilAlpha => sa,
                         BlendMode::StencilLuma => sa * blend::luminance(sr, sg, sb),
@@ -382,15 +382,12 @@ impl ZzzStroke {
                     }
                 } else {
                     let inv = 1.0 - sa;
-                    out[0] =
-                        ((blended_r * sa + src_r * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
-                            .round() as u8;
-                    out[1] =
-                        ((blended_g * sa + src_g * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
-                            .round() as u8;
-                    out[2] =
-                        ((blended_b * sa + src_b * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
-                            .round() as u8;
+                    out[0] = ((blended_r * sa + src_r * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
+                        .round() as u8;
+                    out[1] = ((blended_g * sa + src_g * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
+                        .round() as u8;
+                    out[2] = ((blended_b * sa + src_b * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
+                        .round() as u8;
                     out[3] = ((sa + src_a_raw * src_opacity * inv).clamp(0.0, 1.0) * 255.0)
                         .round() as u8;
                 }
@@ -440,4 +437,11 @@ fn gaussian_edge(sigma: f32, center: f32, d: f32) -> f32 {
         return 1.0;
     }
     1.0 / (1.0 + x.exp())
+}
+
+/// Fast f32 conversion from u32 for RNG values in [0, 1).
+/// Uses bit manipulation instead of float division (ntsc-rs technique).
+#[inline]
+fn fast_u32_to_f32(input: u32) -> f32 {
+    f32::from_bits((input >> 9) | 0x3F800000) - 1.0
 }

@@ -52,7 +52,7 @@ static GPU_CTX: OnceLock<Mutex<GpuContext>> = OnceLock::new();
 // ---------------------------------------------------------------------------
 
 /// Try to render the repeater effect on GPU using multi-pass compositing.
-/// Each layer is dispatched separately, blending onto the accumulated dst.
+/// Each layer is dispatched as a separate compute pass within a single encoder + submit.
 /// Returns `Ok(true)` if GPU rendering succeeded.
 /// Returns `Ok(false)` if GPU is unavailable (caller should fall back to CPU).
 pub fn try_repeater_gpu_render(
@@ -100,27 +100,42 @@ pub fn try_repeater_gpu_render(
             let offset_x = (layer.position_x - 0.5) * wf;
             let offset_y = (layer.position_y - 0.5) * hf;
             let angle_rad = (-layer.rotation_deg).to_radians();
-            let cos_a = angle_rad.cos();
-            let sin_a = angle_rad.sin();
+            let (sin_a, cos_a) = angle_rad.sin_cos();
             (offset_x, offset_y, cos_a, sin_a)
         })
         .collect();
 
-    // Determine dispatch order based on layer_order
-    // Above (0): iterate 0..n (oldest first at bottom, newest last on top)
-    // Below (1): iterate n-1..0 (newest first at bottom, oldest last on top)
     let is_below = matches!(settings.layer_order, crate::settings::repeater::LayerOrder::Below);
 
     // Zero out dst buffer before first dispatch
-    let zeros = vec![0u8; image_size as usize];
-    guard
-        .queue
-        .write_buffer(&guard.bufs.dst_buf, 0, &zeros);
+    guard.queue.write_buffer(&guard.bufs.dst_buf, 0, &vec![0u8; image_size as usize]);
 
     let workgroup_count_x = (w + 15) / 16;
     let workgroup_count_y = (h + 15) / 16;
     let layout = guard.pipeline.get_bind_group_layout(0);
 
+    // E3: Create a single bind group (reused for all layers — references buffers by handle).
+    // Buffer contents change between passes, but bind group references remain valid.
+    let bind_group = guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("repeater"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: guard.bufs.src_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: guard.bufs.uniform_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: guard.bufs.dst_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    // One submit per layer so per-layer uniform writes are visible
     for i in 0..layers.len() {
         let li = if is_below { layers.len() - 1 - i } else { i };
         let (offset_x, offset_y, cos_a, sin_a) = layer_params[li];
@@ -146,41 +161,19 @@ pub fn try_repeater_gpu_render(
             .queue
             .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
-        let bind_group = guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("repeater"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: guard.bufs.src_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: guard.bufs.uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: guard.bufs.dst_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        // Dispatch
+        let mut encoder = guard
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let mut encoder = guard
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: None,
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&guard.pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
-                pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
-            }
-            guard.queue.submit(std::iter::once(encoder.finish()));
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&guard.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
+        guard.queue.submit(std::iter::once(encoder.finish()));
     }
 
     // Readback: copy dst_buf → staging, then map and copy to CPU
@@ -192,7 +185,7 @@ pub fn try_repeater_gpu_render(
         guard.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Wait for the copy to complete before mapping
+    // Map staging buffer and copy to CPU dst
     let _ = guard.device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
@@ -204,7 +197,6 @@ pub fn try_repeater_gpu_render(
         let _ = tx.send(result);
     });
 
-    // Block until the map callback fires (must happen after a poll)
     let _ = guard.device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
@@ -259,7 +251,7 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("repeater"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/repeater.wgsl").into()),
+        source: super::load_shader(include_str!("../shaders/repeater.wgsl")),
     });
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

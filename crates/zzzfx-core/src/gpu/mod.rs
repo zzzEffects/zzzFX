@@ -2,6 +2,7 @@ pub mod ass_subtitle;
 pub mod repeater;
 pub mod sprite_sheet;
 
+use std::borrow::Cow;
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Mutex, OnceLock};
 
 use crate::settings::stroke::ZzzStroke;
@@ -11,6 +12,12 @@ use crate::settings::stroke::ZzzStroke;
 // This avoids crashes from creating multiple GPU backends inside plugin hosts
 // (e.g. VEGAS Pro) that already manage their own GPU contexts.
 // ---------------------------------------------------------------------------
+
+/// Load a WGSL shader by prepending the shared function definitions.
+pub(crate) fn load_shader(specific: &'static str) -> wgpu::ShaderSource<'static> {
+    let shared = include_str!("../shaders/shared.wgsl");
+    wgpu::ShaderSource::Wgsl(Cow::Owned(format!("{shared}\n{specific}")))
+}
 
 static SHARED_GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 static SHARED_DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
@@ -169,9 +176,10 @@ pub fn try_gpu_render(
     }
 
     let uniforms = build_uniforms(settings, w, h);
+    let buf_size = (w * h * 4) as u64;
+    let src_data = &src[..buf_size as usize];
 
-    // Upload source, mask uniforms, and compose uniforms
-    let src_data = &src[..(w * h * 4) as usize];
+    // Upload source data (immediate CPU-side)
     guard
         .queue
         .write_buffer(&guard.bufs.src_buf, 0, src_data);
@@ -197,6 +205,10 @@ pub fn try_gpu_render(
     let workgroup_count_x = (w + 15) / 16;
     let workgroup_count_y = (h + 15) / 16;
 
+    let max_dim = w.max(h);
+    let n = max_dim.next_power_of_two();
+    let jfa_passes = n.ilog2();
+
     // Stage 1+2: Mask + edge detection + JFA init
     {
         let mut encoder =
@@ -215,14 +227,8 @@ pub fn try_gpu_render(
         guard.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Stage 3: JFA passes — standard large-to-small step order.
-    // Find next power of two >= max_dim, then halve each pass.
-    let max_dim = w.max(h);
-    let n = max_dim.next_power_of_two();
-    let jfa_passes = n.ilog2();
-
+    // Stage 3: JFA passes — one submit per pass so uniforms are visible
     for pass_idx in 0..jfa_passes {
-        // Step starts at n/2 and halves each pass: n/2, n/4, ..., 1
         let step = n >> (pass_idx + 1);
         let jfa_uniforms = JfaUniforms {
             width: w,
@@ -231,12 +237,10 @@ pub fn try_gpu_render(
             use_sharp_corners: if settings.use_sharp_corners { 1 } else { 0 },
         };
 
-        // Update uniform buffer with JFA params
         guard
             .queue
             .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&jfa_uniforms));
 
-        // Bind group: read from one buffer, write to the other
         let bind_group = if pass_idx % 2 == 0 {
             &bg_jfa_from_a
         } else {
@@ -261,7 +265,6 @@ pub fn try_gpu_render(
 
     // Stage 4+5: Stroke composition
     {
-        // Restore full uniforms
         guard
             .queue
             .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
@@ -289,7 +292,6 @@ pub fn try_gpu_render(
     }
 
     // Readback: copy dst_buf → staging, then map and copy to CPU
-    let buf_size = (w * h * 4) as u64;
     {
         let mut encoder =
             guard
@@ -299,7 +301,7 @@ pub fn try_gpu_render(
         guard.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Map staging buffer and copy to dst
+    // Map staging buffer and copy to CPU dst
     let staging_slice = guard.bufs.staging_buf.slice(..buf_size);
     staging_slice.map_async(wgpu::MapMode::Read, |_| {});
     let _ = guard.device.poll(wgpu::PollType::Wait {
@@ -357,15 +359,15 @@ fn create_pipelines(
 > {
     let shader_mask = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("mask"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mask.wgsl").into()),
+        source: load_shader(include_str!("../shaders/mask.wgsl")),
     });
     let shader_jfa = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("jfa"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/jfa.wgsl").into()),
+        source: load_shader(include_str!("../shaders/jfa.wgsl")),
     });
     let shader_compose = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("compose"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/compose.wgsl").into()),
+        source: load_shader(include_str!("../shaders/compose.wgsl")),
     });
 
     let pipeline_mask = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

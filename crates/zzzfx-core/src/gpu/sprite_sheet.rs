@@ -214,9 +214,7 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("sprite_sheet"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!("../shaders/sprite_sheet.wgsl").into(),
-        ),
+        source: super::load_shader(include_str!("../shaders/sprite_sheet.wgsl")),
     });
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

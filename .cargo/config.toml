@@ -1,2 +1,6 @@
 [alias]
 xtask = "run --package xtask --"
+
+# ntsc-rs style: enable native CPU features for auto-vectorization
+[target.'cfg(all())']
+rustflags = ["-C", "target-cpu=native"]
