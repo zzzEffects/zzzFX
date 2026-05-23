@@ -57,8 +57,8 @@ struct EffectData {
 
 static EFFECT_DATA: OnceLock<EffectData> = OnceLock::new();
 
-fn data() -> &'static EffectData {
-    EFFECT_DATA.get().expect("Stroke EffectData not initialized")
+fn data() -> OfxResult<&'static EffectData> {
+    EFFECT_DATA.get().ok_or(OfxStat::kOfxStatFailed)
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +113,7 @@ unsafe extern "C" fn main_entry(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
+    if action.is_null() { return OfxStat::kOfxStatFailed; }
     let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
     let r: OfxResult<()> = if action == kOfxActionLoad {
@@ -147,11 +148,11 @@ unsafe extern "C" fn main_entry(
 // ---------------------------------------------------------------------------
 
 unsafe fn action_load() -> OfxResult<()> {
-    action_load_common(&data().suites)
+    action_load_common(&data()?.suites)
 }
 
 unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(desc, &mut ep).ofx_ok()?;
@@ -173,7 +174,7 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
 }
 
 unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let cd = su.image_effect_suite.clipDefine.ok_or(OfxStat::kOfxStatFailed)?;
     let gp = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
@@ -233,7 +234,8 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
             }
             let mut cb: OfxPropertySetHandle = ptr::null_mut();
             pdef(param_set, kOfxParamTypeBoolean.as_ptr(), id_cstr.as_ptr(), &mut cb).ofx_ok()?;
-            let enabled_label = std::ffi::CString::new(i18n::tr(TrKey::CommonEnabled)).unwrap();
+            let enabled_label = std::ffi::CString::new(i18n::tr(TrKey::CommonEnabled))
+                .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
             ps(cb, kOfxPropLabel.as_ptr(), 0, enabled_label.as_ptr()).ofx_ok()?;
             pi(cb, kOfxParamPropDefault.as_ptr(), 0, dv as i32).ofx_ok()?;
             ps(cb, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
@@ -299,15 +301,15 @@ unsafe fn action_get_regions_of_interest(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    action_get_regions_of_interest_common(&data().suites, effect, inArgs, outArgs)
+    action_get_regions_of_interest_common(&data()?.suites, effect, inArgs, outArgs)
 }
 
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    action_get_clip_preferences_common(&data().suites, outArgs, 0, kOfxImageOpaque)
+    action_get_clip_preferences_common(&data()?.suites, outArgs, 0, kOfxImageOpaque)
 }
 
 unsafe fn action_instance_changed(_effect: OfxImageEffectHandle, inArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let pg = d.suites.property_suite.propGetInt.ok_or(OfxStat::kOfxStatFailed)?;
     let mut r: c_int = 0;
     pg(inArgs, kOfxPropChangeReason.as_ptr(), 0, &mut r).ofx_ok()?;
@@ -323,7 +325,7 @@ unsafe fn action_is_identity(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let pss = su.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
     let pgd = su.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
@@ -352,7 +354,7 @@ unsafe fn action_is_identity(
 // ---------------------------------------------------------------------------
 
 unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     let cgh = su.image_effect_suite.clipGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
@@ -408,12 +410,19 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
-    let mut src_buf = vec![0u8; total_u8];
-    let mut dst_buf = vec![0u8; total_u8];
-
-    copy_source_to_u8(sp, s_stride, &mut src_buf, width, height, row_bytes_u8, depth);
-    stroke.apply_effect(&src_buf, &mut dst_buf, width, height);
-    copy_u8_to_output(&dst_buf, dp, d_stride, width, height, row_bytes_u8, depth);
+    // Reuse thread-local buffers to avoid per-frame allocations for large frames.
+    thread_local! {
+        static RENDER_BUFS: std::cell::RefCell<(Vec<u8>, Vec<u8>)> =
+            std::cell::RefCell::new((Vec::new(), Vec::new()));
+    }
+    RENDER_BUFS.with(|cell| {
+        let (src_buf, dst_buf) = &mut *cell.borrow_mut();
+        src_buf.resize(total_u8, 0);
+        dst_buf.resize(total_u8, 0);
+        copy_source_to_u8(sp, s_stride, src_buf, width, height, row_bytes_u8, depth);
+        stroke.apply_effect(src_buf, dst_buf, width, height);
+        copy_u8_to_output(dst_buf, dp, d_stride, width, height, row_bytes_u8, depth);
+    });
 
     let _ = cri(si);
     let _ = cri(di);
@@ -429,25 +438,30 @@ unsafe fn apply_params(
     time: f64,
     dst: &mut ZzzStrokeFullSettings,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
     let td = &d.settings_list.setting_descriptors;
-    let find_id = |name: &str| -> SettingID<ZzzStrokeFullSettings> {
-        td.iter().find(|d| d.id.name == name).unwrap().id.clone()
+    let find_id = |name: &str| -> OfxResult<SettingID<ZzzStrokeFullSettings>> {
+        td.iter().find(|d| d.id.name == name)
+            .map(|d| d.id.clone())
+            .ok_or(OfxStat::kOfxStatFailed)
     };
 
     // Collect gradient children IDs
     let grad_children = {
-        let group_desc = td.iter().find(|d| d.id.name == "gradient").unwrap();
+        let group_desc = td.iter().find(|d| d.id.name == "gradient")
+            .ok_or(OfxStat::kOfxStatFailed)?;
         if let zzzfx_core::settings::SettingKind::Group { children } = &group_desc.kind {
             children.clone()
         } else { unreachable!() }
     };
-    let find_child = |name: &str| -> SettingID<ZzzStrokeFullSettings> {
-        grad_children.iter().find(|c| c.id.name == name).unwrap().id.clone()
+    let find_child = |name: &str| -> OfxResult<SettingID<ZzzStrokeFullSettings>> {
+        grad_children.iter().find(|c| c.id.name == name)
+            .map(|c| c.id.clone())
+            .ok_or(OfxStat::kOfxStatFailed)
     };
 
     // --- Native RGBA: Stroke Color ---
@@ -457,10 +471,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("stroke_color_r"), r as f32).unwrap();
-        dst.set_field::<f32>(&find_id("stroke_color_g"), g as f32).unwrap();
-        dst.set_field::<f32>(&find_id("stroke_color_b"), b as f32).unwrap();
-        dst.set_field::<f32>(&find_id("stroke_color_a"), a as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_r")?, r as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_g")?, g as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_b")?, b as f32).unwrap();
+        dst.set_field::<f32>(&find_id("stroke_color_a")?, a as f32).unwrap();
     }
 
     // --- Native Double2D: Gradient Start ---
@@ -469,8 +483,8 @@ unsafe fn apply_params(
         pgh(param_set, GRADIENT_START_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_start_x"), x as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_y"), y as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_x")?, x as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_y")?, y as f32).unwrap();
     }
 
     // --- Native RGBA: Gradient Start Color ---
@@ -480,10 +494,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_start_color_r"), r as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_color_g"), g as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_color_b"), b as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_color_a"), a as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_r")?, r as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_g")?, g as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_b")?, b as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_start_color_a")?, a as f32).unwrap();
     }
 
     // --- Native Double2D: Gradient End ---
@@ -492,8 +506,8 @@ unsafe fn apply_params(
         pgh(param_set, GRADIENT_END_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_end_x"), x as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_y"), y as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_x")?, x as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_y")?, y as f32).unwrap();
     }
 
     // --- Native RGBA: Gradient End Color ---
@@ -503,10 +517,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_end_color_r"), r as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_color_g"), g as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_color_b"), b as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_color_a"), a as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_r")?, r as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_g")?, g as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_b")?, b as f32).unwrap();
+        dst.set_field::<f32>(&find_child("gradient_end_color_a")?, a as f32).unwrap();
     }
 
     // --- Read remaining generic params ---

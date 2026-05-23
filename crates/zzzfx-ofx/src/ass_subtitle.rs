@@ -66,8 +66,8 @@ struct EffectData {
 
 static EFFECT_DATA: OnceLock<EffectData> = OnceLock::new();
 
-fn data() -> &'static EffectData {
-    EFFECT_DATA.get().expect("AssSubtitle EffectData not initialized")
+fn data() -> OfxResult<&'static EffectData> {
+    EFFECT_DATA.get().ok_or(OfxStat::kOfxStatFailed)
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +173,7 @@ unsafe extern "C" fn main_entry(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
+    if action.is_null() { return OfxStat::kOfxStatFailed; }
     let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
     let r: OfxResult<()> = if action == kOfxActionLoad {
@@ -207,11 +208,11 @@ unsafe extern "C" fn main_entry(
 // ---------------------------------------------------------------------------
 
 unsafe fn action_load() -> OfxResult<()> {
-    action_load_common(&data().suites)
+    action_load_common(&data()?.suites)
 }
 
 unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(desc, &mut ep).ofx_ok()?;
@@ -233,7 +234,7 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
 }
 
 unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let cd = su.image_effect_suite.clipDefine.ok_or(OfxStat::kOfxStatFailed)?;
     let gp = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
@@ -334,7 +335,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropChoiceOption.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeFontOverrideChoice).as_ptr()).ofx_ok()?;
         // Options 1..N: installed font names (cached globally, built once)
         let font_names = cached_font_names();
-        let name_cstrs: Vec<CString> = font_names.iter().map(|n| CString::new(n.as_str()).unwrap()).collect();
+        let name_cstrs: Vec<CString> = font_names.iter().filter_map(|n| CString::new(n.as_str()).ok()).collect();
         for (i, name_cstr) in name_cstrs.iter().enumerate() {
             ps(pp, kOfxParamPropChoiceOption.as_ptr(), (i + 1) as i32, name_cstr.as_ptr()).ofx_ok()?;
         }
@@ -361,7 +362,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
 // ---------------------------------------------------------------------------
 
 unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let gp = su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
     let psp = su.property_suite.propSetPointer.ok_or(OfxStat::kOfxStatFailed)?;
@@ -383,7 +384,7 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
 }
 
 unsafe fn action_destroy_instance(effect: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let gp = su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
     let gph = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
@@ -402,7 +403,7 @@ unsafe fn action_destroy_instance(effect: OfxImageEffectHandle) -> OfxResult<()>
 // ---------------------------------------------------------------------------
 
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    action_get_clip_preferences_common(&data().suites, outArgs, 1, kOfxImagePreMultiplied)
+    action_get_clip_preferences_common(&data()?.suites, outArgs, 1, kOfxImagePreMultiplied)
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +414,7 @@ unsafe fn action_instance_changed(
     effect: OfxImageEffectHandle,
     inArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     let propGetString = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?;
@@ -464,8 +465,9 @@ unsafe fn action_instance_changed(
 
             let mut p: OfxParamHandle = ptr::null_mut();
             paramGetHandle(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-            let path_cstr = CString::new(path_str).unwrap();
-            paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            if let Ok(path_cstr) = CString::new(path_str) {
+                paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            }
 
             return Ok(());
         }
@@ -505,8 +507,9 @@ unsafe fn action_instance_changed(
             // Persist to hidden string param
             let mut sp: OfxParamHandle = ptr::null_mut();
             paramGetHandle(param_set, FONT_OVERRIDE_STRING_PARAM.as_ptr(), &mut sp, ptr::null_mut()).ofx_ok()?;
-            let name_cstr = CString::new(&*font_name).unwrap();
-            paramSetValue(sp, name_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            if let Ok(name_cstr) = CString::new(&*font_name) {
+                paramSetValue(sp, name_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            }
 
             return Ok(());
         }
@@ -523,7 +526,7 @@ unsafe fn action_render(
     effect: OfxImageEffectHandle,
     inArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     let cgh = su.image_effect_suite.clipGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
@@ -750,14 +753,14 @@ unsafe fn apply_params(
     time: f64,
     dst: &mut ZzzAssSubtitleFullSettings,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
-    let find_id = |name: &str| -> SettingID<ZzzAssSubtitleFullSettings> {
+    let find_id = |name: &str| -> OfxResult<SettingID<ZzzAssSubtitleFullSettings>> {
         d.settings_list.setting_descriptors.iter()
             .find(|desc| desc.id.name == name)
             .map(|desc| desc.id.clone())
-            .unwrap()
+            .ok_or(OfxStat::kOfxStatFailed)
     };
 
     // Read all generic params, skipping those handled by native Double2D controls
@@ -789,8 +792,8 @@ unsafe fn apply_params(
         let mut x: f64 = 0.5;
         let mut y: f64 = 0.5;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("position_x"), x.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("position_y"), y.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("position_x")?, x.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("position_y")?, y.clamp(0.0, 1.0) as f32).unwrap();
     }
 
     // --- Native Double2D: Font Scale ---
@@ -802,8 +805,8 @@ unsafe fn apply_params(
         let mut x: f64 = 1.0;
         let mut y: f64 = 1.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("font_scale_x"), (x as f32).clamp(0.01, 5.0)).unwrap();
-        dst.set_field::<f32>(&find_id("font_scale_y"), (y as f32).clamp(0.01, 5.0)).unwrap();
+        dst.set_field::<f32>(&find_id("font_scale_x")?, (x as f32).clamp(0.01, 5.0)).unwrap();
+        dst.set_field::<f32>(&find_id("font_scale_y")?, (y as f32).clamp(0.01, 5.0)).unwrap();
     }
 
     Ok(())

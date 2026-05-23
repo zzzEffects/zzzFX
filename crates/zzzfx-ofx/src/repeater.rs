@@ -45,8 +45,8 @@ struct EffectData {
 
 static EFFECT_DATA: OnceLock<EffectData> = OnceLock::new();
 
-fn data() -> &'static EffectData {
-    EFFECT_DATA.get().expect("Repeater EffectData not initialized")
+fn data() -> OfxResult<&'static EffectData> {
+    EFFECT_DATA.get().ok_or(OfxStat::kOfxStatFailed)
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +100,7 @@ unsafe extern "C" fn main_entry(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
+    if action.is_null() { return OfxStat::kOfxStatFailed; }
     let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
     let r: OfxResult<()> = if action == kOfxActionLoad {
@@ -136,11 +137,11 @@ unsafe extern "C" fn main_entry(
 // ---------------------------------------------------------------------------
 
 unsafe fn action_load() -> OfxResult<()> {
-    action_load_common(&data().suites)
+    action_load_common(&data()?.suites)
 }
 
 unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(desc, &mut ep).ofx_ok()?;
@@ -163,7 +164,7 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
 }
 
 unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let cd = su.image_effect_suite.clipDefine.ok_or(OfxStat::kOfxStatFailed)?;
     let gp = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
@@ -221,14 +222,14 @@ unsafe fn action_get_regions_of_interest(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    action_get_regions_of_interest_common(&data().suites, effect, inArgs, outArgs)
+    action_get_regions_of_interest_common(&data()?.suites, effect, inArgs, outArgs)
 }
 
 unsafe fn action_get_time_domain(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let pg = su.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
     let psn = su.property_suite.propSetDoubleN.ok_or(OfxStat::kOfxStatFailed)?;
@@ -242,11 +243,11 @@ unsafe fn action_get_time_domain(
 }
 
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    action_get_clip_preferences_common(&data().suites, outArgs, 1, kOfxImageOpaque)
+    action_get_clip_preferences_common(&data()?.suites, outArgs, 1, kOfxImageOpaque)
 }
 
 unsafe fn action_instance_changed(_effect: OfxImageEffectHandle, inArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let pg = d.suites.property_suite.propGetInt.ok_or(OfxStat::kOfxStatFailed)?;
     let mut r: c_int = 0;
     pg(inArgs, kOfxPropChangeReason.as_ptr(), 0, &mut r).ofx_ok()?;
@@ -262,7 +263,7 @@ unsafe fn action_is_identity(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let pss = su.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
     let pgd = su.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
@@ -317,7 +318,7 @@ unsafe fn action_is_identity(
 // ---------------------------------------------------------------------------
 
 unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     let cgh = su.image_effect_suite.clipGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
@@ -489,7 +490,7 @@ unsafe fn apply_params(
     time: f64,
     dst: &mut ZzzRepeaterFullSettings,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;

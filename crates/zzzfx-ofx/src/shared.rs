@@ -118,25 +118,26 @@ where
 {
     let mut strings = HashMap::new();
     let mut menu_item_strings = HashMap::new();
+    let safe_cstr = |s: &str| CString::new(s).unwrap_or_else(|_| CString::new("").unwrap());
     for descriptor in settings_list.all_descriptors() {
         let id = &descriptor.id;
-        let id_str = CString::new(descriptor.id.name).unwrap();
-        let label = CString::new(zzzfx_core::i18n::tr(descriptor.label_key)).unwrap();
+        let id_str = safe_cstr(descriptor.id.name);
+        let label = safe_cstr(zzzfx_core::i18n::tr(descriptor.label_key));
         let description = descriptor
             .description_key
-            .map(|k| CString::new(zzzfx_core::i18n::tr(k)).unwrap());
+            .map(|k| safe_cstr(zzzfx_core::i18n::tr(k)));
         let group_name = if let SettingKind::Group { .. } = descriptor.kind {
-            Some(CString::new(format!("{}_group", descriptor.id.name)).unwrap())
+            Some(safe_cstr(&format!("{}_group", descriptor.id.name)))
         } else {
             None
         };
         strings.insert(id.clone(), (id_str, label, description, group_name));
         if let SettingKind::Enumeration { options } = &descriptor.kind {
             for item in options {
-                let lbl = CString::new(zzzfx_core::i18n::tr(item.label_key)).unwrap();
+                let lbl = safe_cstr(zzzfx_core::i18n::tr(item.label_key));
                 menu_item_strings.insert(
                     (id.clone(), item.index),
-                    (lbl, item.description_key.map(|k| CString::new(zzzfx_core::i18n::tr(k)).unwrap())),
+                    (lbl, item.description_key.map(|k| safe_cstr(zzzfx_core::i18n::tr(k)))),
                 );
             }
         }
@@ -324,7 +325,8 @@ pub unsafe fn define_single_param<T: Settings<Key = TrKey> + Clone>(
                 &mut cb,
             )
             .ofx_ok()?;
-            let enabled_label = CString::new(zzzfx_core::i18n::tr(TrKey::CommonEnabled)).unwrap();
+            let enabled_label = CString::new(zzzfx_core::i18n::tr(TrKey::CommonEnabled))
+                .unwrap_or_else(|_| CString::new("").unwrap());
             ps(cb, kOfxPropLabel.as_ptr(), 0, enabled_label.as_ptr()).ofx_ok()?;
             pi(cb, kOfxParamPropDefault.as_ptr(), 0, dv as i32).ofx_ok()?;
             ps(cb, kOfxParamPropParent.as_ptr(), 0, gnc.as_ptr()).ofx_ok()?;

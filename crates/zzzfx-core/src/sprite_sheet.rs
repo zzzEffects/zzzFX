@@ -602,8 +602,9 @@ impl ZzzSpriteSheet {
             });
         }
 
-        // --- Grid layout ---
-        let columns = self.sprite_columns.max(1) as u32;
+        if self.show_grid_overlay {
+            // --- Grid layout ---
+            let columns = self.sprite_columns.max(1) as u32;
         let rows = self.sprite_rows.max(1) as u32;
         let cut_x = self.sprites_cut_x.max(1) as u32;
         let cut_y = self.sprites_cut_y.max(1) as u32;
@@ -738,6 +739,7 @@ impl ZzzSpriteSheet {
                     font_scale, offset_x, offset_y, out_w as i32, out_h as i32,
                 );
             }
+        }
         }
     }
 }

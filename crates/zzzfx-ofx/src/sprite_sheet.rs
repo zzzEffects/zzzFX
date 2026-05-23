@@ -135,6 +135,7 @@ unsafe extern "C" fn main_entry(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
+    if action.is_null() { return OfxStat::kOfxStatFailed; }
     let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
     let r: OfxResult<()> = if action == kOfxActionLoad {
@@ -828,6 +829,7 @@ unsafe extern "C" fn overlay_main(
     inArgs: OfxPropertySetHandle,
     _outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
+    if action.is_null() { return OfxStat::kOfxStatFailed; }
     let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
     if action == kOfxInteractActionPenDown {

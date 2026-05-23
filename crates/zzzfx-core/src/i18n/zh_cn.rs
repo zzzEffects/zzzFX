@@ -265,6 +265,8 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamSpriteSelectionModeDesc => c"交互式精灵选择，带有网格覆盖和帧选择功能。",
         TrKey::ParamSpriteFitToOutput => c"适应精灵表到输出",
         TrKey::ParamSpriteFitToOutputDesc => c"将完整精灵表缩放以适配输出范围，同时保持宽高比。",
+        TrKey::ParamSpriteShowGridOverlay => c"显示网格覆盖",
+        TrKey::ParamSpriteShowGridOverlayDesc => c"在选择模式下显示精灵表上的网格线和帧编号。",
 
         // ── Sprite sheet menu items ───────────────────────
         TrKey::MenuHForward => c"水平正向",

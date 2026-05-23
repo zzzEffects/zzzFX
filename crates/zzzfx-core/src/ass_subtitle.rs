@@ -256,9 +256,10 @@ impl DirtyRect {
 /// Reusable per-frame rendering state to amortize allocations.
 pub struct RenderCache {
     pub temp_buf: Vec<u8>,
+    generation: u64,
     glyph_cache: HashMap<GlyphCacheKey, CachedGlyph>,
-    font_data_cache: HashMap<usize, Option<Arc<Vec<u8>>>>,
-    event_cache: HashMap<usize, CachedEventData>,
+    font_data_cache: HashMap<(u64, usize), Option<Arc<Vec<u8>>>>,
+    event_cache: HashMap<(u64, usize), CachedEventData>,
     prev_dirty: DirtyRect,
 }
 
@@ -273,11 +274,20 @@ impl RenderCache {
     pub fn new() -> Self {
         Self {
             temp_buf: Vec::new(),
+            generation: 0,
             glyph_cache: HashMap::new(),
             font_data_cache: HashMap::new(),
             event_cache: HashMap::new(),
             prev_dirty: DirtyRect::default(),
         }
+    }
+
+    /// Signal that the ASS script has been reloaded, invalidating all cached data
+    /// keyed by event pointer addresses from the old script.
+    pub fn invalidate_script_cache(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.event_cache.clear();
+        self.font_data_cache.clear();
     }
 }
 
@@ -865,7 +875,6 @@ fn legacy_to_an(legacy: i32) -> i32 {
 
 use font_kit::source::SystemSource;
 use font_kit::handle::Handle as FkHandle;
-use std::cell::RefCell;
 
 struct FontEntry {
     family_name: String,
@@ -874,13 +883,11 @@ struct FontEntry {
     handle: FkHandle,
 }
 
-pub struct FontCache {
-    entries: Vec<FontEntry>,
-    loaded: RefCell<HashMap<String, Arc<Vec<u8>>>>,
-}
+/// Global cache of all installed font entries, built once per process.
+static GLOBAL_FONT_ENTRIES: std::sync::OnceLock<Vec<FontEntry>> = std::sync::OnceLock::new();
 
-impl FontCache {
-    pub fn new() -> Self {
+fn global_font_entries() -> &'static [FontEntry] {
+    GLOBAL_FONT_ENTRIES.get_or_init(|| {
         let source = SystemSource::new();
         let mut entries = Vec::new();
         let handles = source.all_fonts().unwrap_or_default();
@@ -894,7 +901,17 @@ impl FontCache {
                 });
             }
         }
-        Self { entries, loaded: RefCell::new(HashMap::new()) }
+        entries
+    })
+}
+
+pub struct FontCache {
+    loaded: Mutex<HashMap<String, Arc<Vec<u8>>>>,
+}
+
+impl FontCache {
+    pub fn new() -> Self {
+        Self { loaded: Mutex::new(HashMap::new()) }
     }
 
     /// Try to match a font name against known variants (exact match).
@@ -906,12 +923,12 @@ impl FontCache {
     fn load_font_data(&self, entry: &FontEntry) -> Option<Arc<Vec<u8>>> {
         let key = &entry.full_name;
         {
-            let loaded = self.loaded.borrow();
+            let loaded = self.loaded.lock().unwrap();
             if let Some(data) = loaded.get(key) { return Some(Arc::clone(data)); }
         }
         if let Ok(font) = entry.handle.load() {
             if let Some(data) = font.copy_font_data() {
-                self.loaded.borrow_mut().insert(key.clone(), Arc::clone(&data));
+                self.loaded.lock().unwrap().insert(key.clone(), Arc::clone(&data));
                 return Some(data);
             }
         }
@@ -919,29 +936,31 @@ impl FontCache {
     }
 
     /// Look up entries matching a font name query, returning indices.
-    fn find_matching_indices(&self, font_name: &str) -> Vec<usize> {
+    fn find_matching_indices(font_name: &str) -> Vec<usize> {
+        let entries = global_font_entries();
         let q = font_name.to_lowercase();
         let mut indices = Vec::new();
         // Tier 1: exact match on any name variant
-        for (i, entry) in self.entries.iter().enumerate() {
+        for (i, entry) in entries.iter().enumerate() {
             if Self::matches_name_exact(entry, &q) { indices.push(i); }
         }
         if !indices.is_empty() { return indices; }
         // Tier 2: substring match
-        for (i, entry) in self.entries.iter().enumerate() {
+        for (i, entry) in entries.iter().enumerate() {
             if entry.family_name.contains(&q) || entry.full_name.contains(&q) { indices.push(i); }
         }
         if !indices.is_empty() { return indices; }
         // Tier 3: prefix match
-        for (i, entry) in self.entries.iter().enumerate() {
+        for (i, entry) in entries.iter().enumerate() {
             if entry.family_name.starts_with(&q) || entry.full_name.starts_with(&q) { indices.push(i); }
         }
         indices
     }
 
     pub fn find_font(&self, font_name: &str) -> Option<Arc<Vec<u8>>> {
-        for idx in self.find_matching_indices(font_name) {
-            if let Some(data) = self.load_font_data(&self.entries[idx]) {
+        let entries = global_font_entries();
+        for idx in Self::find_matching_indices(font_name) {
+            if let Some(data) = self.load_font_data(&entries[idx]) {
                 return Some(data);
             }
         }
@@ -950,9 +969,10 @@ impl FontCache {
 
     pub fn find_font_for_chars(&self, chars: &[char], preferred_name: &str) -> Option<Arc<Vec<u8>>> {
         if chars.is_empty() { return None; }
+        let entries = global_font_entries();
         let q = preferred_name.to_lowercase();
         // Try preferred name first
-        for entry in &self.entries {
+        for entry in entries {
             if Self::matches_name_exact(entry, &q) {
                 if let Some(data) = self.load_font_data(entry) {
                     if let Ok(font) = entry.handle.load() {
@@ -966,7 +986,7 @@ impl FontCache {
         }
         // Scan all fonts for best coverage
         let mut best: Option<(Arc<Vec<u8>>, usize)> = None;
-        for entry in &self.entries {
+        for entry in entries {
             if let Ok(font) = entry.handle.load() {
                 let covered = chars.iter().filter(|&&c| font.glyph_for_char(c).is_some()).count();
                 if covered == chars.len() {
@@ -985,8 +1005,9 @@ impl FontCache {
     }
 
     pub fn find_font_for_char(&self, ch: char, preferred_name: &str) -> Option<Arc<Vec<u8>>> {
+        let entries = global_font_entries();
         let q = preferred_name.to_lowercase();
-        for entry in &self.entries {
+        for entry in entries {
             if Self::matches_name_exact(entry, &q) {
                 if let Ok(font) = entry.handle.load() {
                     if font.glyph_for_char(ch).is_some() {
@@ -995,7 +1016,7 @@ impl FontCache {
                 }
             }
         }
-        for entry in &self.entries {
+        for entry in entries {
             if let Ok(font) = entry.handle.load() {
                 if font.glyph_for_char(ch).is_some() {
                     return self.load_font_data(entry);
@@ -1023,7 +1044,8 @@ impl FontCache {
     }
 
     pub fn list_font_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.entries.iter().map(|e| e.full_name.clone()).collect();
+        let entries = global_font_entries();
+        let mut names: Vec<String> = entries.iter().map(|e| e.full_name.clone()).collect();
         names.sort();
         names.dedup();
         names
@@ -1184,11 +1206,15 @@ pub fn render_ass_subtitle_frame(
     let event_cache = &mut cache.event_cache;
     let font_data_cache = &mut cache.font_data_cache;
 
-    for ev in &active {
+    let cache_gen = cache.generation;
+    for (ev_idx, ev) in active.iter().enumerate() {
         let style = resolve_style(ass_script, ev);
 
-        // Cached event data: segments, clean_text, text_normalized
-        let ev_key = *ev as *const OwnedEvent as usize;
+        // Cached event data: segments, clean_text, text_normalized.
+        // Keyed by (generation, event_index) instead of raw pointer to avoid
+        // stale data after script reload (where new heap allocations may reuse
+        // old addresses).
+        let ev_key = (cache_gen, ev_idx);
         let cached_ev = event_cache.entry(ev_key).or_insert_with(|| {
             let segments = parse_tag_segments(&ev.text);
             let clean_text: String = segments.iter().map(|s| s.text.as_str()).collect();
@@ -1436,6 +1462,13 @@ pub fn render_ass_subtitle_frame(
                     };
 
                     if !glyph_cache.contains_key(&cache_key) {
+                        // Evict stale entries when the cache grows too large.
+                        // A full clear is crude but bounds memory for long
+                        // subtitles with many unique glyph+scale combinations.
+                        const MAX_GLYPH_CACHE: usize = 2048;
+                        if glyph_cache.len() >= MAX_GLYPH_CACHE {
+                            glyph_cache.clear();
+                        }
                         let glyph = ab_glyph::Glyph {
                             id: use_glyph_id,
                             scale: use_scale,
@@ -1966,8 +1999,7 @@ Dialogue: 0,0:00:03.00,0:00:08.00,Default,,0,0,0,,Line two
 
     #[test]
     fn test_font_cache_has_fonts() {
-        let cache = FontCache::new();
-        assert!(!cache.entries.is_empty(), "Font cache should not be empty on Windows");
+        assert!(!global_font_entries().is_empty(), "Font cache should not be empty on Windows");
     }
 
     #[test]
@@ -1986,7 +2018,7 @@ Dialogue: 0,0:00:01.00,0:00:05.00,Default,,0,0,0,,Hello World
 "#;
         let ass = parse_ass_file(content).expect("parse should succeed");
         let mut font_cache = FontCache::new();
-        if font_cache.entries.is_empty() {
+        if global_font_entries().is_empty() {
             eprintln!("SKIP test_render_produces_pixels: no fonts available");
             return;
         }
