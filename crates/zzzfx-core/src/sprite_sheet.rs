@@ -577,8 +577,8 @@ impl ZzzSpriteSheet {
         let out_h = ((sheet_h as f32 * fit_scale).round() as usize).max(1);
 
         // Centering offset (signed)
-        let mut offset_x = (dst_w as i32 - out_w as i32) / 2;
-        let mut offset_y = (dst_h as i32 - out_h as i32) / 2;
+        let offset_x = (dst_w as i32 - out_w as i32) / 2;
+        let offset_y = (dst_h as i32 - out_h as i32) / 2;
 
         // --- GPU path: full-sheet scaling + centering ---
         let gpu_ok = {
@@ -620,7 +620,7 @@ impl ZzzSpriteSheet {
             });
         }
 
-        if self.show_grid_overlay {
+        if self.grid_overlay_opacity > 0.0 {
             // --- Grid layout ---
             let columns = self.sprite_columns.max(1) as u32;
         let rows = self.sprite_rows.max(1) as u32;
@@ -686,15 +686,19 @@ impl ZzzSpriteSheet {
                 if grid_col >= full_cols as usize { continue; }
                 if let Some(hl) = cell_hl[grid_row * full_cols as usize + grid_col] {
                     let idx = col * 4;
-                    let a = hl[3] as f32 / 255.0;
+                    let a = hl[3] as f32 / 255.0 * self.grid_overlay_opacity;
                     let ia = 1.0 - a;
                     for c in 0..4 { dst_row[idx + c] = (dst_row[idx + c] as f32 * ia + hl[c] as f32 * a).round() as u8; }
                 }
             }
         });
 
-        // --- Grid lines (solid overwrite, no blending) ---
+        // --- Grid lines (alpha-blended with opacity) ---
+        let opacity = self.grid_overlay_opacity;
         let draw_hline = |dst: &mut [u8], y: i32, x0: i32, x1: i32, color: [u8; 4], thick: i32| {
+            let ca = color[3] as f32 / 255.0 * opacity;
+            if ca <= 0.0 { return; }
+            let ia = 1.0 - ca;
             for t in 0..thick {
                 let py = y + t;
                 if py < 0 || py >= dst_h as i32 { continue; }
@@ -702,18 +706,29 @@ impl ZzzSpriteSheet {
                 for px in x0..x1 {
                     if px < 0 || px >= dst_w as i32 { continue; }
                     let idx = (row_start + px as usize) * 4;
-                    if idx + 4 <= dst.len() { dst[idx..idx + 4].copy_from_slice(&color); }
+                    if idx + 4 <= dst.len() {
+                        for c in 0..4 {
+                            dst[idx + c] = (dst[idx + c] as f32 * ia + color[c] as f32 * ca).round() as u8;
+                        }
+                    }
                 }
             }
         };
         let draw_vline = |dst: &mut [u8], x: i32, y0: i32, y1: i32, color: [u8; 4], thick: i32| {
+            let ca = color[3] as f32 / 255.0 * opacity;
+            if ca <= 0.0 { return; }
+            let ia = 1.0 - ca;
             for t in 0..thick {
                 let px = x + t;
                 if px < 0 || px >= dst_w as i32 { continue; }
                 for py in y0..y1 {
                     if py < 0 || py >= dst_h as i32 { continue; }
                     let idx = (py as usize * dst_w + px as usize) * 4;
-                    if idx + 4 <= dst.len() { dst[idx..idx + 4].copy_from_slice(&color); }
+                    if idx + 4 <= dst.len() {
+                        for c in 0..4 {
+                            dst[idx + c] = (dst[idx + c] as f32 * ia + color[c] as f32 * ca).round() as u8;
+                        }
+                    }
                 }
             }
         };
@@ -767,6 +782,7 @@ impl ZzzSpriteSheet {
                 draw_number_scaled(
                     dst, dst_w, dst_h, sx, sy, &num_str,
                     font_scale, offset_x, offset_y, out_w as i32, out_h as i32,
+                    self.grid_overlay_opacity,
                 );
             }
         }
@@ -802,21 +818,23 @@ const DIGIT_OUTLINES: [[u8; 7]; 10] = [
     [0b11111, 0b11011, 0b11011, 0b11111, 0b10011, 0b11011, 0b11111], // 9
 ];
 
-/// Draw a scaled number string with black outline + white fill for max contrast.
+/// Draw a scaled number string with black outline + white fill, blended with opacity.
 fn draw_number_scaled(
     dst: &mut [u8], dst_w: usize, dst_h: usize,
     x: i32, y: i32, num_str: &str, scale: i32,
     offset_x: i32, offset_y: i32, out_w: i32, out_h: i32,
+    opacity: f32,
 ) {
+    if opacity <= 0.0 { return; }
     let char_base_w: i32 = 5;
     let char_base_h: i32 = 7;
     let char_spacing = scale.max(1);
-    let outline_color: [u8; 4] = [0, 0, 0, 255];
-    let fill_color: [u8; 4] = [255, 255, 255, 255];
 
-    // Two-pass rendering helper
+    // Two-pass rendering helper with alpha blending
     macro_rules! write_pass {
-        ($bits_arr:expr, $color:expr) => {
+        ($bits_arr:expr, $raw_color:expr) => {
+            let ca = $raw_color[3] as f32 / 255.0 * opacity;
+            let ia = 1.0 - ca;
             for (ci, ch) in num_str.chars().enumerate() {
                 let digit = match ch.to_digit(10) { Some(d) => d as usize, None => continue };
                 let cx = x + ci as i32 * (char_base_w * scale + char_spacing);
@@ -834,7 +852,9 @@ fn draw_number_scaled(
                                 if src_x < 0 || src_x >= out_w || src_y < 0 || src_y >= out_h { continue; }
                                 let idx = (py as usize * dst_w + px as usize) * 4;
                                 if idx + 4 <= dst.len() {
-                                    dst[idx..idx + 4].copy_from_slice(&$color);
+                                    for c in 0..4 {
+                                        dst[idx + c] = (dst[idx + c] as f32 * ia + $raw_color[c] as f32 * ca).round() as u8;
+                                    }
                                 }
                             }
                         }
@@ -845,7 +865,7 @@ fn draw_number_scaled(
     }
 
     // Pass 1: black outline
-    write_pass!(DIGIT_OUTLINES, outline_color);
+    write_pass!(DIGIT_OUTLINES, [0u8, 0, 0, 255]);
     // Pass 2: white fill on top
-    write_pass!(DIGITS, fill_color);
+    write_pass!(DIGITS, [255u8, 255, 255, 255]);
 }

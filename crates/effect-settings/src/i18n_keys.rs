@@ -318,8 +318,8 @@ i18n_keys! {
         ParamSpriteSelectionModeDesc = "Interactive sprite selection with grid overlay and frame picking.";
         ParamSpriteFitToOutput = "Fit Sprite Sheet to Output";
         ParamSpriteFitToOutputDesc = "Scale the full sprite sheet to fit within output bounds while preserving aspect ratio.";
-        ParamSpriteShowGridOverlay = "Show Grid Overlay";
-        ParamSpriteShowGridOverlayDesc = "Display grid lines and frame numbers over the sprite sheet in selection mode.";
+        ParamSpriteGridOverlayOpacity = "Grid Overlay Opacity";
+        ParamSpriteGridOverlayOpacityDesc = "Opacity of the grid overlay and frame numbers in selection mode. 0 = hidden, 1 = fully opaque.";
 
         // Sprite sheet menu items
         MenuHForward = "H. Forward";

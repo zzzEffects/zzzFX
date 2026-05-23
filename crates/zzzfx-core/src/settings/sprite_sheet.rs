@@ -79,7 +79,7 @@ pub struct ZzzSpriteSheet {
     pub rotation_pixel_based: bool,
     pub selection_mode: bool,
     pub fit_sprite_sheet_to_output: bool,
-    pub show_grid_overlay: bool,
+    pub grid_overlay_opacity: f32,
 }
 
 impl Default for ZzzSpriteSheet {
@@ -109,7 +109,7 @@ impl Default for ZzzSpriteSheet {
             rotation_pixel_based: true,
             selection_mode: false,
             fit_sprite_sheet_to_output: true,
-            show_grid_overlay: true,
+            grid_overlay_opacity: 1.0,
         }
     }
 }
@@ -148,7 +148,7 @@ pub mod setting_id {
     pub const ROTATION_PIXEL_BASED:        SID = setting_id!("rotation_pixel_based", rotation_pixel_based);
     pub const SELECTION_MODE:              SID = setting_id!("selection_mode", selection_mode);
     pub const FIT_SPRITE_SHEET_TO_OUTPUT:   SID = setting_id!("fit_sprite_sheet_to_output", fit_sprite_sheet_to_output);
-    pub const SHOW_GRID_OVERLAY:            SID = setting_id!("show_grid_overlay", show_grid_overlay);
+    pub const GRID_OVERLAY_OPACITY:         SID = setting_id!("show_grid_overlay", grid_overlay_opacity);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,10 +184,10 @@ impl Settings for ZzzSpriteSheetFullSettings {
                             id: setting_id::FIT_SPRITE_SHEET_TO_OUTPUT,
                         },
                         SettingDescriptor {
-                            label_key: TrKey::ParamSpriteShowGridOverlay,
-                            description_key: Some(TrKey::ParamSpriteShowGridOverlayDesc),
-                            kind: SettingKind::Boolean,
-                            id: setting_id::SHOW_GRID_OVERLAY,
+                            label_key: TrKey::ParamSpriteGridOverlayOpacity,
+                            description_key: Some(TrKey::ParamSpriteGridOverlayOpacityDesc),
+                            kind: SettingKind::Percentage { logarithmic: false },
+                            id: setting_id::GRID_OVERLAY_OPACITY,
                         },
                     ],
                 },

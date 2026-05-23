@@ -325,8 +325,8 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamSpriteSelectionModeDesc => c"Interactive sprite selection with grid overlay and frame picking.",
         TrKey::ParamSpriteFitToOutput => c"Fit Sprite Sheet to Output",
         TrKey::ParamSpriteFitToOutputDesc => c"Scale the full sprite sheet to fit within output bounds while preserving aspect ratio.",
-        TrKey::ParamSpriteShowGridOverlay => c"Show Grid Overlay",
-        TrKey::ParamSpriteShowGridOverlayDesc => c"Display grid lines and frame numbers over the sprite sheet in selection mode.",
+        TrKey::ParamSpriteGridOverlayOpacity => c"Grid Overlay Opacity",
+        TrKey::ParamSpriteGridOverlayOpacityDesc => c"Opacity of the grid overlay and frame numbers in selection mode. 0 = hidden, 1 = fully opaque.",
 
         // ── Sprite sheet menu items ───────────────────────
         TrKey::MenuHForward => c"H. Forward",
