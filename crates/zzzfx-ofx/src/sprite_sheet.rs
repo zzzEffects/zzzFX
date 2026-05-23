@@ -463,9 +463,10 @@ unsafe fn action_render(
         }
     }
 
-    // Get output clip
+    // Get output clip and its property set (for frame range query)
     let mut dc: OfxImageClipHandle = ptr::null_mut();
-    cgh(effect, c"Output".as_ptr(), &mut dc, ptr::null_mut()).ofx_ok()?;
+    let mut clip_props: OfxPropertySetHandle = ptr::null_mut();
+    cgh(effect, c"Output".as_ptr(), &mut dc, &mut clip_props).ofx_ok()?;
 
     let mut di: OfxPropertySetHandle = ptr::null_mut();
     cgi(dc, time, ptr::null(), &mut di).ofx_ok()?;
@@ -507,9 +508,26 @@ unsafe fn action_render(
         idata_inner.selection_range_end = None;
     }
 
+    // --- Override speed for negative play_count ---
+    // When play_count < 0, auto-compute speed so that |play_count| complete
+    // animation cycles fit within the host's total timeline duration.
+    // The host provides the total frame range via kOfxImageEffectPropFrameRange
+    // in the render inArgs; dividing by frame_rate gives the duration in seconds.
+    if ss.play_count < 0 {
+        let cycle_frames = ss.cycle_frame_count() as f64;
+        let rate_for_speed = if frame_rate > 0.0 { frame_rate as f64 } else { 1.0 };
+        // Read the total generator frame range from the Output clip's property set
+        let mut frame_range = [0.0f64; 2];
+        let _ = pgd(clip_props, kOfxImageEffectPropFrameRange.as_ptr(), 0, &mut frame_range[0]);
+        let _ = pgd(clip_props, kOfxImageEffectPropFrameRange.as_ptr(), 1, &mut frame_range[1]);
+        let total_dur = ((frame_range[1] - frame_range[0]) / rate_for_speed).max(0.001);
+        let abs_n = (-ss.play_count) as f64;
+        ss.speed = ((cycle_frames * abs_n) / total_dur) as f32;
+    }
+
     // --- Compute integrated speed offset (trapezoidal integration) ---
     let rate = if frame_rate > 0.0 { frame_rate } else { 1.0 };
-    let integrated_speed_offset: Option<f64> = if ss.speed == 0.0 || ss.selection_mode {
+    let integrated_speed_offset: Option<f64> = if ss.play_count < 0 || ss.speed == 0.0 || ss.selection_mode {
         None // static or selection mode: use instantaneous speed
     } else {
         let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;

@@ -99,8 +99,14 @@ impl ZzzSpriteSheet {
         };
         let offset = integrated_speed_offset
             .unwrap_or(time * self.speed as f64 / rate);
-        let frame_step =
+        let mut frame_step =
             offset.floor() as i64 + (self.frame_offset as f64).floor() as i64;
+
+        // Clamp to N complete cycles when play_count > 0
+        if self.play_count > 0 {
+            let max_steps = total as i64 * self.play_count as i64;
+            frame_step = frame_step.min(max_steps.saturating_sub(1).max(0));
+        }
 
         // Raw sprite index within the cycle
         let mut i = positive_mod(frame_step, total as i64) as i32;
@@ -263,6 +269,30 @@ impl ZzzSpriteSheet {
         let within_idx = r_local * rd_cols + c_local;
         let abs_idx = block_idx * cells_per_block + within_idx;
         abs_idx
+    }
+
+    /// Return the number of frames in one complete animation cycle,
+    /// accounting for sprite range, playback mode, repeat range, and repeat count.
+    pub fn cycle_frame_count(&self) -> i32 {
+        let n = (self.sprite_range_end - self.sprite_range_start).unsigned_abs() as i32 + 1;
+
+        let (sr_lo, sr_hi) = if self.sprite_range_start <= self.sprite_range_end {
+            (self.sprite_range_start, self.sprite_range_end)
+        } else {
+            (self.sprite_range_end, self.sprite_range_start)
+        };
+        let rr_start = self.repeat_range_start.max(sr_lo).min(sr_hi);
+        let rr_end = self.repeat_range_end.max(sr_lo).min(sr_hi);
+        let rr_actual_start = rr_start.min(rr_end);
+        let rr_actual_end = rr_start.max(rr_end);
+        let m = (rr_actual_end - rr_actual_start).unsigned_abs() as i32 + 1;
+
+        let n_adj = if self.playback_mode == PlaybackMode::NormalReverseMerge {
+            n - 1
+        } else {
+            n
+        };
+        (n_adj + m * self.repeat_count).max(0)
     }
 
     /// Extract the sprite at `crop_rect` from the decoded sheet and render it
@@ -443,6 +473,7 @@ impl ZzzSpriteSheet {
             let src_img = scaled;
             let rot_size = sw * sh * 4;
             rotated_buf.resize(rot_size, 0u8);
+            rotated_buf.fill(0);
             use rayon::prelude::*;
             rotated_buf.par_chunks_mut(new_w as usize * 4).enumerate().for_each(|(dy, row_out)| {
                 for dx in 0..new_w as usize {
@@ -520,7 +551,7 @@ impl ZzzSpriteSheet {
     }
 
     /// Render the full sprite sheet in selection mode with grid overlay and
-    /// frame numbers. Rotation is skipped per requirements.
+    /// frame numbers. Rotation and displacement are skipped per requirements.
     pub fn render_selection_mode(
         &self,
         sheet_rgba: &[u8],
@@ -548,21 +579,7 @@ impl ZzzSpriteSheet {
         let mut offset_x = (dst_w as i32 - out_w as i32) / 2;
         let mut offset_y = (dst_h as i32 - out_h as i32) / 2;
 
-        // Apply displacement: convert normalized 0..1 → output pixels
-        {
-            let dx = ((self.displacement_x - 0.5) * dst_w as f32).round() as i32;
-            let dy = ((0.5 - self.displacement_y) * dst_h as f32).round() as i32;
-            if self.displacement_pixel_based {
-                let ps = fit_scale.max(0.01);
-                offset_x += ((dx as f32 / ps).round() * ps) as i32;
-                offset_y += ((dy as f32 / ps).round() * ps) as i32;
-            } else {
-                offset_x += dx;
-                offset_y += dy;
-            }
-        }
-
-        // --- GPU path: full-sheet scaling + centering + displacement ---
+        // --- GPU path: full-sheet scaling + centering ---
         let gpu_ok = {
             let dx = offset_x as f32 - (dst_w as i32 - out_w as i32) as f32 / 2.0;
             let dy = offset_y as f32 - (dst_h as i32 - out_h as i32) as f32 / 2.0;

@@ -60,6 +60,7 @@ pub struct ZzzSpriteSheet {
     pub sprite_range_start: i32,
     pub sprite_range_end: i32,
     pub frame_offset: f32,
+    pub play_count: i32,
     pub speed: f32,
     pub reading_direction: ReadingDirection,
     pub playback_mode: PlaybackMode,
@@ -89,6 +90,7 @@ impl Default for ZzzSpriteSheet {
             sprite_range_start: 0,
             sprite_range_end: 0,
             frame_offset: 0.0,
+            play_count: 0,
             speed: 1.0,
             reading_direction: ReadingDirection::HForward,
             playback_mode: PlaybackMode::Normal,
@@ -127,6 +129,7 @@ pub mod setting_id {
     pub const SPRITE_RANGE_START: SID = setting_id!("sprite_range_start", sprite_range_start);
     pub const SPRITE_RANGE_END:   SID = setting_id!("sprite_range_end", sprite_range_end);
     pub const FRAME_OFFSET:       SID = setting_id!("frame_offset", frame_offset);
+    pub const PLAY_COUNT:          SID = setting_id!("play_count", play_count);
     pub const SPEED:               SID = setting_id!("speed", speed);
     pub const READING_DIRECTION:  SID = setting_id!("reading_direction", reading_direction);
     pub const PLAYBACK_MODE:      SID = setting_id!("playback_mode", playback_mode);
@@ -210,6 +213,12 @@ impl Settings for ZzzSpriteSheetFullSettings {
                     logarithmic: false,
                 },
                 id: setting_id::FRAME_OFFSET,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamSpritePlayCount,
+                description_key: Some(TrKey::ParamSpritePlayCountDesc),
+                kind: SettingKind::IntRange { range: -100..=100 },
+                id: setting_id::PLAY_COUNT,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamSpeed,
