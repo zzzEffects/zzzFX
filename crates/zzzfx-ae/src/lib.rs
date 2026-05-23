@@ -125,7 +125,7 @@ impl Plugin {
         _out_data: OutData,
         _params: &mut Parameters<ParamID>,
     ) -> Result<(), Error> {
-        i18n::set_lang(i18n::detect_system_lang());
+        i18n::set_lang(resolve_language());
         global_setup_common(in_data)
     }
 
@@ -261,4 +261,20 @@ impl Plugin {
     ) -> Result<(), Error> {
         Err(Error::BadCallbackParameter)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Language resolution
+// ---------------------------------------------------------------------------
+
+fn resolve_language() -> i18n::Lang {
+    if let Some(tag) = get_ae_language_tag() {
+        return i18n::lang_from_locale_tag(&tag).unwrap_or(i18n::Lang::En);
+    }
+    i18n::detect_system_lang()
+}
+
+fn get_ae_language_tag() -> Option<String> {
+    let app = ae::suites::App::new().ok()?;
+    app.language().ok()
 }
