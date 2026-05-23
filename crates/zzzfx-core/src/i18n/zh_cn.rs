@@ -228,7 +228,7 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamFrameOffset => c"帧偏移",
         TrKey::ParamFrameOffsetDesc => c"帧偏移（向下取整）。按部分或整帧偏移动画。",
         TrKey::ParamSpritePlayCount => c"播放次数",
-        TrKey::ParamSpritePlayCountDesc => c"动画播放的循环次数。0 = 无限播放。负数 = 根据时间轴时长自动计算速度。",
+        TrKey::ParamSpritePlayCountDesc => c"动画播放的循环次数。0 = 无限播放。负数 = 根据持续时间时长自动计算速度。",
         TrKey::ParamSpeed => c"速度",
         TrKey::ParamSpeedDesc => c"播放速度。0 = 暂停。",
         TrKey::ParamReadingDirection => c"读取方向",

@@ -560,6 +560,7 @@ impl ZzzSpriteSheet {
         dst: &mut [u8],
         dst_w: usize,
         dst_h: usize,
+        first_click_frame: Option<i32>,
     ) {
         dst.fill(0);
         if sheet_rgba.is_empty() || sheet_w == 0 || sheet_h == 0 { return; }
@@ -656,6 +657,18 @@ impl ZzzSpriteSheet {
                         [200u8, 0, 0, 200] // red
                     };
                     cell_hl[(r as u32 * full_cols + c as u32) as usize] = Some(color);
+                }
+            }
+        }
+
+        // White highlight for the first-clicked frame (only when not in range)
+        if let Some(fc) = first_click_frame {
+            for r in 0..(full_rows as i32) {
+                for c in 0..(full_cols as i32) {
+                    let idx = (r as u32 * full_cols + c as u32) as usize;
+                    if cell_hl[idx].is_none() && self.get_absolute_index(r, c) == fc {
+                        cell_hl[idx] = Some([255u8, 255, 255, 200]);
+                    }
                 }
             }
         }

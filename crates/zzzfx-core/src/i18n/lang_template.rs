@@ -286,7 +286,7 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamFrameOffset => c"Frame Offset",
         TrKey::ParamFrameOffsetDesc => c"Frame offset (floored). Shift the animation by partial or whole frames.",
         TrKey::ParamSpritePlayCount => c"Play Count",
-        TrKey::ParamSpritePlayCountDesc => c"Number of times to play the animation. 0 = infinite. Negative = auto-compute speed to fit within timeline duration.",
+        TrKey::ParamSpritePlayCountDesc => c"Number of times to play the animation. 0 = infinite. Negative = auto-compute speed to fit within duration.",
         TrKey::ParamSpeed => c"Speed",
         TrKey::ParamSpeedDesc => c"Playback speed. 0 = paused.",
         TrKey::ParamReadingDirection => c"Reading Direction",

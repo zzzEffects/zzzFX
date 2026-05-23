@@ -279,7 +279,7 @@ i18n_keys! {
         ParamFrameOffset = "Frame Offset";
         ParamFrameOffsetDesc = "Frame offset (floored). Shift the animation by partial or whole frames.";
         ParamSpritePlayCount = "Play Count";
-        ParamSpritePlayCountDesc = "Number of times to play the animation. 0 = infinite. Negative = auto-compute speed to fit within timeline duration.";
+        ParamSpritePlayCountDesc = "Number of times to play the animation. 0 = infinite. Negative = auto-compute speed to fit within duration.";
         ParamSpeed = "Speed";
         ParamSpeedDesc = "Playback speed. 0 = paused.";
         ParamReadingDirection = "Reading Direction";

@@ -63,6 +63,9 @@ struct InstanceData {
     second_click_frame: Option<i32>,
     selection_range_start: Option<i32>,
     selection_range_end: Option<i32>,
+    // Output dimensions (set during render, used by interact for coordinate mapping)
+    output_w: usize,
+    output_h: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -192,9 +195,9 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
     pi(ep, kOfxImageEffectPluginPropHostFrameThreading.as_ptr(), 0, 0).ofx_ok()?;
     pi(ep, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 1).ofx_ok()?;
     pi(ep, kOfxImageEffectPropTemporalClipAccess.as_ptr(), 0, 0).ofx_ok()?;
-    // Register overlay interact (V1 — receives image effect handle directly)
+    // Register overlay interact (V2 — uses OfxDrawSuiteV1, required by modern hosts)
     let pp = su.property_suite.propSetPointer.ok_or(OfxStat::kOfxStatFailed)?;
-    pp(ep, kOfxImageEffectPluginPropOverlayInteractV1.as_ptr(), 0, overlay_main as *mut c_void).ofx_ok()?;
+    pp(ep, kOfxImageEffectPluginPropOverlayInteractV2.as_ptr(), 0, overlay_main as *mut c_void).ofx_ok()?;
     Ok(())
 }
 
@@ -311,6 +314,8 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
         second_click_frame: None,
         selection_range_start: None,
         selection_range_end: None,
+        output_w: 0,
+        output_h: 0,
     });
     psp(ep, kOfxPropInstanceData.as_ptr(), 0, Box::into_raw(idata) as *mut c_void).ofx_ok()?;
     Ok(())
@@ -481,6 +486,12 @@ unsafe fn action_render(
     let width = (r - l) as usize;
     let height = (t - b) as usize;
 
+    // Store output dimensions for use by the overlay interact (coordinate mapping)
+    if let Some(ref mut idata_inner) = idata {
+        idata_inner.output_w = width;
+        idata_inner.output_h = height;
+    }
+
     let mut comp_ptr: *mut c_char = ptr::null_mut();
     let _ = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?(
         di, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr,
@@ -572,12 +583,22 @@ unsafe fn action_render(
 
     // Selection mode: render full sheet with grid
     if ss.selection_mode {
+        let first_click = idata.as_ref().and_then(|i| i.first_click_frame);
+        let has_range = idata.as_ref()
+            .map_or(false, |i| i.selection_range_start.is_some() && i.selection_range_end.is_some());
+        // When waiting for second click, suppress range highlighting so only
+        // the white first-click cell is visible.
+        if !has_range {
+            ss.sprite_range_start = -1;
+            ss.sprite_range_end = -1;
+        }
         if let Some(ref idata_inner) = idata {
             if !idata_inner.decoded_rgba.is_empty() {
                 ss.render_selection_mode(
                     &idata_inner.decoded_rgba,
                     idata_inner.sheet_width, idata_inner.sheet_height,
                     &mut dst_buf, width, height,
+                    first_click,
                 );
             }
         }
@@ -735,6 +756,7 @@ unsafe fn define_native_int2d(
     pi(pp, kOfxParamPropMin.as_ptr(), 1, min).ofx_ok()?;
     pi(pp, kOfxParamPropMax.as_ptr(), 0, max).ofx_ok()?;
     pi(pp, kOfxParamPropMax.as_ptr(), 1, max).ofx_ok()?;
+    pi(pp, kOfxParamPropAnimates.as_ptr(), 0, 1).ofx_ok()?;
     ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     Ok(())
 }
@@ -848,10 +870,22 @@ unsafe extern "C" fn overlay_main(
     _outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
     if action.is_null() { return OfxStat::kOfxStatFailed; }
-    let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
+
+    // OFX interact lifecycle: return OK for describe/create/destroy so the
+    // host (e.g. VEGAS Pro) knows the interact is valid and will create the
+    // interactive controls for pen events.
+    if action == kOfxActionDescribe
+        || action == kOfxActionCreateInstance
+        || action == kOfxActionDestroyInstance
+    {
+        return OfxStat::kOfxStatOK;
+    }
+
+    // Runtime actions: V2 overlay — handle is OfxInteractHandle.
+    // The owning effect handle is read from kOfxPropEffectInstance in inArgs.
     if action == kOfxInteractActionPenDown {
-        match interact_pen_down(effect, inArgs) {
+        match interact_pen_down(handle, inArgs) {
             Ok(()) => OfxStat::kOfxStatOK,
             Err(_) => OfxStat::kOfxStatReplyDefault,
         }
@@ -867,11 +901,18 @@ unsafe extern "C" fn overlay_main(
 }
 
 unsafe fn interact_pen_down(
-    effect: OfxImageEffectHandle,
+    interact: *const c_void,
     inArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
     let d = data()?;
     let su = &d.suites;
+
+    // V2 overlay: read the owning effect handle from inArgs
+    let pgp = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
+    let mut effect_ptr: *mut c_void = ptr::null_mut();
+    pgp(inArgs, kOfxPropEffectInstance.as_ptr(), 0, &mut effect_ptr).ofx_ok()?;
+    if effect_ptr.is_null() { return Err(OfxStat::kOfxStatFailed); }
+    let effect = effect_ptr as OfxImageEffectHandle;
 
     // Get instance data
     let gp = su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
@@ -896,40 +937,88 @@ unsafe fn interact_pen_down(
         return Ok(());
     }
 
-    // Read pen position
+    // Ignore clicks before the first render (no output dimensions known yet)
+    if idata.output_w == 0 || idata.output_h == 0 || idata.sheet_width == 0 || idata.sheet_height == 0 {
+        return Ok(());
+    }
+
+    // Read pen position (OFX convention: [0..1], origin at bottom-left)
     let pgd = su.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
     let mut pen_x: f64 = 0.0;
     let mut pen_y: f64 = 0.0;
     pgd(inArgs, c"OfxInteractPropPenPosition".as_ptr(), 0, &mut pen_x).ofx_ok()?;
     pgd(inArgs, c"OfxInteractPropPenPosition".as_ptr(), 1, &mut pen_y).ofx_ok()?;
 
-    // Convert pen coords to grid cell using reading-direction-aware absolute index
+    // Compute rendered sheet geometry (must match render_selection_mode in core)
+    let fit_scale = if ss.fit_sprite_sheet_to_output {
+        (idata.output_w as f32 / idata.sheet_width as f32)
+            .min(idata.output_h as f32 / idata.sheet_height as f32)
+    } else {
+        ss.scale
+    }.max(0.01);
+    let out_w = ((idata.sheet_width as f32 * fit_scale).round() as i32).max(1);
+    let out_h = ((idata.sheet_height as f32 * fit_scale).round() as i32).max(1);
+    let offset_x = (idata.output_w as i32 - out_w) / 2;
+    let offset_y = (idata.output_h as i32 - out_h) / 2;
+
+    // Convert pen [0..1] from output window to sheet-pixel coords
+    let px_sheet = pen_x * idata.output_w as f64 - offset_x as f64;
+    let py_sheet = pen_y * idata.output_h as f64 - offset_y as f64; // OFX: 0=bottom
+    // Flip Y to match rendering convention (top=0)
+    let py_sheet = out_h as f64 - py_sheet;
+
+    // Ignore clicks outside the rendered sheet area (letterbox regions)
+    if px_sheet < 0.0 || px_sheet >= out_w as f64 || py_sheet < 0.0 || py_sheet >= out_h as f64 {
+        return Ok(());
+    }
+
+    // Map sheet-pixel position to grid cell
     let columns = ss.sprite_columns.max(1);
     let rows = ss.sprite_rows.max(1);
-    let col = ((pen_x * columns as f64).floor() as i32).clamp(0, columns - 1);
-    let row = ((pen_y * rows as f64).floor() as i32).clamp(0, rows - 1);
+    let sprite_w = out_w / columns;
+    let sprite_h = out_h / rows;
+    let col = ((px_sheet / sprite_w as f64).floor() as i32).clamp(0, columns - 1);
+    let row = ((py_sheet / sprite_h as f64).floor() as i32).clamp(0, rows - 1);
     let frame_idx = ss.get_absolute_index(row, col);
 
-    // Two-click selection: first click sets start, second click sets end
+    // Get sprite_range param handle for second-click write-back
+    let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+    let paramSetValue = su.parameter_suite.paramSetValue.ok_or(OfxStat::kOfxStatFailed)?;
+    let mut sp: OfxParamHandle = ptr::null_mut();
+    pgh(param_set, SPRITE_RANGE_PARAM.as_ptr(), &mut sp, ptr::null_mut()).ofx_ok()?;
+
+    // Two-click selection
     if idata.first_click_frame.is_none() {
+        // First click: clear previous selection, highlight clicked cell white.
+        idata.selection_range_start = None;
+        idata.selection_range_end = None;
         idata.first_click_frame = Some(frame_idx);
         idata.second_click_frame = None;
     } else if idata.second_click_frame.is_none() {
+        // Second click: commit the range.
         let start = idata.first_click_frame.unwrap();
         let end = frame_idx;
-        idata.second_click_frame = Some(frame_idx);
-
-        // Store the selected range for use in action_render
         let lo = start.min(end);
         let hi = start.max(end);
+        idata.second_click_frame = Some(frame_idx);
         idata.selection_range_start = Some(lo);
         idata.selection_range_end = Some(hi);
+        // Write to OFX parameter — triggers re-render with new range
+        paramSetValue(sp, lo, hi).ofx_ok()?;
     } else {
-        // Reset: start new selection, clear stale range
-        idata.first_click_frame = Some(frame_idx);
-        idata.second_click_frame = None;
+        // Third click: reset — clear selection, start fresh with white highlight.
         idata.selection_range_start = None;
         idata.selection_range_end = None;
+        idata.first_click_frame = Some(frame_idx);
+        idata.second_click_frame = None;
+    }
+
+    // Request redraw; the host's Draw action returns kOfxStatOK and on some
+    // hosts (including VEGAS Pro) this triggers a full effect re-render.
+    if let Some(is) = d.suites.interact_suite {
+        if let Some(redraw) = is.interactRedraw {
+            let _ = redraw(interact as OfxInteractHandle);
+        }
     }
 
     Ok(())
