@@ -1,4 +1,4 @@
-// zzzRepeater GPU compositing: per-pixel single-layer blend onto accumulated dst.
+// Repeater GPU compositing: per-pixel single-layer blend onto accumulated dst.
 // Uses shared.wgsl for hash, blend_channel, pack_rgba8, etc.
 
 struct Uniforms {

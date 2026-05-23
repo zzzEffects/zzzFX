@@ -13,7 +13,7 @@ use std::process::Command;
 
 pub fn command() -> clap::Command {
     clap::Command::new("build-zzzfx-ofx-plugin")
-        .about("Builds and bundles the zzzFX OpenFX plugin (zzzStroke + zzzRepeater + zzzSpriteSheet).")
+        .about("Builds and bundles the zzzFX OpenFX plugin (Stroke + Repeater + SpriteSheet).")
         .arg(
             clap::Arg::new("release")
                 .long("release")

@@ -63,7 +63,7 @@ pub struct ZzzSpriteSheet {
     pub speed: f32,
     pub reading_direction: ReadingDirection,
     pub playback_mode: PlaybackMode,
-    pub loop_offset: i32,
+    pub loop_offset: f32,
     pub repeat_range_start: i32,
     pub repeat_range_end: i32,
     pub repeat_count: i32,
@@ -91,7 +91,7 @@ impl Default for ZzzSpriteSheet {
             speed: 1.0,
             reading_direction: ReadingDirection::HForward,
             playback_mode: PlaybackMode::Normal,
-            loop_offset: 0,
+            loop_offset: 0.0,
             repeat_range_start: 0,
             repeat_range_end: 0,
             repeat_count: 0,
@@ -184,20 +184,20 @@ impl Settings for ZzzSpriteSheetFullSettings {
             SettingDescriptor {
                 label_key: TrKey::ParamSpriteRangeStart,
                 description_key: Some(TrKey::ParamSpriteRangeStartDesc),
-                kind: SettingKind::IntRange { range: 0..=9999 },
+                kind: SettingKind::IntRange { range: 0..=1000 },
                 id: setting_id::SPRITE_RANGE_START,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamSpriteRangeEnd,
                 description_key: Some(TrKey::ParamSpriteRangeEndDesc),
-                kind: SettingKind::IntRange { range: 0..=9999 },
+                kind: SettingKind::IntRange { range: 0..=1000 },
                 id: setting_id::SPRITE_RANGE_END,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamFrameOffset,
                 description_key: Some(TrKey::ParamFrameOffsetDesc),
                 kind: SettingKind::FloatRange {
-                    range: -9999.0..=9999.0,
+                    range: -100.0..=100.0,
                     logarithmic: false,
                 },
                 id: setting_id::FRAME_OFFSET,
@@ -243,25 +243,28 @@ impl Settings for ZzzSpriteSheetFullSettings {
             SettingDescriptor {
                 label_key: TrKey::ParamLoopOffset,
                 description_key: Some(TrKey::ParamLoopOffsetDesc),
-                kind: SettingKind::IntRange { range: -9999..=9999 },
+                kind: SettingKind::FloatRange {
+                    range: -100.0..=100.0,
+                    logarithmic: false,
+                },
                 id: setting_id::LOOP_OFFSET,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamRepeatRangeStart,
                 description_key: Some(TrKey::ParamRepeatRangeStartDesc),
-                kind: SettingKind::IntRange { range: 0..=9999 },
+                kind: SettingKind::IntRange { range: 0..=1000 },
                 id: setting_id::REPEAT_RANGE_START,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamRepeatRangeEnd,
                 description_key: Some(TrKey::ParamRepeatRangeEndDesc),
-                kind: SettingKind::IntRange { range: 0..=9999 },
+                kind: SettingKind::IntRange { range: 0..=1000 },
                 id: setting_id::REPEAT_RANGE_END,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamRepeatCount,
                 description_key: Some(TrKey::ParamRepeatCountDesc),
-                kind: SettingKind::IntRange { range: 0..=9999 },
+                kind: SettingKind::IntRange { range: 0..=1000 },
                 id: setting_id::REPEAT_COUNT,
             },
             SettingDescriptor {
@@ -275,6 +278,12 @@ impl Settings for ZzzSpriteSheetFullSettings {
                 description_key: Some(TrKey::ParamSpritesCutYDesc),
                 kind: SettingKind::IntRange { range: 1..=99 },
                 id: setting_id::SPRITES_CUT_Y,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamSpriteDisplacementPixelBased,
+                description_key: Some(TrKey::ParamSpriteDisplacementPixelBasedDesc),
+                kind: SettingKind::Boolean,
+                id: setting_id::DISPLACEMENT_PIXEL_BASED,
             },
             // Marker descriptors for native Double2D placement (skipped in OFX via is_native_grouped_name)
             SettingDescriptor {
@@ -296,10 +305,10 @@ impl Settings for ZzzSpriteSheetFullSettings {
                 id: setting_id::DISPLACEMENT_Y,
             },
             SettingDescriptor {
-                label_key: TrKey::ParamSpriteDisplacementPixelBased,
-                description_key: Some(TrKey::ParamSpriteDisplacementPixelBasedDesc),
+                label_key: TrKey::ParamSpriteRotationPixelBased,
+                description_key: Some(TrKey::ParamSpriteRotationPixelBasedDesc),
                 kind: SettingKind::Boolean,
-                id: setting_id::DISPLACEMENT_PIXEL_BASED,
+                id: setting_id::ROTATION_PIXEL_BASED,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamSpriteRotation,
@@ -309,21 +318,6 @@ impl Settings for ZzzSpriteSheetFullSettings {
                     logarithmic: false,
                 },
                 id: setting_id::ROTATION,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamSpriteRotationPixelBased,
-                description_key: Some(TrKey::ParamSpriteRotationPixelBasedDesc),
-                kind: SettingKind::Boolean,
-                id: setting_id::ROTATION_PIXEL_BASED,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamScale,
-                description_key: Some(TrKey::ParamScaleDesc),
-                kind: SettingKind::FloatRange {
-                    range: 0.01..=20.0,
-                    logarithmic: false,
-                },
-                id: setting_id::SCALE,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamScaleAlgorithm,
@@ -338,6 +332,15 @@ impl Settings for ZzzSpriteSheetFullSettings {
                     ],
                 },
                 id: setting_id::SCALE_ALGORITHM,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamScale,
+                description_key: Some(TrKey::ParamScaleDesc),
+                kind: SettingKind::FloatRange {
+                    range: 0.01..=25.0,
+                    logarithmic: false,
+                },
+                id: setting_id::SCALE,
             },
         ]
         .into_boxed_slice()

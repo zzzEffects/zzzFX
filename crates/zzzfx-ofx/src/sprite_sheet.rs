@@ -80,8 +80,8 @@ struct EffectData {
 
 static EFFECT_DATA: OnceLock<EffectData> = OnceLock::new();
 
-fn data() -> &'static EffectData {
-    EFFECT_DATA.get().expect("SpriteSheet EffectData not initialized")
+fn data() -> OfxResult<&'static EffectData> {
+    EFFECT_DATA.get().ok_or(OfxStat::kOfxStatFailed)
 }
 
 // ---------------------------------------------------------------------------
@@ -169,11 +169,11 @@ unsafe extern "C" fn main_entry(
 // ---------------------------------------------------------------------------
 
 unsafe fn action_load() -> OfxResult<()> {
-    action_load_common(&data().suites)
+    action_load_common(&data()?.suites)
 }
 
 unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(desc, &mut ep).ofx_ok()?;
@@ -198,7 +198,7 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
 }
 
 unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let cd = su.image_effect_suite.clipDefine.ok_or(OfxStat::kOfxStatFailed)?;
     let gp = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
@@ -244,7 +244,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
                 su, param_set, SPRITE_RANGE_PARAM,
                 i18n::tr_cstr(TrKey::NativeSpriteRange),
                 i18n::tr_cstr(TrKey::NativeSpriteRangeHint),
-                defaults.sprite_range_start, defaults.sprite_range_end, 0, 9999,
+                defaults.sprite_range_start, defaults.sprite_range_end, 0, 1000,
             )?;
             defined_range = true;
         }
@@ -253,7 +253,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
                 su, param_set, REPEAT_RANGE_PARAM,
                 i18n::tr_cstr(TrKey::NativeRepeatRange),
                 i18n::tr_cstr(TrKey::NativeRepeatRangeHint),
-                defaults.repeat_range_start, defaults.repeat_range_end, 0, 9999,
+                defaults.repeat_range_start, defaults.repeat_range_end, 0, 1000,
             )?;
             defined_repeat = true;
         }
@@ -290,7 +290,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
 // ---------------------------------------------------------------------------
 
 unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let gp = su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
     let psp = su.property_suite.propSetPointer.ok_or(OfxStat::kOfxStatFailed)?;
@@ -316,7 +316,7 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
 }
 
 unsafe fn action_destroy_instance(effect: OfxImageEffectHandle) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let gp = su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
     let gph = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
@@ -335,7 +335,7 @@ unsafe fn action_destroy_instance(effect: OfxImageEffectHandle) -> OfxResult<()>
 // ---------------------------------------------------------------------------
 
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    action_get_clip_preferences_common(&data().suites, outArgs, 1, kOfxImagePreMultiplied)
+    action_get_clip_preferences_common(&data()?.suites, outArgs, 1, kOfxImagePreMultiplied)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +346,7 @@ unsafe fn action_instance_changed(
     effect: OfxImageEffectHandle,
     inArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     let propGetString = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?;
@@ -408,7 +408,7 @@ unsafe fn action_render(
     effect: OfxImageEffectHandle,
     inArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     let cgh = su.image_effect_suite.clipGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
@@ -514,32 +514,26 @@ unsafe fn action_render(
         let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
         let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
         // Find the speed descriptor to get its OFX param name
-        let speed_desc = d.settings_list.setting_descriptors.iter()
+        let speed_desc = d.settings_list.all_descriptors()
             .find(|desc| desc.id.name == "speed");
         if let Some(speed_desc) = speed_desc {
             let ds = d.strings.get(&speed_desc.id);
             if let Some(ds) = ds {
                 let mut speed_handle: OfxParamHandle = ptr::null_mut();
                 pgh(param_set, ds.0.as_c_str().as_ptr(), &mut speed_handle, ptr::null_mut()).ofx_ok()?;
-                let n_frames = (time * rate).ceil() as usize;
+                // Cap samples at 64 for performance, use trapezoidal integration
+                let n_samples = ((time * rate).ceil() as usize).min(64);
                 let mut integral = 0.0f64;
                 let mut prev_speed: f64 = 0.0;
                 let mut prev_t: f64 = 0.0;
-                for i in 1..=n_frames {
-                    let t = (i as f64) / rate;
+                for i in 1..=n_samples {
+                    let t = time * (i as f64) / (n_samples as f64);
                     let mut sp: f64 = 0.0;
                     pgv(speed_handle, t, &mut sp).ofx_ok()?;
                     let dt = t - prev_t;
                     integral += (prev_speed + sp) * 0.5 * dt / rate;
                     prev_speed = sp;
                     prev_t = t;
-                }
-                // Add final segment from last sample to exact time
-                if prev_t < time {
-                    let mut sp: f64 = 0.0;
-                    pgv(speed_handle, time, &mut sp).ofx_ok()?;
-                    let dt = time - prev_t;
-                    integral += (prev_speed + sp) * 0.5 * dt / rate;
                 }
                 Some(integral)
             } else {
@@ -763,13 +757,16 @@ unsafe fn apply_params(
     time: f64,
     dst: &mut ZzzSpriteSheetFullSettings,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
     let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
-    let find_id = |name: &str| -> SettingID<ZzzSpriteSheetFullSettings> {
-        d.settings_list.setting_descriptors.iter().find(|d| d.id.name == name).unwrap().id.clone()
+    let find_id = |name: &str| -> OfxResult<SettingID<ZzzSpriteSheetFullSettings>> {
+        d.settings_list.all_descriptors()
+            .find(|d| d.id.name == name)
+            .map(|d| d.id.clone())
+            .ok_or(OfxStat::kOfxStatFailed)
     };
 
     // --- Native Integer2D: spriteRange ---
@@ -778,8 +775,8 @@ unsafe fn apply_params(
         pgh(param_set, SPRITE_RANGE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: c_int = 0; let mut y: c_int = 0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("sprite_range_start"), x.clamp(0, 9999)).unwrap();
-        dst.set_field::<i32>(&find_id("sprite_range_end"), y.clamp(0, 9999)).unwrap();
+        dst.set_field::<i32>(&find_id("sprite_range_start")?, x.clamp(0, 1000)).unwrap();
+        dst.set_field::<i32>(&find_id("sprite_range_end")?, y.clamp(0, 1000)).unwrap();
     }
 
     // --- Native Integer2D: repeatRange ---
@@ -788,8 +785,8 @@ unsafe fn apply_params(
         pgh(param_set, REPEAT_RANGE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: c_int = 0; let mut y: c_int = 0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("repeat_range_start"), x.clamp(0, 9999)).unwrap();
-        dst.set_field::<i32>(&find_id("repeat_range_end"), y.clamp(0, 9999)).unwrap();
+        dst.set_field::<i32>(&find_id("repeat_range_start")?, x.clamp(0, 1000)).unwrap();
+        dst.set_field::<i32>(&find_id("repeat_range_end")?, y.clamp(0, 1000)).unwrap();
     }
 
     // --- Native Double2D: displacement ---
@@ -798,8 +795,8 @@ unsafe fn apply_params(
         pgh(param_set, DISPLACEMENT_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("displacement_x"), x.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("displacement_y"), y.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("displacement_x")?, x.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("displacement_y")?, y.clamp(0.0, 1.0) as f32).unwrap();
     }
 
     // --- Read generic params ---
@@ -853,7 +850,7 @@ unsafe fn interact_pen_down(
     effect: OfxImageEffectHandle,
     inArgs: OfxPropertySetHandle,
 ) -> OfxResult<()> {
-    let d = data();
+    let d = data()?;
     let su = &d.suites;
 
     // Get instance data

@@ -130,7 +130,7 @@ impl ZzzSpriteSheet {
         } + m * self.repeat_count;
         if loop_total > 0 {
             i = positive_mod(
-                i as i64 + self.loop_offset as i64,
+                i as i64 + (self.loop_offset as f64).floor() as i64,
                 loop_total as i64,
             ) as i32;
         }
@@ -305,9 +305,10 @@ impl ZzzSpriteSheet {
             return;
         }
 
-        // --- GPU path (only when no pre-scale transforms needed) ---
-        let can_use_gpu = self.rotation == 0.0
-            && !self.displacement_pixel_based
+        // --- GPU path ---
+        // Available for Nearest/Bilinear with no pre-scale pixel-based transforms
+        let can_use_gpu = !self.displacement_pixel_based
+            && !self.rotation_pixel_based
             && !self.selection_mode;
         if can_use_gpu {
             if let Some(filter_mode) = match self.scale_algorithm {
@@ -315,7 +316,6 @@ impl ZzzSpriteSheet {
                 ScaleAlgorithm::Triangle => Some(1u32),
                 _ => None,
             } {
-                // Convert normalized displacement to pixel offset for GPU
                 let dx = (self.displacement_x - 0.5) * dst_w as f32;
                 let dy = (0.5 - self.displacement_y) * dst_h as f32;
                 let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -323,6 +323,7 @@ impl ZzzSpriteSheet {
                         crop_rect, sheet_rgba, sheet_w, sheet_h,
                         self.scale, filter_mode,
                         dx, dy, false,
+                        self.rotation, // GPU handles non-pixel-based rotation
                         dst, dst_w as u32, dst_h as u32,
                     )
                 }));
@@ -332,11 +333,6 @@ impl ZzzSpriteSheet {
                 }
             }
         }
-
-        let out_w = (cw as f32 * self.scale).round() as usize;
-        let out_h = (ch as f32 * self.scale).round() as usize;
-        let _out_w = out_w.max(1);
-        let _out_h = out_h.max(1);
 
         // Take buffers from thread-local storage, resize as needed, return after use
         let (mut crop_buf, mut scaled_buf, mut rotated_buf) = SPRITE_BUFS.with(|bufs_cell| {
@@ -350,7 +346,6 @@ impl ZzzSpriteSheet {
         // Build crop buffer in original pixel coords
         let crop_size = (cw as usize) * (ch as usize) * 4;
         crop_buf.resize(crop_size, 0u8);
-        crop_buf.fill(0);
         let sh_usize = sheet_h as usize;
         let sw_usize = sheet_w as usize;
         use rayon::prelude::*;
@@ -447,17 +442,15 @@ impl ZzzSpriteSheet {
             let cy_dst = new_h as f64 / 2.0;
             let src_img = scaled;
             let rot_size = sw * sh * 4;
-            if rotated_buf.len() < rot_size {
-                rotated_buf.resize(rot_size, 0u8);
-            }
-            rotated_buf[..rot_size].fill(0);
-            for dy in 0..new_h as usize {
+            rotated_buf.resize(rot_size, 0u8);
+            use rayon::prelude::*;
+            rotated_buf.par_chunks_mut(new_w as usize * 4).enumerate().for_each(|(dy, row_out)| {
                 for dx in 0..new_w as usize {
                     let rx = dx as f64 - cx_dst;
                     let ry = dy as f64 - cy_dst;
                     let src_x = rx * cos_a + ry * sin_a + cx_src;
                     let src_y = -rx * sin_a + ry * cos_a + cy_src;
-                    let di = (dy * new_w as usize + dx) * 4;
+                    let di = dx * 4;
                     if src_x >= 0.0 && src_x < (src_w as f64 - 1.0)
                         && src_y >= 0.0 && src_y < (src_h as f64 - 1.0)
                     {
@@ -474,11 +467,11 @@ impl ZzzSpriteSheet {
                         for c in 0..4 {
                             let top = src_img[i00 + c] as f32 * (1.0 - fx) + src_img[i10 + c] as f32 * fx;
                             let bot = src_img[i01 + c] as f32 * (1.0 - fx) + src_img[i11 + c] as f32 * fx;
-                            rotated_buf[di + c] = (top * (1.0 - fy) + bot * fy).round() as u8;
+                            row_out[di + c] = (top * (1.0 - fy) + bot * fy).round() as u8;
                         }
                     }
                 }
-            }
+            });
             &rotated_buf[..rot_size]
         } else {
             scaled
@@ -551,15 +544,6 @@ impl ZzzSpriteSheet {
         let out_w = ((sheet_w as f32 * fit_scale).round() as usize).max(1);
         let out_h = ((sheet_h as f32 * fit_scale).round() as usize).max(1);
 
-        // Scale the full sheet
-        let scaled_sheet = if fit_scale != 1.0 {
-            let src_img = image::RgbaImage::from_raw(sheet_w, sheet_h, sheet_rgba.to_vec())
-                .unwrap_or_else(|| image::RgbaImage::new(sheet_w, sheet_h));
-            image::imageops::resize(&src_img, out_w as u32, out_h as u32, image::imageops::FilterType::Nearest).into_raw()
-        } else {
-            sheet_rgba.to_vec()
-        };
-
         // Centering offset (signed)
         let mut offset_x = (dst_w as i32 - out_w as i32) / 2;
         let mut offset_y = (dst_h as i32 - out_h as i32) / 2;
@@ -578,21 +562,45 @@ impl ZzzSpriteSheet {
             }
         }
 
-        // Copy scaled sheet to dst
-        use rayon::prelude::*;
-        dst.par_chunks_mut(dst_w * 4).enumerate().for_each(|(row, dst_row)| {
-            let src_row = row as i32 - offset_y;
-            if src_row < 0 || src_row >= out_h as i32 { return; }
-            for col in 0..dst_w {
-                let src_col = col as i32 - offset_x;
-                if src_col < 0 || src_col >= out_w as i32 { continue; }
-                let src_idx = (src_row as usize * out_w + src_col as usize) * 4;
-                let dst_idx = col * 4;
-                if src_idx + 4 <= scaled_sheet.len() && dst_idx + 4 <= dst_row.len() {
-                    dst_row[dst_idx..dst_idx + 4].copy_from_slice(&scaled_sheet[src_idx..src_idx + 4]);
+        // --- GPU path: full-sheet scaling + centering + displacement ---
+        let gpu_ok = {
+            let dx = offset_x as f32 - (dst_w as i32 - out_w as i32) as f32 / 2.0;
+            let dy = offset_y as f32 - (dst_h as i32 - out_h as i32) as f32 / 2.0;
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::gpu::sprite_sheet::try_selection_mode_gpu_render(
+                    sheet_rgba, sheet_w, sheet_h, fit_scale,
+                    dx, dy,
+                    dst, dst_w as u32, dst_h as u32,
+                )
+            })).unwrap_or(Err("panic".into())).unwrap_or(false)
+        };
+
+        if !gpu_ok {
+            // CPU fallback: scale full sheet and copy to dst
+            let scaled_sheet: std::borrow::Cow<[u8]> = if fit_scale != 1.0 {
+                let src_img = image::RgbaImage::from_raw(sheet_w, sheet_h, sheet_rgba.to_vec())
+                    .unwrap_or_else(|| image::RgbaImage::new(sheet_w, sheet_h));
+                std::borrow::Cow::Owned(image::imageops::resize(
+                    &src_img, out_w as u32, out_h as u32, image::imageops::FilterType::Nearest,
+                ).into_raw())
+            } else {
+                std::borrow::Cow::Borrowed(sheet_rgba)
+            };
+            use rayon::prelude::*;
+            dst.par_chunks_mut(dst_w * 4).enumerate().for_each(|(row, dst_row)| {
+                let src_row = row as i32 - offset_y;
+                if src_row < 0 || src_row >= out_h as i32 { return; }
+                for col in 0..dst_w {
+                    let src_col = col as i32 - offset_x;
+                    if src_col < 0 || src_col >= out_w as i32 { continue; }
+                    let src_idx = (src_row as usize * out_w + src_col as usize) * 4;
+                    let dst_idx = col * 4;
+                    if src_idx + 4 <= scaled_sheet.len() && dst_idx + 4 <= dst_row.len() {
+                        dst_row[dst_idx..dst_idx + 4].copy_from_slice(&scaled_sheet[src_idx..src_idx + 4]);
+                    }
                 }
-            }
-        });
+            });
+        }
 
         // --- Grid layout ---
         let columns = self.sprite_columns.max(1) as u32;
@@ -610,7 +618,7 @@ impl ZzzSpriteSheet {
         let reg_thick: i32 = 2;
         let cut_thick: i32 = 4;
 
-        // --- Cell highlighting (between sprite and grid/frame layers) ---
+        // --- Cell highlighting: precompute map, then single pass over dst ---
         let sr_lo = self.sprite_range_start.min(self.sprite_range_end);
         let sr_hi = self.sprite_range_start.max(self.sprite_range_end);
         let rr_start_c = self.repeat_range_start.max(sr_lo).min(sr_hi);
@@ -618,57 +626,55 @@ impl ZzzSpriteSheet {
         let rr_lo = rr_start_c.min(rr_end_c);
         let rr_hi = rr_start_c.max(rr_end_c);
 
-        for grid_row in 0..(full_rows as i32) {
-            for grid_col in 0..(full_cols as i32) {
-                let abs_idx = self.get_absolute_index(grid_row, grid_col);
-                let in_sprite = abs_idx >= sr_lo && abs_idx <= sr_hi;
-                let in_repeat = self.repeat_count > 0 && abs_idx >= rr_lo && abs_idx <= rr_hi;
-                if !in_sprite && !in_repeat { continue; }
-
-                let highlight: [u8; 4] = if in_repeat {
-                    [0, 128, 255, 100] // semi-transparent blue
-                } else {
-                    [255, 0, 0, 100] // semi-transparent red
-                };
-                let cell_x = offset_x + (grid_col as u32 * sprite_w) as i32;
-                let cell_y = offset_y + (grid_row as u32 * sprite_h) as i32;
-                let spw = sprite_w as i32;
-                let sph = sprite_h as i32;
-                for py in 0..sph {
-                    for px in 0..spw {
-                        let x = cell_x + px;
-                        let y = cell_y + py;
-                        if x < 0 || x >= dst_w as i32 || y < 0 || y >= dst_h as i32 { continue; }
-                        let idx = (y as usize * dst_w + x as usize) * 4;
-                        if idx + 4 <= dst.len() {
-                            let a = highlight[3] as f32 / 255.0;
-                            let ia = 1.0 - a;
-                            for c in 0..3 {
-                                dst[idx + c] = (dst[idx + c] as f32 * ia + highlight[c] as f32 * a).round() as u8;
-                            }
-                        }
-                    }
+        let hl_size = full_rows as usize * full_cols as usize;
+        let mut cell_hl: Vec<Option<[u8; 4]>> = vec![None; hl_size];
+        for r in 0..(full_rows as i32) {
+            for c in 0..(full_cols as i32) {
+                let abs_idx = self.get_absolute_index(r, c);
+                if abs_idx >= sr_lo && abs_idx <= sr_hi {
+                    let color = if self.repeat_count > 0 && abs_idx >= rr_lo && abs_idx <= rr_hi {
+                        [0u8, 128, 255, 200] // blue
+                    } else {
+                        [200u8, 0, 0, 200] // red
+                    };
+                    cell_hl[(r as u32 * full_cols + c as u32) as usize] = Some(color);
                 }
             }
         }
 
+        use rayon::prelude::*;
+        dst.par_chunks_mut(dst_w * 4).enumerate().for_each(|(row, dst_row)| {
+            let gy = row as i32 - offset_y;
+            if gy < 0 { return; }
+            let grid_row = (gy as u32 / sprite_h) as usize;
+            if grid_row >= full_rows as usize { return; }
+            for col in 0..dst_w {
+                let gx = col as i32 - offset_x;
+                if gx < 0 { continue; }
+                let grid_col = (gx as u32 / sprite_w) as usize;
+                if grid_col >= full_cols as usize { continue; }
+                if let Some(hl) = cell_hl[grid_row * full_cols as usize + grid_col] {
+                    let idx = col * 4;
+                    let a = hl[3] as f32 / 255.0;
+                    let ia = 1.0 - a;
+                    for c in 0..4 { dst_row[idx + c] = (dst_row[idx + c] as f32 * ia + hl[c] as f32 * a).round() as u8; }
+                }
+            }
+        });
+
+        // --- Grid lines (solid overwrite, no blending) ---
         let draw_hline = |dst: &mut [u8], y: i32, x0: i32, x1: i32, color: [u8; 4], thick: i32| {
             for t in 0..thick {
                 let py = y + t;
                 if py < 0 || py >= dst_h as i32 { continue; }
+                let row_start = py as usize * dst_w;
                 for px in x0..x1 {
                     if px < 0 || px >= dst_w as i32 { continue; }
-                    let idx = (py as usize * dst_w + px as usize) * 4;
-                    if idx + 4 <= dst.len() {
-                        let a = color[3] as f32 / 255.0;
-                        let ia = 1.0 - a;
-                        for c in 0..3 { dst[idx + c] = (dst[idx + c] as f32 * ia + color[c] as f32 * a).round() as u8; }
-                        dst[idx + 3] = dst[idx + 3].max(color[3]);
-                    }
+                    let idx = (row_start + px as usize) * 4;
+                    if idx + 4 <= dst.len() { dst[idx..idx + 4].copy_from_slice(&color); }
                 }
             }
         };
-
         let draw_vline = |dst: &mut [u8], x: i32, y0: i32, y1: i32, color: [u8; 4], thick: i32| {
             for t in 0..thick {
                 let px = x + t;
@@ -676,19 +682,14 @@ impl ZzzSpriteSheet {
                 for py in y0..y1 {
                     if py < 0 || py >= dst_h as i32 { continue; }
                     let idx = (py as usize * dst_w + px as usize) * 4;
-                    if idx + 4 <= dst.len() {
-                        let a = color[3] as f32 / 255.0;
-                        let ia = 1.0 - a;
-                        for c in 0..3 { dst[idx + c] = (dst[idx + c] as f32 * ia + color[c] as f32 * a).round() as u8; }
-                        dst[idx + 3] = dst[idx + 3].max(color[3]);
-                    }
+                    if idx + 4 <= dst.len() { dst[idx..idx + 4].copy_from_slice(&color); }
                 }
             }
         };
 
         // Cut boundaries: every (columns/cut_x) for vertical, every (rows/cut_y) for horizontal
         let block_cols = (columns / cut_x).max(1);
-        let block_rows = rows / cut_y;
+        let block_rows = (rows / cut_y).max(1);
 
         // Draw vertical lines
         for cx in 0..=full_cols {
@@ -715,7 +716,7 @@ impl ZzzSpriteSheet {
         let cell_min = sprite_w.min(sprite_h) as i32;
         let font_scale = (cell_min / 8).max(1).min(8); // scale 1-8x
         let char_base_w = 5;
-        let char_base_h = 5;
+        let char_base_h = 7;
         let scaled_char_w = char_base_w * font_scale;
         let scaled_char_h = char_base_h * font_scale;
         let char_spacing = font_scale.max(1);
@@ -741,65 +742,78 @@ impl ZzzSpriteSheet {
     }
 }
 
-/// Simple 5x3 digit bitmaps (0-9)
-const DIGITS: [[u8; 5]; 10] = [
-    [0b01110, 0b10001, 0b10001, 0b10001, 0b01110], // 0
-    [0b00100, 0b01100, 0b00100, 0b00100, 0b01110], // 1
-    [0b01110, 0b10001, 0b00110, 0b01000, 0b11111], // 2
-    [0b01110, 0b10001, 0b00110, 0b10001, 0b01110], // 3
-    [0b00010, 0b00110, 0b01010, 0b11111, 0b00010], // 4
-    [0b11111, 0b10000, 0b11110, 0b00001, 0b11110], // 5
-    [0b01110, 0b10000, 0b11110, 0b10001, 0b01110], // 6
-    [0b11111, 0b00001, 0b00010, 0b00100, 0b01000], // 7
-    [0b01110, 0b10001, 0b01110, 0b10001, 0b01110], // 8
-    [0b01110, 0b10001, 0b01111, 0b00001, 0b01110], // 9
+/// 7x5 digit bitmaps (7 rows, 5 cols, MSB=left). Precomputed outlines for two-pass rendering.
+const DIGITS: [[u8; 7]; 10] = [
+    [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110], // 0
+    [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111], // 1
+    [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111], // 2
+    [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110], // 3
+    [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010], // 4
+    [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110], // 5
+    [0b01110, 0b10001, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110], // 6
+    [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000], // 7
+    [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110], // 8
+    [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b10001, 0b01110], // 9
 ];
 
-/// Draw a scaled number string centered at the given position.
+/// Outline bitmaps (8-connected expansion) for two-pass rendering.
+const DIGIT_OUTLINES: [[u8; 7]; 10] = [
+    [0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111], // 0
+    [0b01110, 0b11110, 0b01110, 0b01110, 0b01110, 0b01110, 0b11111], // 1
+    [0b11111, 0b11011, 0b01111, 0b11111, 0b11110, 0b11111, 0b11111], // 2
+    [0b11111, 0b11011, 0b00111, 0b01111, 0b00111, 0b11011, 0b11111], // 3
+    [0b00111, 0b01111, 0b11111, 0b11111, 0b11111, 0b00111, 0b00111], // 4
+    [0b11111, 0b11111, 0b11111, 0b00111, 0b00111, 0b11011, 0b11111], // 5
+    [0b11111, 0b11011, 0b11111, 0b11111, 0b11011, 0b11011, 0b11111], // 6
+    [0b11111, 0b10011, 0b00111, 0b01110, 0b11110, 0b11100, 0b11100], // 7
+    [0b11111, 0b11011, 0b11011, 0b11111, 0b11011, 0b11011, 0b11111], // 8
+    [0b11111, 0b11011, 0b11011, 0b11111, 0b10011, 0b11011, 0b11111], // 9
+];
+
+/// Draw a scaled number string with black outline + white fill for max contrast.
 fn draw_number_scaled(
     dst: &mut [u8], dst_w: usize, dst_h: usize,
     x: i32, y: i32, num_str: &str, scale: i32,
     offset_x: i32, offset_y: i32, out_w: i32, out_h: i32,
 ) {
     let char_base_w: i32 = 5;
+    let char_base_h: i32 = 7;
     let char_spacing = scale.max(1);
-    let text_color: [u8; 4] = [255, 255, 255, 255];
-    let shadow_color: [u8; 4] = [0, 0, 0, 200];
+    let outline_color: [u8; 4] = [0, 0, 0, 255];
+    let fill_color: [u8; 4] = [255, 255, 255, 255];
 
-    for (ci, ch) in num_str.chars().enumerate() {
-        let digit = match ch.to_digit(10) { Some(d) => d as usize, None => continue };
-        let cx = x + ci as i32 * (char_base_w * scale + char_spacing);
-
-        for row in 0..5 {
-            let bits = DIGITS[digit][row];
-            for col in 0..5 {
-                if bits & (1 << (4 - col)) == 0 { continue; }
-                // Scale each dot to scale×scale
-                for sy in 0..scale {
-                    for sx in 0..scale {
-                        let px = cx + col as i32 * scale + sx;
-                        let py = y + row as i32 * scale + sy;
-                        if px < 0 || px >= dst_w as i32 || py < 0 || py >= dst_h as i32 { continue; }
-                        // Clamp to sprite sheet area
-                        let src_x = px - offset_x;
-                        let src_y = py - offset_y;
-                        if src_x < 0 || src_x >= out_w || src_y < 0 || src_y >= out_h { continue; }
-                        let idx = (py as usize * dst_w + px as usize) * 4;
-                        if idx + 4 <= dst.len() {
-                            // Draw shadow outline (1px black) then white fill
-                            let is_edge = sx == 0 || sy == 0 || sx == scale - 1 || sy == scale - 1;
-                            if is_edge && scale >= 2 {
-                                let a = shadow_color[3] as f32 / 255.0;
-                                let ia = 1.0 - a;
-                                for c in 0..3 { dst[idx + c] = (dst[idx + c] as f32 * ia + shadow_color[c] as f32 * a).round() as u8; }
-                                dst[idx + 3] = dst[idx + 3].max(shadow_color[3]);
-                            } else {
-                                dst[idx..idx + 4].copy_from_slice(&text_color);
+    // Two-pass rendering helper
+    macro_rules! write_pass {
+        ($bits_arr:expr, $color:expr) => {
+            for (ci, ch) in num_str.chars().enumerate() {
+                let digit = match ch.to_digit(10) { Some(d) => d as usize, None => continue };
+                let cx = x + ci as i32 * (char_base_w * scale + char_spacing);
+                for row in 0..char_base_h {
+                    let b = $bits_arr[digit][row as usize];
+                    for col in 0..char_base_w {
+                        if b & (1 << (4 - col as u32)) == 0 { continue; }
+                        for sy in 0..scale {
+                            for sx in 0..scale {
+                                let px = cx + col * scale + sx;
+                                let py = y + row * scale + sy;
+                                if px < 0 || px >= dst_w as i32 || py < 0 || py >= dst_h as i32 { continue; }
+                                let src_x = px - offset_x;
+                                let src_y = py - offset_y;
+                                if src_x < 0 || src_x >= out_w || src_y < 0 || src_y >= out_h { continue; }
+                                let idx = (py as usize * dst_w + px as usize) * 4;
+                                if idx + 4 <= dst.len() {
+                                    dst[idx..idx + 4].copy_from_slice(&$color);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
+        };
     }
+
+    // Pass 1: black outline
+    write_pass!(DIGIT_OUTLINES, outline_color);
+    // Pass 2: white fill on top
+    write_pass!(DIGITS, fill_color);
 }

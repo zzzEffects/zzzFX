@@ -619,7 +619,7 @@ unsafe fn action_render(
     // Read project frame rate for time normalization.
     // Some hosts (e.g. VEGAS Pro) give generator plugins a fixed 1000 fps
     // instead of the real project frame rate. Using time / rate normalises
-    // the timeline, matching the approach in zzzSpriteSheet.
+    // the timeline, matching the approach in SpriteSheet.
     let mut frame_rate: f64 = 30.0;
     let _ = pgd(ep, kOfxImageEffectPropFrameRate.as_ptr(), 0, &mut frame_rate);
     let rate = if frame_rate > 0.0 { frame_rate } else { 30.0 };
