@@ -13,6 +13,7 @@ pollster = "0.4"
 rotsprite = "0.1.4"
 ab_glyph = "0.2"
 ass-core = "0.1.1"
+rassa = "0.5.1"
 font-kit = "0.14.3"
 rayon = "1.10"
 wgpu = { version = "29", features = ["wgsl"] }
