@@ -12,9 +12,11 @@ use oximedia_subtitle::text::{TextLayout, TextLayoutEngine};
 
 use crate::settings::ass_subtitle::AssBlendMode;
 
-use super::cache::{FontEngineKey, LayoutCacheKey};
-
-use super::cache::RenderCache;
+use super::cache::{
+    FontEngineKey, LayoutCacheKey,
+    MAX_EVENT_CACHE, MAX_FONT_ENGINES, MAX_TEXT_LAYOUTS,
+    RenderCache,
+};
 use super::composite::{cpu_composite_dirty_rect, direct_composite, direct_composite_max};
 use super::font::FontCache;
 use super::parser::{alignment_to_anchor, anchor_to_base_x, anchor_to_base_y, parse_tag_segments};
@@ -94,6 +96,10 @@ pub fn render_ass_subtitle_frame(
     if cache.temp_buf.len() != buf_size {
         cache.temp_buf.resize(buf_size, 0);
     }
+    // Shrink if significantly over-allocated after a resolution decrease
+    if cache.temp_buf.capacity() > buf_size * 2 {
+        cache.temp_buf.shrink_to(buf_size);
+    }
 
     // Clear previous frame's dirty region (or full clear on first frame)
     if cache.first_frame {
@@ -140,6 +146,8 @@ pub fn render_ass_subtitle_frame(
         // --- Cached event data ---
         let ev_ptr = *ev as *const OwnedEvent as usize;
         let ev_key = (cache_gen, ev_ptr);
+
+        RenderCache::evict_if_full(event_cache, MAX_EVENT_CACHE, &ev_key);
 
         let cached_ev = event_cache.entry(ev_key).or_insert_with(|| {
             let segments = parse_tag_segments(&ev.text);
@@ -287,15 +295,20 @@ pub fn render_ass_subtitle_frame(
         // Compute effective pixel size
         let px_size = fontsize * res_scale_y * font_scale_y.max(0.01) * tag_sy * scale;
 
-        // Get or create cached TextLayoutEngine (avoids font bytes clone + reparse per frame)
+        // Capture pointer identity before font_data is potentially consumed
+        let font_data_ptr = Arc::as_ptr(&font_data) as usize;
+
+        // Get or create cached TextLayoutEngine
         let eng_key = FontEngineKey {
-            data_ptr: Arc::as_ptr(&font_data) as usize,
+            data_ptr: font_data_ptr,
             size_bucket: (px_size * 2.0) as u32,
         };
+        RenderCache::evict_if_full(&mut cache.font_engines, MAX_FONT_ENGINES, &eng_key);
         let layout_engine = match cache.font_engines.entry(eng_key) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
-                match OxiFont::from_bytes(font_data.to_vec()) {
+                // unwrap_or_clone avoids cloning when Arc has a single reference
+                match OxiFont::from_bytes(Arc::unwrap_or_clone(font_data)) {
                     Ok(oxi_font) => e.insert(TextLayoutEngine::new(oxi_font)),
                     Err(_) => {
                         // Corrupt system font — skip this event
@@ -335,7 +348,7 @@ pub fn render_ass_subtitle_frame(
                     event_ptr: ev_ptr,
                     size_bucket: (px_size * 2.0) as u32,
                     text_hash: cached_ev.text_hash,
-                    font_data_ptr: Arc::as_ptr(&font_data) as usize,
+                    font_data_ptr,
                 })
             };
 
@@ -345,6 +358,7 @@ pub fn render_ass_subtitle_frame(
                 } else {
                     let l = layout_engine.layout(text_for_layout, &oxi_style, max_width)
                         .unwrap_or_else(|_| TextLayout::new());
+                    RenderCache::evict_if_full(&mut cache.text_layouts, MAX_TEXT_LAYOUTS, key);
                     cache.text_layouts.insert(key.clone(), l.clone());
                     l
                 }
@@ -495,8 +509,10 @@ pub fn render_ass_subtitle_frame(
         let mut gpu_glyph_ok = false;
 
         if gpu_ready {
-            let mut glyph_gpu_data: Vec<crate::gpu::ass_glyph::GlyphGpuData> = Vec::new();
-            let mut bitmap_bytes: Vec<u8> = Vec::new();
+            cache.glyph_gpu_data_buf.clear();
+            cache.bitmap_bytes_buf.clear();
+            let glyph_gpu_data = &mut cache.glyph_gpu_data_buf;
+            let bitmap_bytes = &mut cache.bitmap_bytes_buf;
             for line in &layout.lines {
                 let line_ascent = line.baseline;
                 for glyph in &line.glyphs {
@@ -526,7 +542,7 @@ pub fn render_ass_subtitle_frame(
                 }
             }
             gpu_glyph_ok = crate::gpu::ass_glyph::try_ass_glyph_gpu_composite(
-                &glyph_gpu_data, &bitmap_bytes, temp_buf,
+                glyph_gpu_data, bitmap_bytes, temp_buf,
                 output_width as u32, output_height as u32,
             ).unwrap_or(false);
             if gpu_glyph_ok {
@@ -534,7 +550,7 @@ pub fn render_ass_subtitle_frame(
                     .map(|g| (g.bitmap_w * g.bitmap_h) as usize)
                     .sum::<usize>();
                 // Expand dirty rect for CPU composite fallback path
-                for g in &glyph_gpu_data {
+                for g in glyph_gpu_data.iter() {
                     let pad = g.outline_radius.max(g.shadow_dx.abs().ceil() as i32).max(g.shadow_dy.abs().ceil() as i32) + 1;
                     new_dirty.expand(g.pos_x, g.pos_y, pad);
                     new_dirty.expand(g.pos_x + g.bitmap_w as i32, g.pos_y + g.bitmap_h as i32, pad);

@@ -459,6 +459,8 @@ unsafe fn action_instance_changed(
             propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
             if !data_ptr.is_null() {
                 let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.render_cache.invalidate_script_cache();
+                idata.font_cache.invalidate();
                 idata.ass_script = Some(ass_script);
                 idata.file_path = path_str.clone();
             }
@@ -569,6 +571,8 @@ unsafe fn action_render(
                     if let Ok(content) = decode_ass_file(&file_bytes) {
                         if let Ok(ass_script) = parse_ass_file(&content) {
                             if let Some(idata) = &mut idata {
+                                idata.render_cache.invalidate_script_cache();
+                                idata.font_cache.invalidate();
                                 idata.ass_script = Some(ass_script);
                                 idata.file_path = path.into_owned();
                             }
@@ -640,6 +644,10 @@ unsafe fn action_render(
             let buf_size = width * height * 4;
             if idata_inner.dst_buf.len() != buf_size {
                 idata_inner.dst_buf.resize(buf_size, 0);
+            }
+            // Shrink if significantly over-allocated after a resolution decrease
+            if idata_inner.dst_buf.capacity() > buf_size * 2 {
+                idata_inner.dst_buf.shrink_to(buf_size);
             }
             idata_inner.dst_buf.fill(0);
 

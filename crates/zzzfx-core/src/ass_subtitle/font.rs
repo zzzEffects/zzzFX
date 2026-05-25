@@ -9,15 +9,50 @@ use std::sync::{Arc, Mutex, OnceLock};
 use font_kit::handle::Handle as FkHandle;
 use font_kit::source::SystemSource;
 
+/// Maximum number of (font_name, char) coverage cache entries.
+/// At ~60 bytes/entry, 20K entries ≈ 1.2 MB. Beyond this, ~25% are evicted.
+const COVERAGE_CACHE_MAX: usize = 20_000;
+/// Maximum number of raw font files cached in memory. CJK fonts can be
+/// 5–20 MB each; capping prevents multi-GB memory usage from font fallback scans.
+const MAX_LOADED_FONTS: usize = 8;
+/// Maximum number of font name → matching indices cached.
+const MAX_MATCHING_CACHE: usize = 100;
+
 // ---------------------------------------------------------------------------
 // Font entry
 // ---------------------------------------------------------------------------
 
 pub(crate) struct FontEntry {
-    pub family_name: String,
-    pub full_name: String,
-    pub postscript_name: String,
+    family_name: OnceLock<String>,
+    full_name: OnceLock<String>,
+    postscript_name: OnceLock<String>,
     pub handle: FkHandle,
+}
+
+impl FontEntry {
+    fn load_names(&self) -> Option<()> {
+        if self.full_name.get().is_some() {
+            return Some(());
+        }
+        let font = self.handle.load().ok()?;
+        let _ = self.family_name.set(font.family_name().to_lowercase());
+        let _ = self.full_name.set(font.full_name().to_lowercase());
+        let _ = self.postscript_name.set(font.postscript_name().unwrap_or_default().to_lowercase());
+        Some(())
+    }
+
+    #[inline]
+    pub fn family_name(&self) -> &str {
+        self.family_name.get().map(String::as_str).unwrap_or("")
+    }
+    #[inline]
+    pub fn full_name(&self) -> &str {
+        self.full_name.get().map(String::as_str).unwrap_or("")
+    }
+    #[inline]
+    pub fn postscript_name(&self) -> &str {
+        self.postscript_name.get().map(String::as_str).unwrap_or("")
+    }
 }
 
 /// Global cache of all installed font entries, built once per process.
@@ -26,22 +61,16 @@ static GLOBAL_FONT_ENTRIES: OnceLock<Vec<FontEntry>> = OnceLock::new();
 pub(crate) fn global_font_entries() -> &'static [FontEntry] {
     GLOBAL_FONT_ENTRIES.get_or_init(|| {
         let source = SystemSource::new();
-        let mut entries = Vec::new();
         let handles = source.all_fonts().unwrap_or_default();
-        for handle in handles {
-            if let Ok(font) = handle.load() {
-                entries.push(FontEntry {
-                    family_name: font.family_name().to_lowercase(),
-                    full_name: font.full_name().to_lowercase(),
-                    postscript_name: font
-                        .postscript_name()
-                        .unwrap_or_default()
-                        .to_lowercase(),
-                    handle,
-                });
-            }
-        }
-        entries
+        handles
+            .into_iter()
+            .map(|handle| FontEntry {
+                family_name: OnceLock::new(),
+                full_name: OnceLock::new(),
+                postscript_name: OnceLock::new(),
+                handle,
+            })
+            .collect()
     })
 }
 
@@ -68,26 +97,33 @@ impl FontCache {
     }
 
     fn matches_name_exact(entry: &FontEntry, q: &str) -> bool {
-        entry.family_name == q || entry.full_name == q || entry.postscript_name == q
+        let _ = entry.load_names();
+        entry.family_name() == q || entry.full_name() == q || entry.postscript_name() == q
     }
 
-    /// Load raw font data for an entry.
+    /// Load raw font data for an entry, with bounded caching.
     fn load_font_data(&self, entry: &FontEntry) -> Option<Arc<Vec<u8>>> {
-        let key = &entry.full_name;
+        let _ = entry.load_names();
+        let key = entry.full_name().to_string();
         {
             let loaded = self.loaded.lock().ok()?;
-            if let Some(data) = loaded.get(key) {
+            if let Some(data) = loaded.get(&key) {
                 return Some(Arc::clone(data));
             }
         }
         if let Ok(font) = entry.handle.load() {
             if let Some(data) = font.copy_font_data() {
-                let arc: Arc<Vec<u8>> = Arc::new(data.to_vec());
-                self.loaded
-                    .lock()
-                    .unwrap()
-                    .insert(key.clone(), Arc::clone(&arc));
-                return Some(arc);
+                // copy_font_data already returns Arc<Vec<u8>> — use directly
+                if let Ok(mut loaded) = self.loaded.lock() {
+                    // Evict ~25% when full and inserting a new key
+                    if loaded.len() >= MAX_LOADED_FONTS && !loaded.contains_key(&key) {
+                        let keep = (MAX_LOADED_FONTS * 3) / 4;
+                        let mut n = 0usize;
+                        loaded.retain(|_, _| { n += 1; n <= keep });
+                    }
+                    loaded.insert(key, Arc::clone(&data));
+                }
+                return Some(data);
             }
         }
         None
@@ -109,7 +145,8 @@ impl FontCache {
         }
         // Tier 2: substring match
         for (i, entry) in entries.iter().enumerate() {
-            if entry.family_name.contains(&q) || entry.full_name.contains(&q) {
+            let _ = entry.load_names();
+            if entry.family_name().contains(&q) || entry.full_name().contains(&q) {
                 indices.push(i);
             }
         }
@@ -118,7 +155,8 @@ impl FontCache {
         }
         // Tier 3: prefix match
         for (i, entry) in entries.iter().enumerate() {
-            if entry.family_name.starts_with(&q) || entry.full_name.starts_with(&q) {
+            let _ = entry.load_names();
+            if entry.family_name().starts_with(&q) || entry.full_name().starts_with(&q) {
                 indices.push(i);
             }
         }
@@ -135,13 +173,22 @@ impl FontCache {
         }
         let result = Arc::new(Self::find_matching_indices_inner(&q));
         if let Ok(mut cache) = self.matching_cache.lock() {
+            // Evict ~25% when full and inserting a new key
+            if cache.len() >= MAX_MATCHING_CACHE && !cache.contains_key(&q) {
+                let keep = (MAX_MATCHING_CACHE * 3) / 4;
+                let mut n = 0usize;
+                cache.retain(|_, _| { n += 1; n <= keep });
+            }
             cache.insert(q, Arc::clone(&result));
         }
         result
     }
 
-    /// Check if a char has a glyph in the font, with caching.
-    fn char_has_glyph(&self, font_name: &str, c: char) -> bool {
+    /// Check if a char has a glyph in the font entry, with caching.
+    fn char_has_glyph(&self, entry: &FontEntry, c: char) -> bool {
+        // Ensure names loaded for the cache key
+        let _ = entry.load_names();
+        let font_name = entry.full_name();
         let key = (font_name.to_string(), c);
         if let Ok(cache) = self.coverage_cache.lock() {
             if let Some(&has) = cache.get(&key) {
@@ -149,14 +196,18 @@ impl FontCache {
             }
         }
         // Load font and check — expensive, done once per (font, char) pair
-        let entries = global_font_entries();
-        let q = font_name.to_lowercase();
-        let has = entries
-            .iter()
-            .find(|e| e.full_name == q)
-            .and_then(|e| e.handle.load().ok())
+        let has = entry
+            .handle
+            .load()
+            .ok()
             .map_or(false, |f| f.glyph_for_char(c).map_or(false, |gid| gid != 0));
         if let Ok(mut cache) = self.coverage_cache.lock() {
+            // Evict ~25% when full and inserting a new key
+            if cache.len() >= COVERAGE_CACHE_MAX && !cache.contains_key(&key) {
+                let keep = (COVERAGE_CACHE_MAX * 3) / 4;
+                let mut n = 0usize;
+                cache.retain(|_, _| { n += 1; n <= keep });
+            }
             cache.insert(key, has);
         }
         has
@@ -210,7 +261,7 @@ impl FontCache {
 
         // Helper: check if an entry covers all chars
         let covers_all = |entry: &FontEntry| {
-            chars.iter().all(|&c| self.char_has_glyph(&entry.full_name, c))
+            chars.iter().all(|&c| self.char_has_glyph(entry, c))
         };
 
         // Try preferred name first — exact match, including style variants
@@ -229,9 +280,10 @@ impl FontCache {
                 if let Some(data) = self.find_font(&variant, false, false)
                     .filter(|_| {
                         // Check coverage of the variant font
+                        let vq = variant.to_lowercase();
                         entries
                             .iter()
-                            .find(|e| e.full_name == variant.to_lowercase())
+                            .find(|e| { let _ = e.load_names(); e.full_name() == vq })
                             .map_or(false, |entry| covers_all(entry))
                     })
                 {
@@ -240,40 +292,53 @@ impl FontCache {
             }
         }
 
-        // Scan all fonts for best coverage (use coverage cache)
-        let mut best: Option<(Arc<Vec<u8>>, usize)> = None;
+        // Scan all fonts for best coverage (use coverage cache).
+        // Track best entry by pointer — only load font data for the winner,
+        // NOT for every font that has progressively better coverage.
+        let mut best: Option<(*const FontEntry, usize)> = None;
         for entry in entries {
             let covered = chars
                 .iter()
-                .filter(|&&c| self.char_has_glyph(&entry.full_name, c))
+                .filter(|&&c| self.char_has_glyph(entry, c))
                 .count();
                 if covered == chars.len() {
                     return self.load_font_data(entry);
                 }
                 match &best {
                     None => {
-                        if let Some(d) = self.load_font_data(entry) {
-                            best = Some((d, covered));
-                        }
+                        best = Some((entry as *const FontEntry, covered));
                     }
                     Some((_, prev)) if covered > *prev => {
-                        if let Some(d) = self.load_font_data(entry) {
-                            best = Some((d, covered));
-                        }
+                        best = Some((entry as *const FontEntry, covered));
                     }
                     _ => {}
                 }
         }
-        best.map(|(d, _)| d)
+        // Safety: entry pointers point into the static GLOBAL_FONT_ENTRIES slice.
+        best.and_then(|(ptr, _)| self.load_font_data(unsafe { &*ptr }))
     }
 
     /// List all installed font names (sorted, deduplicated).
     pub fn list_font_names(&self) -> Vec<String> {
         let entries = global_font_entries();
-        let mut names: Vec<String> = entries.iter().map(|e| e.full_name.clone()).collect();
+        let mut names: Vec<String> = entries
+            .iter()
+            .filter_map(|e| {
+                e.load_names()?;
+                Some(e.full_name().to_string())
+            })
+            .collect();
         names.sort();
         names.dedup();
         names
+    }
+
+    /// Clear all internal caches. Call this when the ASS script is reloaded
+    /// to prevent unbounded memory growth from accumulated (font, char) entries.
+    pub fn invalidate(&mut self) {
+        self.loaded.get_mut().unwrap().clear();
+        self.matching_cache.get_mut().unwrap().clear();
+        self.coverage_cache.get_mut().unwrap().clear();
     }
 }
 

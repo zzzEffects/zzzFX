@@ -48,6 +48,8 @@ struct GpuContext {
     bind_group_layout: wgpu::BindGroupLayout,
     bufs: GpuBuffers,
     bind_group: Option<wgpu::BindGroup>,
+    /// Reusable buffer for u8→u32 bitmap conversion.
+    bitmap_words_buf: Vec<u32>,
 }
 
 struct GpuBuffers {
@@ -132,22 +134,9 @@ pub fn try_ass_glyph_gpu_composite(
         .queue
         .write_buffer(&guard.bufs.glyphs_buf, 0, glyphs_bytes);
 
-    // Convert bitmaps to u32 for WGSL (u8 not valid in storage buffers)
-    let bitmap_words: Vec<u32> = bitmaps
-        .chunks(4)
-        .map(|chunk| {
-            let b0 = chunk.first().copied().unwrap_or(0) as u32;
-            let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-            let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-            let b3 = chunk.get(3).copied().unwrap_or(0) as u32;
-            b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
-        })
-        .collect();
-    let bitmap_bytes_u32 = bytemuck::cast_slice(&bitmap_words);
-
-    // Upload bitmaps (resize if needed)
-    if !bitmap_bytes_u32.is_empty() {
-        let needed = bitmap_bytes_u32.len() as u64;
+    // Resize GPU bitmap buffer before conversion to avoid borrow conflicts
+    if !bitmaps.is_empty() {
+        let needed = ((bitmaps.len() + 3) / 4 * 4) as u64;
         if needed > guard.bufs.bitmaps_buf.size() {
             guard.bufs.bitmaps_buf = guard.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ass_glyphs_bitmaps"),
@@ -157,6 +146,24 @@ pub fn try_ass_glyph_gpu_composite(
             });
             guard.bind_group = None;
         }
+    }
+
+    // Convert bitmaps to u32 for WGSL (u8 not valid in storage buffers)
+    {
+        guard.bitmap_words_buf.clear();
+        guard.bitmap_words_buf.reserve((bitmaps.len() + 3) / 4);
+        guard.bitmap_words_buf.extend(
+            bitmaps.chunks(4).map(|chunk| {
+                let b0 = chunk.first().copied().unwrap_or(0) as u32;
+                let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+                let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+                let b3 = chunk.get(3).copied().unwrap_or(0) as u32;
+                b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+            })
+        );
+    }
+    let bitmap_bytes_u32 = bytemuck::cast_slice(&guard.bitmap_words_buf);
+    if !bitmaps.is_empty() {
         guard
             .queue
             .write_buffer(&guard.bufs.bitmaps_buf, 0, bitmap_bytes_u32);
@@ -281,6 +288,7 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         bind_group_layout,
         bufs,
         bind_group: None,
+        bitmap_words_buf: Vec::new(),
     });
 
     GPU_CTX.set(ctx).map_err(|_| "GPU already initialized".to_string())?;

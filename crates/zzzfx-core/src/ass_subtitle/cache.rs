@@ -7,6 +7,17 @@ use oximedia_subtitle::text::TextLayoutEngine;
 use super::types::*;
 
 // ---------------------------------------------------------------------------
+// Cache capacity constants
+// ---------------------------------------------------------------------------
+
+/// Max cached event data entries before eviction kicks in.
+pub(crate) const MAX_EVENT_CACHE: usize = 2000;
+/// Max cached TextLayoutEngine instances.
+pub(crate) const MAX_FONT_ENGINES: usize = 32;
+/// Max cached TextLayout results.
+pub(crate) const MAX_TEXT_LAYOUTS: usize = 500;
+
+// ---------------------------------------------------------------------------
 // Cache keys
 // ---------------------------------------------------------------------------
 
@@ -47,6 +58,10 @@ pub struct RenderCache {
     pub(crate) text_layouts: HashMap<LayoutCacheKey, oximedia_subtitle::text::TextLayout>,
     pub(crate) prev_dirty: DirtyRect,
     pub(crate) first_frame: bool,
+    /// Reusable per-event GPU glyph metadata buffer.
+    pub(crate) glyph_gpu_data_buf: Vec<crate::gpu::ass_glyph::GlyphGpuData>,
+    /// Reusable per-event GPU glyph bitmap buffer.
+    pub(crate) bitmap_bytes_buf: Vec<u8>,
 }
 
 impl RenderCache {
@@ -59,6 +74,8 @@ impl RenderCache {
             text_layouts: HashMap::new(),
             prev_dirty: DirtyRect::default(),
             first_frame: true,
+            glyph_gpu_data_buf: Vec::new(),
+            bitmap_bytes_buf: Vec::new(),
         }
     }
 
@@ -69,6 +86,18 @@ impl RenderCache {
         self.event_cache.clear();
         self.font_engines.clear();
         self.text_layouts.clear();
+        self.glyph_gpu_data_buf.clear();
+        self.bitmap_bytes_buf.clear();
+    }
+
+    /// Evict entries from a HashMap when it exceeds `max` and `key` is not present.
+    /// Keeps ~75% of entries, dropping the rest via iteration order.
+    pub(crate) fn evict_if_full<K: Eq + std::hash::Hash, V>(map: &mut HashMap<K, V>, max: usize, key: &K) {
+        if map.len() >= max && !map.contains_key(key) {
+            let keep = (max * 3) / 4;
+            let mut n = 0usize;
+            map.retain(|_, _| { n += 1; n <= keep });
+        }
     }
 }
 

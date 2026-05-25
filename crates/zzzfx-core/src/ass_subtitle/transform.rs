@@ -10,6 +10,10 @@ pub(crate) fn apply_transforms(
     transforms: &[OverrideTransform],
     base: &ParsedTags,
 ) -> ParsedTags {
+    // Fast path: no transforms to apply
+    if transforms.is_empty() {
+        return base.clone();
+    }
     let mut result = base.clone();
     let elapsed = time_ms - ev_start;
 
