@@ -1,15 +1,22 @@
 //! Main ASS subtitle rendering pipeline.
+//!
+//! Uses oximedia-subtitle's `TextLayoutEngine` (fontdue-backed) for text layout
+//! and glyph rasterization, then composites onto an RGBA8 output buffer.
 
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use ab_glyph::Font;
+use oximedia_subtitle::font::Font as OxiFont;
+use oximedia_subtitle::style::{Alignment, FontStyle, FontWeight, SubtitleStyle};
+use oximedia_subtitle::text::{TextLayout, TextLayoutEngine};
 
 use crate::settings::ass_subtitle::AssBlendMode;
+
+use super::cache::{FontEngineKey, LayoutCacheKey};
 
 use super::cache::RenderCache;
 use super::composite::{cpu_composite_dirty_rect, direct_composite, direct_composite_max};
 use super::font::FontCache;
-use super::outline::get_outline_offsets_cached;
 use super::parser::{alignment_to_anchor, anchor_to_base_x, anchor_to_base_y, parse_tag_segments};
 use super::transform::apply_transforms;
 use super::types::*;
@@ -62,6 +69,26 @@ pub fn render_ass_subtitle_frame(
         1.0
     };
 
+    // When NOT using native size, center the PlayRes viewport in the output buffer.
+    // The PlayRes coordinate system is rendered at 1:1 pixels, centered.
+    let (center_off_x, center_off_y) = if use_native_size {
+        (0.0, 0.0)
+    } else {
+        let prx = ass_script.play_res_x.unwrap_or(output_width as u32) as f32;
+        let pry = ass_script.play_res_y.unwrap_or(output_height as u32) as f32;
+        ((output_width as f32 - prx) * 0.5, (output_height as f32 - pry) * 0.5)
+    };
+
+    // Outline/shadow scale: always matches the text scaling so outlines stay
+    // proportional to the glyphs they surround.
+    let outline_res_scale = res_scale_y;
+
+    // Effective viewport dimensions for alignment calculations.
+    // When use_native_size=true, the entire output is the viewport.
+    // When use_native_size=false, the PlayRes viewport is centered in the output.
+    let viewport_w = if use_native_size { output_width as f32 } else { ass_script.play_res_x.unwrap_or(output_width as u32) as f32 };
+    let viewport_h = if use_native_size { output_height as f32 } else { ass_script.play_res_y.unwrap_or(output_height as u32) as f32 };
+
     // Reuse/reallocate temp_buf
     let buf_size = output_width * output_height * 4;
     if cache.temp_buf.len() != buf_size {
@@ -74,12 +101,17 @@ pub fn render_ass_subtitle_frame(
         cache.first_frame = false;
     } else {
         let prev = cache.prev_dirty;
-        if prev.min_x < prev.max_x && prev.min_y < prev.max_y {
+        // Clamp all dirty rect bounds to current output dimensions
+        // (VEGAS Pro can change resolution between frames, e.g. preview vs full)
+        let px1 = prev.min_x.max(0).min(output_width as i32 - 1);
+        let px2 = prev.max_x.max(0).min(output_width as i32 - 1);
+        let py1 = prev.min_y.max(0).min(output_height as i32 - 1);
+        let py2 = prev.max_y.max(0).min(output_height as i32 - 1);
+        if px1 < px2 && py1 < py2 {
             let w = output_width;
-            for py in prev.min_y.max(0)..=prev.max_y.min(output_height as i32 - 1) {
-                let row_start = py as usize * w * 4 + prev.min_x.max(0) as usize * 4;
-                let row_end =
-                    py as usize * w * 4 + (prev.max_x.min(output_width as i32 - 1) as usize + 1) * 4;
+            for py in py1..=py2 {
+                let row_start = py as usize * w * 4 + px1 as usize * 4;
+                let row_end = py as usize * w * 4 + (px2 as usize + 1) * 4;
                 cache.temp_buf[row_start..row_end.min(buf_size)].fill(0);
             }
         }
@@ -96,53 +128,75 @@ pub fn render_ass_subtitle_frame(
     let temp_buf = &mut cache.temp_buf[..buf_size];
     let cache_gen = cache.generation;
     let event_cache = &mut cache.event_cache;
-    let font_data_cache = &mut cache.font_data_cache;
-    let glyph_cache = &mut cache.glyph_cache;
-    let outline_offsets = &mut cache.outline_offsets;
+
+    // Only attempt GPU paths if the shared device was ALREADY initialized
+    // by another effect — never trigger GPU init from the ASS subtitle renderer
+    // (creating a wgpu device inside VEGAS Pro causes D3D12 conflicts).
+    let gpu_ready = crate::gpu::is_shared_device_ready();
 
     for ev in &active {
         let style = resolve_style(ass_script, ev);
 
         // --- Cached event data ---
-        // Key: (generation, pointer_addr) — pointer address is stable for the
-        // lifetime of the AssScript and discriminating across different events.
         let ev_ptr = *ev as *const OwnedEvent as usize;
         let ev_key = (cache_gen, ev_ptr);
 
         let cached_ev = event_cache.entry(ev_key).or_insert_with(|| {
             let segments = parse_tag_segments(&ev.text);
             let clean_text: String = segments.iter().map(|s| s.text.as_str()).collect();
-            let text_normalized = clean_text.replace("\\n", "\\N");
+            // Convert ASS \N and \n to actual newlines for the layout engine
+            let text_for_layout = clean_text.replace("\\N", "\n").replace("\\n", "\n");
 
-            // Build char_to_seg mapping
-            let mut char_to_seg: Vec<usize> = Vec::with_capacity(clean_text.len());
-            for (si, seg) in segments.iter().enumerate() {
-                for _ in seg.text.chars() {
-                    char_to_seg.push(si);
+            // Build char_to_seg mapping aligned with text_for_layout (not clean_text).
+            // text_for_layout may differ because \N (2 chars) becomes \n (1 char).
+            // We track position in clean_text to map each text_for_layout char to the
+            // correct segment.
+            let mut char_to_seg: Vec<usize> = Vec::with_capacity(text_for_layout.len());
+            let mut ci = 0usize; // position in clean_text
+            for tc in text_for_layout.chars() {
+                if tc == '\n' {
+                    // This newline replaced a \N (2 chars in clean_text). Skip past it.
+                    ci += 2;
+                    continue;
                 }
+                // Find which segment ci maps to by cumulative segment text lengths
+                let mut seg_idx = 0usize;
+                let mut cum = 0usize;
+                for (si, seg) in segments.iter().enumerate() {
+                    cum += seg.text.chars().count();
+                    if ci < cum { seg_idx = si; break; }
+                }
+                char_to_seg.push(seg_idx);
+                ci += 1;
             }
 
-            // Build merged_base_tags by sequentially walking all segments.
-            // This correctly models ASS's cumulative tag semantics: later tags
-            // override earlier ones. We also handle named \r resets by resolving
-            // the referenced style.
-            let merged_base_tags =
-                build_merged_base_tags(&segments, &style, ass_script);
+            // Cache non-whitespace chars for font coverage checks
+            let text_chars: Vec<char> = clean_text.chars().filter(|c| !c.is_whitespace()).collect();
+
+            // Fast hash of clean_text for layout cache keying
+            let text_hash = hash_str(&clean_text);
+
+            let merged_base_tags = build_merged_base_tags(&segments, style, ass_script);
+            let karaoke_syllables = build_karaoke_syllables(&segments);
 
             CachedEventData {
                 segments,
                 clean_text,
-                text_normalized,
+                text_for_layout,
                 char_to_seg,
                 merged_base_tags,
+                text_chars,
+                text_hash,
+                karaoke_syllables,
             }
         });
 
         let segments = &cached_ev.segments;
         let clean_text: &str = &cached_ev.clean_text;
-        let text_normalized: &str = &cached_ev.text_normalized;
+        let text_for_layout: &str = &cached_ev.text_for_layout;
         let char_to_seg = &cached_ev.char_to_seg;
         let merged_base_tags = &cached_ev.merged_base_tags;
+        let karaoke_syllables = &cached_ev.karaoke_syllables;
 
         // Apply \t transforms on top of the merged base
         let inline_tags = apply_transforms(
@@ -161,7 +215,7 @@ pub fn render_ass_subtitle_frame(
         let fontname = font_override
             .filter(|s| !s.is_empty())
             .and_then(|ov| {
-                if font_cache.find_font(ov).is_some() {
+                if font_cache.find_font(ov, false, false).is_some() {
                     Some(ov)
                 } else {
                     None
@@ -170,19 +224,18 @@ pub fn render_ass_subtitle_frame(
             .unwrap_or(base_fontname);
 
         let fontsize = inline_tags.fontsize.unwrap_or(style.fontsize);
+        let bold = inline_tags.bold.unwrap_or(style.bold);
+        let italic = inline_tags.italic.unwrap_or(style.italic);
         let fill_color = inline_tags.primary_color.unwrap_or(style.primary_color);
         let alignment = inline_tags.alignment.unwrap_or(style.alignment);
 
-        let outline_w =
-            (inline_tags.xbord.or(inline_tags.bord).unwrap_or(style.outline)) * res_scale_y;
-        let _outline_h =
-            (inline_tags.ybord.or(inline_tags.bord).unwrap_or(style.outline)) * res_scale_y;
+        let outline_w = inline_tags.xbord.or(inline_tags.bord).unwrap_or(style.outline) * outline_res_scale;
         let shadow_dx =
-            (inline_tags.xshad.or(inline_tags.shad).unwrap_or(style.shadow)) * res_scale_x;
+            (inline_tags.xshad.or(inline_tags.shad).unwrap_or(style.shadow)) * outline_res_scale * scale;
         let shadow_dy =
-            (inline_tags.yshad.or(inline_tags.shad).unwrap_or(style.shadow)) * res_scale_y;
+            (inline_tags.yshad.or(inline_tags.shad).unwrap_or(style.shadow)) * outline_res_scale * scale;
 
-        let blur_radius = inline_tags.blur.or(inline_tags.be).unwrap_or(0.0) * res_scale_y;
+        let blur_radius = inline_tags.blur.or(inline_tags.be).unwrap_or(0.0) * outline_res_scale;
         stats.max_blur_radius = stats.max_blur_radius.max(blur_radius);
 
         // Clip with precomputed bounding box
@@ -191,23 +244,18 @@ pub fn render_ass_subtitle_frame(
             if pts.len() < 4 {
                 return None;
             }
+            let clip_scale = clip.scale.unwrap_or(1.0);
             let (mut x1, mut y1) = (f32::MAX, f32::MAX);
             let (mut x2, mut y2) = (f32::MIN, f32::MIN);
             for p in pts {
-                let cx = p.0 * res_scale_x * scale + (position_x - 0.5) * output_width as f32;
-                let cy = p.1 * res_scale_y * scale + (position_y - 0.5) * output_height as f32;
+                let cx = p.0 * clip_scale * res_scale_x * scale + center_off_x + (position_x - 0.5) * output_width as f32;
+                let cy = p.1 * clip_scale * res_scale_y * scale + center_off_y + (position_y - 0.5) * output_height as f32;
                 x1 = x1.min(cx);
                 y1 = y1.min(cy);
                 x2 = x2.max(cx);
                 y2 = y2.max(cy);
             }
-            Some(ClipCheck {
-                x1,
-                y1,
-                x2,
-                y2,
-                inverse: clip.inverse,
-            })
+            Some(ClipCheck { x1, y1, x2, y2, inverse: clip.inverse })
         });
 
         let outline_color = inline_tags.outline_color.unwrap_or(style.outline_color);
@@ -227,364 +275,353 @@ pub fn render_ass_subtitle_frame(
 
         stats.text_char_count = clean_text.chars().count();
 
-        // --- Font lookup (cached) ---
-        let font_data = if let Some(cached) = font_data_cache.get(&ev_key) {
-            stats.font_found = cached.is_some();
-            cached.clone()
-        } else {
-            let text_chars: Vec<char> =
-                clean_text.chars().filter(|c| !c.is_whitespace()).collect();
-            let result = font_cache
-                .find_font_for_chars(&text_chars, fontname)
-                .or_else(|| font_cache.find_font(fontname));
-            stats.font_found = result.is_some();
-            font_data_cache.insert(ev_key, result.clone());
-            result
-        };
+        // --- Font lookup (uses cached text_chars) ---
+        let font_data = font_cache
+            .find_font_for_chars(&cached_ev.text_chars, fontname, bold, italic)
+            .or_else(|| font_cache.find_font(fontname, bold, italic));
+        stats.font_found = font_data.is_some();
         let Some(font_data) = font_data else {
             continue;
         };
 
-        let Ok(font) = ab_glyph::FontRef::try_from_slice(&*font_data) else {
-            continue;
+        // Compute effective pixel size
+        let px_size = fontsize * res_scale_y * font_scale_y.max(0.01) * tag_sy * scale;
+
+        // Get or create cached TextLayoutEngine (avoids font bytes clone + reparse per frame)
+        let eng_key = FontEngineKey {
+            data_ptr: Arc::as_ptr(&font_data) as usize,
+            size_bucket: (px_size * 2.0) as u32,
+        };
+        let layout_engine = match cache.font_engines.entry(eng_key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                match OxiFont::from_bytes(font_data.to_vec()) {
+                    Ok(oxi_font) => e.insert(TextLayoutEngine::new(oxi_font)),
+                    Err(_) => {
+                        // Corrupt system font — skip this event
+                        continue;
+                    }
+                }
+            }
         };
         stats.font_parsed = true;
 
-        let px_scale_x = fontsize * res_scale_y * font_scale_x.max(0.01) * tag_sx * scale;
-        let px_scale_y = fontsize * res_scale_y * font_scale_y.max(0.01) * tag_sy * scale;
-        let px_scale = ab_glyph::PxScale {
-            x: px_scale_x,
-            y: px_scale_y,
-        };
-        let units_per_em = font.units_per_em().unwrap_or(1000.0);
+        // Build oximedia SubtitleStyle for layout
+        // 0 disables width-based wrapping — ASS uses \N for explicit line breaks only.
+        let max_width = 0u32;
 
-        let ascent = font.ascent_unscaled() * px_scale_y / units_per_em;
-        let descent = font.descent_unscaled() * px_scale_y / units_per_em;
-        let line_gap = font.line_gap_unscaled() * px_scale_y / units_per_em;
-        let line_height = ascent - descent + line_gap;
+        // Layout text via oximedia — check cache when no layout-affecting transforms
+        let layout_animates = has_layout_affecting_transforms(&merged_base_tags.transforms);
 
-        let spacing_raw = inline_tags.spacing.unwrap_or(style.spacing);
-        let spacing_adv = spacing_raw * res_scale_y * px_scale.x / units_per_em;
+        // Check whether font properties vary across segments.
+        // If so, lay out each homogeneous group separately and merge glyphs.
+        let font_groups = group_segments_by_font(segments);
+        let use_per_group = font_groups.len() > 1 && !layout_animates;
 
-        let lines: Vec<&str> = text_normalized.split("\\N").collect();
+        let layout: TextLayout;
+        if !use_per_group {
+            let oxi_style = SubtitleStyle {
+                font_size: px_size,
+                font_weight: if bold { FontWeight::Bold } else { FontWeight::Normal },
+                font_style: if italic { FontStyle::Italic } else { FontStyle::Normal },
+                alignment: Alignment::Left,
+                ..SubtitleStyle::default()
+            };
 
-        // ------------------------------------------------------------------
-        // Phase 1: Layout — compute line widths, store per-char glyph info
-        // ------------------------------------------------------------------
-        struct CharLayout {
-            glyph_id: ab_glyph::GlyphId,
-            h_adv_px: f32,
-        }
-        struct LineLayout {
-            chars: Vec<CharLayout>,
-            width_before_scale: f32,
-        }
+            let layout_key = if layout_animates {
+                None
+            } else {
+                Some(LayoutCacheKey {
+                    event_ptr: ev_ptr,
+                    size_bucket: (px_size * 2.0) as u32,
+                    text_hash: cached_ev.text_hash,
+                    font_data_ptr: Arc::as_ptr(&font_data) as usize,
+                })
+            };
 
-        let mut max_line_width: f32 = 0.0;
-        let mut total_height: f32 = 0.0;
-        let mut line_layouts: Vec<LineLayout> = Vec::new();
-        let mut global_ci = 0usize;
-
-        for line in &lines {
-            let mut line_w: f32 = 0.0;
-            let mut char_count = 0usize;
-            let mut chars = Vec::new();
-
-            for c in line.chars() {
-                let glyph_id = font.glyph_id(c);
-                let mut glyph_w =
-                    font.h_advance_unscaled(glyph_id) * px_scale.x / units_per_em;
-                // Apply per-char bold scale to layout width
-                if let Some(seg) = char_to_seg.get(global_ci).and_then(|&si| segments.get(si)) {
-                    if seg.tags.bold.unwrap_or(style.bold) {
-                        glyph_w *= 1.15;
-                    }
+            layout = if let Some(ref key) = layout_key {
+                if let Some(cached) = cache.text_layouts.get(key) {
+                    cached.clone()
+                } else {
+                    let l = layout_engine.layout(text_for_layout, &oxi_style, max_width)
+                        .unwrap_or_else(|_| TextLayout::new());
+                    cache.text_layouts.insert(key.clone(), l.clone());
+                    l
                 }
-                chars.push(CharLayout {
-                    glyph_id,
-                    h_adv_px: glyph_w,
-                });
-                line_w += glyph_w;
-                char_count += 1;
-                global_ci += 1;
+            } else {
+                layout_engine.layout(text_for_layout, &oxi_style, max_width)
+                    .unwrap_or_else(|_| TextLayout::new())
+            };
+        } else {
+            // Per-group layout: each group gets its own SubtitleStyle.
+            // Glyphs from all groups are merged into a single TextLayout
+            // with adjusted X positions, so the rest of the pipeline is unchanged.
+            let mut merged_lines: Vec<oximedia_subtitle::text::TextLine> = Vec::new();
+            let mut total_w: f32 = 0.0;
+            let mut total_h: f32 = 0.0;
+            let mut x_cursor: f32 = 0.0;
+            let mut y_cursor: f32 = 0.0;
+
+            // Compute max first-line ascent across groups for vertical alignment
+            let mut baseline_hint: Option<f32> = None;
+
+            for &(g_start, g_end) in &font_groups {
+                let group_text: String = segments[g_start..g_end]
+                    .iter().map(|s| s.text.as_str()).collect();
+                let group_tfl = group_text.replace("\\N", "\n").replace("\\n", "\n");
+
+                let group_tags = &segments[g_start].tags;
+                let g_bold = group_tags.bold.unwrap_or(style.bold);
+                let g_italic = group_tags.italic.unwrap_or(style.italic);
+
+                let g_oxi_style = SubtitleStyle {
+                    font_size: px_size,
+                    font_weight: if g_bold { FontWeight::Bold }
+                                 else { FontWeight::Normal },
+                    font_style: if g_italic { FontStyle::Italic }
+                                else { FontStyle::Normal },
+                    alignment: Alignment::Left,
+                    ..SubtitleStyle::default()
+                };
+
+                let g_layout = layout_engine.layout(&group_tfl, &g_oxi_style, max_width)
+                    .unwrap_or_else(|_| TextLayout::new());
+
+                // Record first-line ascent for Y adjustment
+                if baseline_hint.is_none() {
+                    baseline_hint = g_layout.lines.first().map(|l| l.baseline);
+                }
+
+                // Check if group text ends with \n — reset X, advance Y
+                let ends_with_newline = group_tfl.ends_with('\n');
+
+                // Shift glyphs and add to merged lines
+                for (_li, line) in g_layout.lines.iter().enumerate() {
+                    let mut shifted_glyphs: Vec<oximedia_subtitle::text::PositionedGlyph> = Vec::new();
+                    for glyph in &line.glyphs {
+                        let mut g = glyph.clone();
+                        g.x += x_cursor;
+                        g.y += y_cursor;
+                        shifted_glyphs.push(g);
+                    }
+                    merged_lines.push(oximedia_subtitle::text::TextLine {
+                        glyphs: shifted_glyphs,
+                        width: line.width,
+                        height: line.height,
+                        baseline: line.baseline,
+                    });
+                }
+
+                // Update cursors
+                if ends_with_newline {
+                    x_cursor = 0.0;
+                    y_cursor += g_layout.height;
+                } else {
+                    x_cursor += g_layout.width;
+                }
+                total_w = total_w.max(x_cursor); // take the widest "row"
+                total_h = total_h.max(y_cursor + g_layout.height);
             }
 
-            if char_count > 0 {
-                line_w += spacing_raw * res_scale_y * px_scale.x / units_per_em
-                    * (char_count - 1) as f32;
-            }
-            max_line_width = max_line_width.max(line_w);
-            total_height += line_height;
-            line_layouts.push(LineLayout {
-                chars,
-                width_before_scale: line_w,
-            });
+            layout = TextLayout {
+                lines: merged_lines,
+                width: total_w,
+                height: total_h,
+            };
         }
 
-        let text_w = max_line_width;
-        let text_h = total_height;
+        if layout.is_empty() {
+            continue;
+        }
+
+        // oximedia's fontdue-based layout places glyph y relative to the
+        // first line's baseline. We offset per-line using each line's own baseline
+        // so multi-line text (e.g. from \N) positions correctly.
+        let fsx = font_scale_x.max(0.01);
+        let text_w = layout.width * tag_sx * fsx;
+        let text_h = layout.height * tag_sy;
 
         let (align_x, align_y) = alignment_to_anchor(alignment);
 
-        let margin_l = (if ev.margin_l != 0 {
-            ev.margin_l
-        } else {
-            style.margin_l
-        }) as f32
-            * scale
-            * res_scale_x;
-        let margin_r = (if ev.margin_r != 0 {
-            ev.margin_r
-        } else {
-            style.margin_r
-        }) as f32
-            * scale
-            * res_scale_x;
-        let margin_v = (if ev.margin_v != 0 {
-            ev.margin_v
-        } else {
-            style.margin_v
-        }) as f32
-            * scale
-            * res_scale_y;
+        let margin_l = (if ev.margin_l != 0 { ev.margin_l } else { style.margin_l }) as f32
+            * scale * res_scale_x;
+        let margin_r = (if ev.margin_r != 0 { ev.margin_r } else { style.margin_r }) as f32
+            * scale * res_scale_x;
+        let margin_v = (if ev.margin_v != 0 { ev.margin_v } else { style.margin_v }) as f32
+            * scale * res_scale_y;
 
-        let w = output_width as f32;
-        let h = output_height as f32;
+        let out_w = output_width as f32;
+        let out_h = output_height as f32;
 
         let base_x = match align_x {
-            0 => margin_l,
-            1 => (w - text_w) / 2.0,
-            2 => w - text_w - margin_r,
-            _ => (w - text_w) / 2.0,
-        } + (position_x - 0.5) * w;
+            0 => center_off_x + margin_l,
+            1 => center_off_x + (viewport_w - text_w) / 2.0,
+            2 => center_off_x + viewport_w - text_w - margin_r,
+            _ => center_off_x + (viewport_w - text_w) / 2.0,
+        } + (position_x - 0.5) * out_w;
 
         let base_y = match align_y {
-            0 => h - margin_v - text_h,
-            1 => (h - text_h) / 2.0,
-            2 => margin_v,
-            _ => h - margin_v - text_h,
-        } + (position_y - 0.5) * h;
+            0 => center_off_y + viewport_h - margin_v - text_h,
+            1 => center_off_y + (viewport_h - text_h) / 2.0,
+            2 => center_off_y + margin_v,
+            _ => center_off_y + viewport_h - margin_v - text_h,
+        } + (position_y - 0.5) * out_h;
 
         // Apply \pos or \move override
         let (base_x, base_y) = if let Some((px, py)) = inline_tags.pos {
-            let anchor_x = px * scale * res_scale_x + (position_x - 0.5) * w;
-            let anchor_y = py * scale * res_scale_y + (position_y - 0.5) * h;
-            (
-                anchor_to_base_x(align_x, anchor_x, text_w),
-                anchor_to_base_y(align_y, anchor_y, text_h),
-            )
+            let anchor_x = center_off_x + px * scale * res_scale_x + (position_x - 0.5) * out_w;
+            let anchor_y = center_off_y + py * scale * res_scale_y + (position_y - 0.5) * out_h;
+            (anchor_to_base_x(align_x, anchor_x, text_w), anchor_to_base_y(align_y, anchor_y, text_h))
         } else if let Some((mx, my)) = move_pos {
-            let anchor_x = mx * scale * res_scale_x + (position_x - 0.5) * w;
-            let anchor_y = my * scale * res_scale_y + (position_y - 0.5) * h;
-            (
-                anchor_to_base_x(align_x, anchor_x, text_w),
-                anchor_to_base_y(align_y, anchor_y, text_h),
-            )
+            let anchor_x = center_off_x + mx * scale * res_scale_x + (position_x - 0.5) * out_w;
+            let anchor_y = center_off_y + my * scale * res_scale_y + (position_y - 0.5) * out_h;
+            (anchor_to_base_x(align_x, anchor_x, text_w), anchor_to_base_y(align_y, anchor_y, text_h))
         } else {
             (base_x, base_y)
         };
 
-        // Precompute outline offset directions (cached, bounded)
-        let outline_offsets_vec: Arc<[(f32, f32)]> = if outline_w > 0.0 && border_style == 1 {
-            get_outline_offsets_cached(outline_w, blur_radius, outline_offsets)
-        } else {
-            Arc::new([])
-        };
-
         // ------------------------------------------------------------------
-        // Phase 2: Glyph rendering with coverage cache
+        // Glyph rendering — GPU first (only if device already initialized), CPU fallback
         // ------------------------------------------------------------------
-        let font_ptr = Arc::as_ptr(&font_data) as usize;
-        let first_baseline_y = base_y + ascent;
-        let mut cursor_y = first_baseline_y;
-        let mut char_offset = 0usize;
+        let outline_radius = (outline_w * scale).round() as i32;
+        let has_shadow = (shadow_dx.abs() > 0.01 || shadow_dy.abs() > 0.01) && shadow_color[3] > 0.0;
+        let has_outline = outline_radius > 0 && border_style == 1 && outline_color[3] > 0.0;
+        let has_fill = fill_color[3] > 0.0;
 
-        for (_line, layout) in lines.iter().zip(line_layouts.iter()) {
-            if cursor_y + line_height <= 0.0 || cursor_y >= h {
-                cursor_y += line_height;
-                char_offset += layout.chars.len();
-                continue;
-            }
+        let sh_color = apply_fade_to_color(shadow_color, effective_alpha);
+        let out_color = apply_fade_to_color(outline_color, effective_alpha);
+        let fill = apply_fade_to_color(fill_color, effective_alpha);
 
-            let line_x = match align_x {
-                0 => base_x,
-                1 => base_x + (text_w - layout.width_before_scale) / 2.0,
-                2 => base_x + text_w - layout.width_before_scale,
-                _ => base_x,
-            };
+        let mut gpu_glyph_ok = false;
 
-            let mut cursor_x = line_x;
-            for (char_idx, ch_layout) in layout.chars.iter().enumerate() {
-                let global_char_idx = char_offset + char_idx;
-
-                let seg_tags = if global_char_idx < char_to_seg.len() {
-                    &segments[char_to_seg[global_char_idx]].tags
-                } else {
-                    &inline_tags
-                };
-                let ch_fill_color = seg_tags.primary_color.unwrap_or(fill_color);
-                let ch_outline_color = seg_tags.outline_color.unwrap_or(outline_color);
-                let ch_bold = seg_tags.bold.unwrap_or(style.bold);
-                let ch_italic = seg_tags.italic.unwrap_or(style.italic);
-
-                let use_glyph_id = ch_layout.glyph_id;
-                let h_adv_px = ch_layout.h_adv_px;
-                let sb_px = font.h_side_bearing_unscaled(use_glyph_id) * px_scale.x / units_per_em;
-                let bold_scale = if ch_bold { 1.15 } else { 1.0 };
-                let glyph_x = cursor_x + sb_px * bold_scale;
-                let italic_shear: f32 = if ch_italic { 0.25 } else { 0.0 };
-
-                if glyph_x + h_adv_px * bold_scale >= 0.0 && glyph_x < w {
-                    let use_scale = ab_glyph::PxScale {
-                        x: px_scale.x * bold_scale,
-                        y: px_scale.y,
-                    };
-                    stats.glyph_rasterize_attempts += 1;
-
-                    let cache_key = GlyphCacheKey {
-                        font_ptr,
-                        glyph_id: use_glyph_id.0,
-                        scale_x: (use_scale.x * 1000.0) as u32,
-                        scale_y: (use_scale.y * 1000.0) as u32,
-                        bold_x: (bold_scale * 1000.0) as u32,
-                    };
-
-                    if !glyph_cache.contains_key(&cache_key) {
-                        // Evict when too large
-                        const MAX_GLYPH_CACHE: usize = 2048;
-                        if glyph_cache.len() >= MAX_GLYPH_CACHE {
-                            glyph_cache.clear();
-                        }
-                        let glyph = ab_glyph::Glyph {
-                            id: use_glyph_id,
-                            scale: use_scale,
-                            position: ab_glyph::point(0.0, 0.0),
-                        };
-                        if let Some(outline) = font.outline_glyph(glyph) {
-                            let px_bounds = outline.px_bounds();
-                            let mut coverage = Vec::new();
-                            outline.draw(|gx, gy, cov| {
-                                coverage.push((gx, gy, cov));
-                            });
-                            glyph_cache.insert(
-                                cache_key.clone(),
-                                CachedGlyph {
-                                    px_bounds_min_x: px_bounds.min.x,
-                                    px_bounds_min_y: px_bounds.min.y,
-                                    coverage,
-                                },
-                            );
-                        }
-                    }
-
-                    if let Some(cached) = glyph_cache.get(&cache_key) {
-                        stats.glyph_rasterize_ok += 1;
-                        let mut local_pixels = 0usize;
-                        let slant_offset = |gy: f32| -> f32 { gy * italic_shear };
-
-                        // Shadow pass
-                        if shadow_dx != 0.0 || shadow_dy != 0.0 {
-                            let sh_color = apply_fade_to_color(shadow_color, effective_alpha);
-                            for &(gx, gy, cov) in &cached.coverage {
-                                let px = (glyph_x
-                                    + (cached.px_bounds_min_x + gx as f32
-                                        + slant_offset(gy as f32))
-                                    + shadow_dx * scale)
-                                    .round() as i32;
-                                let py = (cursor_y
-                                    + (cached.px_bounds_min_y + gy as f32)
-                                    + shadow_dy * scale)
-                                    .round() as i32;
-                                if px < 0
-                                    || py < 0
-                                    || px >= output_width as i32
-                                    || py >= output_height as i32
-                                {
-                                    continue;
-                                }
-                                if clip_reject(px, py, &clip_check) {
-                                    continue;
-                                }
-                                let idx = (py as usize * output_width + px as usize) * 4;
-                                direct_composite(temp_buf, idx, sh_color, cov);
-                                new_dirty.expand(px, py, 3);
-                            }
-                        }
-
-                        // Outline passes — use max blending so overlapping
-                        // offset stamps don't accumulate alpha additively.
-                        if !outline_offsets_vec.is_empty() {
-                            let out_color = apply_fade_to_color(ch_outline_color, effective_alpha);
-                            for &(ox, oy) in outline_offsets_vec.iter() {
-                                for &(gx, gy, cov) in &cached.coverage {
-                                    let px = (glyph_x
-                                        + (cached.px_bounds_min_x + gx as f32
-                                            + slant_offset(gy as f32))
-                                        + ox * scale)
-                                        .round() as i32;
-                                    let py = (cursor_y
-                                        + (cached.px_bounds_min_y + gy as f32)
-                                        + oy * scale)
-                                        .round() as i32;
-                                    if px < 0
-                                        || py < 0
-                                        || px >= output_width as i32
-                                        || py >= output_height as i32
-                                    {
-                                        continue;
-                                    }
-                                    if clip_reject(px, py, &clip_check) {
-                                        continue;
-                                    }
-                                    let idx =
-                                        (py as usize * output_width + px as usize) * 4;
-                                    direct_composite_max(temp_buf, idx, out_color, cov);
-                                    new_dirty.expand(px, py, 3);
-                                }
-                            }
-                        }
-
-                        // Fill pass
-                        let fill = apply_fade_to_color(ch_fill_color, effective_alpha);
-                        for &(gx, gy, cov) in &cached.coverage {
-                            local_pixels += 1;
-                            let px = (glyph_x
-                                + (cached.px_bounds_min_x + gx as f32
-                                    + slant_offset(gy as f32)))
-                                .round() as i32;
-                            let py = (cursor_y + (cached.px_bounds_min_y + gy as f32))
-                                .round() as i32;
-                            if px < 0
-                                || py < 0
-                                || px >= output_width as i32
-                                || py >= output_height as i32
-                            {
-                                continue;
-                            }
-                            if clip_reject(px, py, &clip_check) {
-                                continue;
-                            }
-                            let idx = (py as usize * output_width + px as usize) * 4;
-                            direct_composite(temp_buf, idx, fill, cov);
-                            new_dirty.expand(px, py, 3);
-                        }
-
-                        stats.pixels_written += local_pixels;
-                    }
+        if gpu_ready {
+            let mut glyph_gpu_data: Vec<crate::gpu::ass_glyph::GlyphGpuData> = Vec::new();
+            let mut bitmap_bytes: Vec<u8> = Vec::new();
+            for line in &layout.lines {
+                let line_ascent = line.baseline;
+                for glyph in &line.glyphs {
+                    if glyph.width == 0 || glyph.height == 0 { continue; }
+                    let gx = (base_x + glyph.x * tag_sx * fsx).round() as i32;
+                    let gy = (base_y + line_ascent + glyph.y).round() as i32;
+                    let mut flags = 0u32;
+                    if has_fill { flags |= 1; }
+                    if has_outline { flags |= 2; }
+                    if has_shadow { flags |= 4; }
+                    let offset = bitmap_bytes.len() as u32;
+                    bitmap_bytes.extend_from_slice(&glyph.bitmap);
+                    glyph_gpu_data.push(crate::gpu::ass_glyph::GlyphGpuData {
+                        glyph_offset: offset,
+                        bitmap_w: glyph.width as u32,
+                        bitmap_h: glyph.height as u32,
+                        pos_x: gx,
+                        pos_y: gy,
+                        fill_color: pack_rgba8(fill),
+                        outline_color: pack_rgba8(out_color),
+                        shadow_color: pack_rgba8(sh_color),
+                        outline_radius,
+                        shadow_dx,
+                        shadow_dy,
+                        flags,
+                    });
                 }
-                cursor_x += (h_adv_px + spacing_adv) * bold_scale;
             }
+            gpu_glyph_ok = crate::gpu::ass_glyph::try_ass_glyph_gpu_composite(
+                &glyph_gpu_data, &bitmap_bytes, temp_buf,
+                output_width as u32, output_height as u32,
+            ).unwrap_or(false);
+            if gpu_glyph_ok {
+                stats.pixels_written += glyph_gpu_data.iter()
+                    .map(|g| (g.bitmap_w * g.bitmap_h) as usize)
+                    .sum::<usize>();
+                // Expand dirty rect for CPU composite fallback path
+                for g in &glyph_gpu_data {
+                    let pad = g.outline_radius.max(g.shadow_dx.abs().ceil() as i32).max(g.shadow_dy.abs().ceil() as i32) + 1;
+                    new_dirty.expand(g.pos_x, g.pos_y, pad);
+                    new_dirty.expand(g.pos_x + g.bitmap_w as i32, g.pos_y + g.bitmap_h as i32, pad);
+                }
+            }
+        }
 
-            char_offset += layout.chars.len();
-            cursor_y += line_height;
+        if !gpu_glyph_ok {
+            // CPU fallback with per-character styling from segments
+            let mut char_offset = 0usize;
+            for line in &layout.lines {
+                let line_ascent = line.baseline;
+                for glyph in &line.glyphs {
+                    let gx = (base_x + glyph.x * tag_sx * fsx).round() as i32;
+                    let gy = (base_y + line_ascent + glyph.y).round() as i32;
+                    if glyph.width == 0 || glyph.height == 0 {
+                        char_offset += 1; // always advance for every character in text_for_layout
+                        continue;
+                    }
+
+                    // Per-character colors from override tag segments.
+                    // Use unfaded base colors to avoid double-fade; apply fade once at the end.
+                    let seg_idx = char_to_seg.get(char_offset).copied().unwrap_or(0);
+                    let seg_tags = segments.get(seg_idx).map(|s| &s.tags).unwrap_or(&inline_tags);
+                    let base_fill = seg_tags.primary_color.unwrap_or(fill_color);
+                    let base_outline = seg_tags.outline_color.unwrap_or(outline_color);
+                    let base_shadow = seg_tags.back_color.unwrap_or(shadow_color);
+
+                    let (ch_fill, ch_outline) = if !karaoke_syllables.is_empty() {
+                        let secondary_fill = seg_tags.secondary_color
+                            .or(inline_tags.secondary_color)
+                            .unwrap_or(style.secondary_color);
+                        compute_karaoke_color(
+                            char_offset,
+                            time_ms,
+                            ev.start_ms,
+                            karaoke_syllables,
+                            base_fill,
+                            secondary_fill,
+                            base_outline,
+                            secondary_fill,
+                        )
+                    } else {
+                        (base_fill, base_outline)
+                    };
+
+                    let ch_fill_color = apply_fade_to_color(ch_fill, effective_alpha);
+                    let ch_outline_color = apply_fade_to_color(ch_outline, effective_alpha);
+                    let ch_shadow_color = apply_fade_to_color(base_shadow, effective_alpha);
+
+                    stats.pixels_written += composite_glyph_all_layers(
+                        temp_buf, &glyph.bitmap, glyph.width, glyph.height,
+                        gx, gy,
+                        if has_fill { Some(ch_fill_color) } else { None },
+                        if has_outline { Some((ch_outline_color, outline_radius)) } else { None },
+                        if has_shadow { Some((ch_shadow_color, shadow_dx, shadow_dy)) } else { None },
+                        output_width, output_height,
+                        &clip_check, &mut new_dirty,
+                    );
+                    char_offset += 1;
+                }
+            }
         }
     }
 
     // ------------------------------------------------------------------
-    // Phase 3: CPU composite dirty rect onto output
+    // Phase 3: GPU-first compositing (CPU fallback if GPU unavailable)
+    // Only attempt if shared device was already initialized by another effect.
     // ------------------------------------------------------------------
-    if let Some(dr) = new_dirty.clamp(output_width as i32, output_height as i32) {
-        cpu_composite_dirty_rect(temp_buf, output, output_width, &dr, blend_mode);
+    if gpu_ready {
+        match crate::gpu::ass_subtitle::try_ass_subtitle_gpu_composite(
+            temp_buf, output,
+            output_width as u32, output_height as u32,
+            blend_mode as u32,
+        ) {
+            Ok(true) => { stats.gpu_composite_used = true; }
+            _ => {
+                if let Some(dr) = new_dirty.clamp(output_width as i32, output_height as i32) {
+                    cpu_composite_dirty_rect(temp_buf, output, output_width, &dr, blend_mode);
+                }
+            }
+        }
+    } else {
+        // GPU not ready — CPU compositing only
+        if let Some(dr) = new_dirty.clamp(output_width as i32, output_height as i32) {
+            cpu_composite_dirty_rect(temp_buf, output, output_width, &dr, blend_mode);
+        }
     }
     cache.prev_dirty = new_dirty;
 
@@ -592,8 +629,123 @@ pub fn render_ass_subtitle_frame(
 }
 
 // ---------------------------------------------------------------------------
+// Combined glyph compositing — single bitmap scan for fill + shadow + outline
+// ---------------------------------------------------------------------------
+
+/// Composite a glyph with fill, outline, and shadow in a single bitmap scan.
+/// Returns the number of fill pixels written.
+fn composite_glyph_all_layers(
+    output: &mut [u8],
+    bitmap: &[u8],
+    bm_w: usize,
+    bm_h: usize,
+    gx: i32,
+    gy: i32,
+    fill_color: Option<[f32; 4]>,
+    outline: Option<([f32; 4], i32)>,
+    shadow: Option<([f32; 4], f32, f32)>,
+    out_w: usize,
+    out_h: usize,
+    clip: &Option<ClipCheck>,
+    dirty: &mut DirtyRect,
+) -> usize {
+    let mut pixels = 0usize;
+    let r2 = outline.map_or(0.0, |(_, r)| (r * r) as f32);
+    let radius = outline.map_or(0, |(_, r)| r);
+    let (sh_color, sh_dx, sh_dy) = shadow.unwrap_or(([0.0; 4], 0.0, 0.0));
+    let sh_x = sh_dx.round() as i32;
+    let sh_y = sh_dy.round() as i32;
+    let has_shadow = shadow.is_some();
+    let has_outline = outline.is_some();
+    let has_fill = fill_color.is_some();
+    let fill = fill_color.unwrap_or([0.0; 4]);
+    let out_color = outline.map_or([0.0; 4], |(c, _)| c);
+
+    for by in 0..bm_h {
+        for bx in 0..bm_w {
+            let alpha = bitmap[by * bm_w + bx];
+            if alpha == 0 { continue; }
+            let coverage = alpha as f32 / 255.0;
+            let base_x = gx + bx as i32;
+            let base_y = gy + by as i32;
+
+            // Fill — at glyph position
+            if has_fill {
+                if base_x >= 0 && base_y >= 0 && base_x < out_w as i32 && base_y < out_h as i32
+                    && !clip_reject(base_x, base_y, clip)
+                {
+                    let idx = (base_y as usize * out_w + base_x as usize) * 4;
+                    direct_composite(output, idx, fill, coverage);
+                    dirty.expand(base_x, base_y, 2);
+                    pixels += 1;
+                }
+            }
+
+            // Shadow — at offset position
+            if has_shadow {
+                let sx = base_x + sh_x;
+                let sy = base_y + sh_y;
+                if sx >= 0 && sy >= 0 && sx < out_w as i32 && sy < out_h as i32
+                    && !clip_reject(sx, sy, clip)
+                {
+                    let idx = (sy as usize * out_w + sx as usize) * 4;
+                    direct_composite(output, idx, sh_color, coverage);
+                    dirty.expand(sx, sy, 2);
+                }
+            }
+
+            // Outline — draw colored pixels around glyph in a circular radius
+            if has_outline {
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        if (dx * dx + dy * dy) as f32 > r2 { continue; }
+                        let ox = base_x + dx;
+                        let oy = base_y + dy;
+                        if ox < 0 || oy < 0 || ox >= out_w as i32 || oy >= out_h as i32 { continue; }
+                        if clip_reject(ox, oy, clip) { continue; }
+                        let idx = (oy as usize * out_w + ox as usize) * 4;
+                        direct_composite_max(output, idx, out_color, coverage);
+                        dirty.expand(ox, oy, 2);
+                    }
+                }
+            }
+        }
+    }
+    pixels
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/// Check if any \t transforms affect text layout (font, size, boldness, scale, spacing).
+fn has_layout_affecting_transforms(transforms: &[super::types::OverrideTransform]) -> bool {
+    transforms.iter().any(|t| {
+        t.tags.fontsize.is_some()
+            || t.tags.fontname.is_some()
+            || t.tags.bold.is_some()
+            || t.tags.italic.is_some()
+            || t.tags.scale_x.is_some()
+            || t.tags.scale_y.is_some()
+            || t.tags.spacing.is_some()
+    })
+}
+
+/// Pack [r, g, b, a] normalized 0..1 into u32 RGBA8.
+fn pack_rgba8(c: [f32; 4]) -> u32 {
+    let r = (c[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    let g = (c[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    let b = (c[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    let a = (c[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    r | (g << 8) | (b << 16) | (a << 24)
+}
+
+/// Fast non-crypto string hash for layout cache keying.
+fn hash_str(s: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
 
 /// Return active events at a given time, sorted by layer (higher = later = on top).
 fn active_events(ass_script: &AssScript, time_ms: i64) -> Vec<&OwnedEvent> {
@@ -602,8 +754,6 @@ fn active_events(ass_script: &AssScript, time_ms: i64) -> Vec<&OwnedEvent> {
         .iter()
         .filter(|e| e.start_ms <= time_ms && time_ms < e.end_ms)
         .collect();
-    // Sort by layer so higher-layer events render on top.
-    // Within the same layer, preserve file order (stable sort).
     events.sort_by_key(|e| e.layer);
     events
 }
@@ -620,8 +770,6 @@ fn resolve_style<'a>(ass_script: &'a AssScript, ev: &OwnedEvent) -> &'a OwnedSty
 }
 
 /// Build merged base tags by sequentially walking all segments.
-/// This correctly models ASS's cumulative tag semantics: later tags override
-/// earlier ones. Handles named `\r` resets by resolving the referenced style.
 fn build_merged_base_tags(
     segments: &[TagSegment],
     default_style: &OwnedStyle,
@@ -635,7 +783,6 @@ fn build_merged_base_tags(
         // Handle \r reset
         if tags.reset {
             if let Some(ref style_name) = tags.reset_style {
-                // Named \r: resolve the style and use its values as the new base
                 let resolved = ass_script
                     .styles
                     .iter()
@@ -661,7 +808,6 @@ fn build_merged_base_tags(
                 merged.shad = Some(resolved.shadow);
                 merged.xshad = Some(resolved.shadow);
                 merged.yshad = Some(resolved.shadow);
-                // Clear position/animation overrides from previous tags
                 merged.pos = None;
                 merged.org = None;
                 merged.move_ = None;
@@ -676,14 +822,9 @@ fn build_merged_base_tags(
                 merged.be = None;
                 merged.blur = None;
                 merged.alpha = None;
-            } else {
-                // Bare \r: reset to defaults (clear all overrides)
-                // We already handled this in parse_tag_segments, but
-                // double-check here
             }
         }
 
-        // Apply this segment's tags on top of accumulated state
         apply_tags_on_top(&mut merged, tags);
     }
 
@@ -748,7 +889,6 @@ fn apply_tags_on_top(base: &mut ParsedTags, overlay: &ParsedTags) {
     if overlay.fade.is_some() { base.fade = overlay.fade.clone(); }
     if overlay.karaoke.is_some() { base.karaoke = overlay.karaoke.clone(); }
     if overlay.drawing_scale.is_some() { base.drawing_scale = overlay.drawing_scale; }
-    // Transforms accumulate
     base.transforms.extend(overlay.transforms.clone());
 }
 
@@ -777,7 +917,6 @@ fn compute_fade_alpha(
     };
     let elapsed = time_ms - ev_start;
     if fade.is_complex {
-        // \fade(a1,a2,a3,t1,t2,t3,t4)
         if elapsed <= fade.t1 {
             fade.a1
         } else if elapsed <= fade.t2 {
@@ -792,7 +931,6 @@ fn compute_fade_alpha(
             fade.a3
         }
     } else {
-        // \fad(t1,t2)
         let dur = ev_end - ev_start;
         let (t1, t2) = if fade.t1 + fade.t2 > dur && dur > 0 {
             let total = (fade.t1 + fade.t2).max(1) as f32;
@@ -840,4 +978,98 @@ fn compute_move_pos(
 
 fn apply_fade_to_color(color: [f32; 4], fade_alpha: f32) -> [f32; 4] {
     [color[0], color[1], color[2], color[3] * fade_alpha]
+}
+
+// ---------------------------------------------------------------------------
+// Per-character font style helpers (Fix 5)
+// ---------------------------------------------------------------------------
+
+/// Check whether two ParsedTags agree on font-affecting properties.
+fn font_style_equal(a: &ParsedTags, b: &ParsedTags) -> bool {
+    a.bold == b.bold && a.italic == b.italic && a.fontname == b.fontname && a.fontsize == b.fontsize
+}
+
+/// Build karaoke syllable boundaries from tag segments.
+fn build_karaoke_syllables(segments: &[TagSegment]) -> Vec<KaraokeSyllable> {
+    let mut syllables = Vec::new();
+    let mut char_offset = 0usize;
+    for seg in segments {
+        let seg_len = seg.text.chars().count();
+        if let Some(ref kd) = seg.tags.karaoke {
+            syllables.push(KaraokeSyllable {
+                char_start: char_offset,
+                char_end: char_offset + seg_len,
+                duration_cs: kd.duration_cs,
+                kind: kd.kind,
+            });
+        }
+        char_offset += seg_len;
+    }
+    syllables
+}
+
+/// Compute karaoke color for a character at the given time.
+/// Returns (fill_color, outline_color) based on elapsed time vs syllable durations.
+fn compute_karaoke_color(
+    char_idx: usize,
+    time_ms: i64,
+    ev_start: i64,
+    syllables: &[KaraokeSyllable],
+    before_fill: [f32; 4],
+    after_fill: [f32; 4],
+    before_outline: [f32; 4],
+    after_outline: [f32; 4],
+) -> ([f32; 4], [f32; 4]) {
+    let elapsed_ms = time_ms - ev_start;
+    let mut cumulative_ms: i64 = 0;
+    for syl in syllables {
+        if char_idx < syl.char_end {
+            let syl_elapsed = elapsed_ms - cumulative_ms;
+            let syl_dur_ms = syl.duration_cs * 10;
+            if syl_elapsed >= syl_dur_ms {
+                // Syllable fully sung
+                return (after_fill, after_outline);
+            } else if syl_elapsed > 0 {
+                // Currently being sung — partial blend
+                let frac = syl_elapsed as f32 / syl_dur_ms as f32;
+                return (
+                    [
+                        before_fill[0] + (after_fill[0] - before_fill[0]) * frac,
+                        before_fill[1] + (after_fill[1] - before_fill[1]) * frac,
+                        before_fill[2] + (after_fill[2] - before_fill[2]) * frac,
+                        before_fill[3] + (after_fill[3] - before_fill[3]) * frac,
+                    ],
+                    [
+                        before_outline[0] + (after_outline[0] - before_outline[0]) * frac,
+                        before_outline[1] + (after_outline[1] - before_outline[1]) * frac,
+                        before_outline[2] + (after_outline[2] - before_outline[2]) * frac,
+                        before_outline[3] + (after_outline[3] - before_outline[3]) * frac,
+                    ],
+                );
+            } else {
+                // Not yet reached this syllable
+                return (before_fill, before_outline);
+            }
+        }
+        cumulative_ms += syl.duration_cs * 10;
+    }
+    (before_fill, before_outline)
+}
+
+/// Group consecutive segments that share font-affecting properties.
+/// Returns Vec of (start_idx, end_idx) ranges.
+fn group_segments_by_font(segments: &[TagSegment]) -> Vec<(usize, usize)> {
+    if segments.is_empty() {
+        return Vec::new();
+    }
+    let mut groups = Vec::new();
+    let mut start = 0usize;
+    for i in 1..segments.len() {
+        if !font_style_equal(&segments[start].tags, &segments[i].tags) {
+            groups.push((start, i));
+            start = i;
+        }
+    }
+    groups.push((start, segments.len()));
+    groups
 }

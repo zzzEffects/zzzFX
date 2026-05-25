@@ -60,8 +60,15 @@ pub fn try_ass_subtitle_gpu_composite(
 ) -> Result<bool, String> {
     if !GPU_AVAILABLE.load(Ordering::Relaxed)
         || !super::SHARED_GPU_AVAILABLE.load(Ordering::Relaxed)
+        || !super::is_shared_device_ready()
     {
         return Ok(false);
+    }
+
+    // Validate buffer sizes before slicing
+    let needed = (width * height * 4) as usize;
+    if src.len() < needed || dst.len() < needed {
+        return Err("buffer size mismatch".to_string());
     }
 
     let ctx = match get_or_init_gpu() {
@@ -241,7 +248,7 @@ fn create_buffers(device: &wgpu::Device, width: u32, height: u32) -> GpuBuffers 
         dst_buf: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ass_dst"),
             size: buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
         staging_buf: device.create_buffer(&wgpu::BufferDescriptor {

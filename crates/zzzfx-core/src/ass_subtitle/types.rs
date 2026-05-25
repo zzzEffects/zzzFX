@@ -278,6 +278,8 @@ pub struct RenderStats {
     pub glyph_rasterize_ok: usize,
     pub pixels_written: usize,
     pub max_blur_radius: f32,
+    /// Whether GPU compositing was used for the final blend step.
+    pub gpu_composite_used: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -324,34 +326,30 @@ impl DirtyRect {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Glyph cache types (pub(crate))
-// ---------------------------------------------------------------------------
-
-#[derive(Hash, PartialEq, Eq, Clone)]
-pub(crate) struct GlyphCacheKey {
-    pub font_ptr: usize,
-    pub glyph_id: u16,
-    pub scale_x: u32,
-    pub scale_y: u32,
-    pub bold_x: u32,
-}
-
-/// Pre-rasterized glyph coverage data, reusable across frames and events.
-#[derive(Clone)]
-pub(crate) struct CachedGlyph {
-    pub px_bounds_min_x: f32,
-    pub px_bounds_min_y: f32,
-    pub coverage: Vec<(u32, u32, f32)>,
+/// Karaoke syllable timing data for timed character coloring.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct KaraokeSyllable {
+    pub char_start: usize,
+    pub char_end: usize,
+    pub duration_cs: i64,
+    pub kind: KaraokeKind,
 }
 
 /// Precomputed per-event data, keyed by (generation, event pointer address).
 pub(crate) struct CachedEventData {
     pub segments: Vec<TagSegment>,
     pub clean_text: String,
-    pub text_normalized: String,
+    /// Clean text with ASS \N/\n converted to real newlines for the layout engine.
+    pub text_for_layout: String,
     /// Char-to-segment index lookup, built once per event.
     pub char_to_seg: Vec<usize>,
     /// Merged base tags accumulated by sequentially walking all segments.
     pub merged_base_tags: ParsedTags,
+    /// Non-whitespace characters from clean_text, cached for font coverage checks.
+    pub text_chars: Vec<char>,
+    /// Fast hash of clean_text for layout cache keying.
+    pub text_hash: u64,
+    /// Karaoke syllable boundaries (empty if no karaoke tags).
+    pub karaoke_syllables: Vec<KaraokeSyllable>,
 }

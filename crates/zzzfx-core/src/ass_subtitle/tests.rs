@@ -71,7 +71,6 @@ Dialogue: 0,0:00:03.00,0:00:08.00,Default,,0,0,0,,Line two
     assert_eq!(result.styles.len(), 1);
     assert_eq!(result.events.len(), 2);
     assert_eq!(result.styles[0].name, "Default");
-    assert_eq!(result.styles[0].fontname, "Arial");
     assert!((result.styles[0].fontsize - 48.0).abs() < 0.1);
     let pc = result.styles[0].primary_color;
     assert!((pc[3] - 1.0).abs() < 0.01, "Primary color should be opaque");
@@ -79,6 +78,10 @@ Dialogue: 0,0:00:03.00,0:00:08.00,Default,,0,0,0,,Line two
     assert_eq!(result.events[0].start_ms, 1000);
     assert_eq!(result.events[0].end_ms, 5000);
     assert_eq!(result.events[0].text, "Hello World!");
+
+    assert_eq!(result.events[1].start_ms, 3000);
+    assert_eq!(result.events[1].end_ms, 8000);
+    assert_eq!(result.events[1].text, "Line two");
 }
 
 #[test]

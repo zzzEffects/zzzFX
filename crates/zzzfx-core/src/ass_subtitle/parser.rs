@@ -2,8 +2,6 @@
 
 use std::collections::HashMap;
 
-use ass_core::{Script, Section};
-
 use crate::blend::RECIP_255;
 
 use super::types::*;
@@ -12,115 +10,323 @@ use super::types::*;
 // ASS file parser
 // ---------------------------------------------------------------------------
 
-/// Parse an ASS file from a string using `ass-core`.
+/// Parse an ASS file from a string using oximedia-subtitle for structure.
+/// Extracts raw event text with override tags preserved for our tag parser.
 pub fn parse_ass_file(content: &str) -> Result<AssScript, String> {
     let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
-    let script = Script::parse(content).map_err(|e| format!("ASS parse error: {e}"))?;
+    let normalized = content.replace("\r\n", "\n");
 
-    let mut info: HashMap<String, String> = HashMap::new();
-    let mut styles: Vec<OwnedStyle> = Vec::new();
-    let mut events: Vec<OwnedEvent> = Vec::new();
-    let mut play_res_x: Option<u32> = None;
-    let mut play_res_y: Option<u32> = None;
+    // Use oximedia-subtitle for script info + styles parsing
+    let ass_file = oximedia_subtitle::parser::ssa::parse_ass(&normalized)
+        .map_err(|e| format!("ASS parse error: {e}"))?;
 
-    for section in script.sections() {
-        match section {
-            Section::ScriptInfo(si) => {
-                for (k, v) in &si.fields {
-                    let key = *k;
-                    let val = *v;
-                    info.insert(key.to_string(), val.to_string());
-                    if key.eq_ignore_ascii_case("PlayResX") {
-                        play_res_x = val.parse().ok();
-                    } else if key.eq_ignore_ascii_case("PlayResY") {
-                        play_res_y = val.parse().ok();
-                    }
-                }
-            }
-            Section::Styles(ass_styles) => {
-                for s in ass_styles {
-                    styles.push(convert_style(s));
-                }
-            }
-            Section::Events(ass_events) => {
-                for e in ass_events {
-                    if e.is_dialogue() {
-                        events.push(convert_event(e));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    let info = ass_file.script_info;
+    let play_res_x = info.get("PlayResX").and_then(|v| v.parse().ok());
+    let play_res_y = info.get("PlayResY").and_then(|v| v.parse().ok());
+
+    // oximedia's SubtitleStyle has no font_name field — extract from raw ASS ourselves
+    let style_fontnames = parse_style_fontnames(&normalized);
+
+    // Convert oximedia styles to our OwnedStyle
+    let styles: Vec<OwnedStyle> = ass_file
+        .styles
+        .iter()
+        .map(|(name, s)| convert_oximedia_style(name, s, &style_fontnames))
+        .collect();
+
+    // Extract events ourselves to preserve raw text (oximedia strips override tags)
+    let events = parse_events_raw(&normalized, &styles);
 
     Ok(AssScript { info, styles, events, play_res_x, play_res_y })
 }
 
-fn convert_style(s: &ass_core::parser::Style<'_>) -> OwnedStyle {
-    OwnedStyle {
-        name: s.name.to_string(),
-        fontname: s.fontname.to_string(),
-        fontsize: s.fontsize.parse().unwrap_or(48.0),
-        primary_color: ass_color_to_rgba(s.primary_colour),
-        secondary_color: ass_color_to_rgba(s.secondary_colour),
-        outline_color: ass_color_to_rgba(s.outline_colour),
-        back_color: ass_color_to_rgba(s.back_colour),
-        bold: s.bold == "-1" || s.bold == "1",
-        italic: s.italic == "-1" || s.italic == "1",
-        underline: s.underline == "-1" || s.underline == "1",
-        strikeout: s.strikeout == "-1" || s.strikeout == "1",
-        scale_x: s.scale_x.parse().unwrap_or(100.0),
-        scale_y: s.scale_y.parse().unwrap_or(100.0),
-        spacing: s.spacing.parse().unwrap_or(0.0),
-        angle: s.angle.parse().unwrap_or(0.0),
-        border_style: s.border_style.parse().unwrap_or(1),
-        outline: s.outline.parse().unwrap_or(2.0),
-        shadow: s.shadow.parse().unwrap_or(2.0),
-        alignment: s.alignment.parse().unwrap_or(2),
-        margin_l: s.margin_l.parse().unwrap_or(10),
-        margin_r: s.margin_r.parse().unwrap_or(10),
-        margin_v: s.margin_v.parse().unwrap_or(10),
+// ---------------------------------------------------------------------------
+// Raw event extraction (preserves override tags)
+// ---------------------------------------------------------------------------
+
+fn parse_events_raw(content: &str, _styles: &[OwnedStyle]) -> Vec<OwnedEvent> {
+    let mut events = Vec::new();
+    let mut in_events = false;
+    let mut event_format = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        if line.is_empty() || line.starts_with(';') {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') {
+            let section = &line[1..line.len() - 1];
+            in_events = section == "Events";
+            continue;
+        }
+
+        if !in_events {
+            continue;
+        }
+
+        if line.starts_with("Format:") {
+            event_format = parse_format_line(line);
+        } else if line.starts_with("Dialogue:") || line.starts_with("Comment:") {
+            // Skip comments
+            if line.starts_with("Comment:") {
+                continue;
+            }
+
+            let content_part = line.strip_prefix("Dialogue:").unwrap_or("");
+            let parts: Vec<&str> = content_part.splitn(event_format.len(), ',').collect();
+
+            let mut field_map: HashMap<String, String> = HashMap::new();
+            for (i, field) in event_format.iter().enumerate() {
+                if let Some(&value) = parts.get(i) {
+                    field_map.insert(field.clone(), value.trim().to_string());
+                }
+            }
+
+            let layer: i32 = field_map.get("Layer").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let start_ms = field_map
+                .get("Start")
+                .and_then(|v| parse_ass_timestamp(v))
+                .unwrap_or(0);
+            let end_ms = field_map
+                .get("End")
+                .and_then(|v| parse_ass_timestamp(v))
+                .unwrap_or(0);
+            let style_name = field_map
+                .get("Style")
+                .cloned()
+                .unwrap_or_else(|| "Default".to_string());
+            let name = field_map.get("Name").cloned().unwrap_or_default();
+            let margin_l: i32 = field_map
+                .get("MarginL")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let margin_r: i32 = field_map
+                .get("MarginR")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let margin_v: i32 = field_map
+                .get("MarginV")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let effect = field_map.get("Effect").cloned().unwrap_or_default();
+
+            // Raw text — keep override tags intact
+            let text = field_map.get("Text").cloned().unwrap_or_default();
+
+            events.push(OwnedEvent {
+                layer,
+                start_ms,
+                end_ms,
+                style_name,
+                name,
+                margin_l,
+                margin_r,
+                margin_v,
+                effect,
+                text,
+            });
+        }
     }
+
+    events
 }
 
-fn convert_event(e: &ass_core::parser::Event<'_>) -> OwnedEvent {
-    let start_ms = e.start_time_cs().unwrap_or(0) as i64 * 10;
-    let end_ms = e.end_time_cs().unwrap_or(0) as i64 * 10;
-    OwnedEvent {
-        layer: e.layer.parse().unwrap_or(0),
-        start_ms,
-        end_ms,
-        style_name: e.style.to_string(),
-        name: e.name.to_string(),
-        margin_l: e.margin_l.parse().unwrap_or(0),
-        margin_r: e.margin_r.parse().unwrap_or(0),
-        margin_v: e.margin_v.parse().unwrap_or(0),
-        effect: e.effect.to_string(),
-        text: e.text.to_string(),
+fn parse_format_line(line: &str) -> Vec<String> {
+    line.split(':')
+        .nth(1)
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
+/// Parse ASS timestamp (e.g., "0:00:01.00") → milliseconds.
+fn parse_ass_timestamp(ts: &str) -> Option<i64> {
+    let parts: Vec<&str> = ts.split(':').collect();
+    if parts.len() != 3 {
+        return None;
     }
+
+    let hours: i64 = parts[0].parse().ok()?;
+    let minutes: i64 = parts[1].parse().ok()?;
+
+    let sec_parts: Vec<&str> = parts[2].split('.').collect();
+    if sec_parts.len() != 2 {
+        return None;
+    }
+
+    let seconds: i64 = sec_parts[0].parse().ok()?;
+    let centiseconds: i64 = sec_parts[1].parse().ok()?;
+
+    Some(hours * 3600000 + minutes * 60000 + seconds * 1000 + centiseconds * 10)
 }
 
 // ---------------------------------------------------------------------------
-// Color & time parsing
+// Style font name extraction (oximedia's SubtitleStyle has no font_name field)
+// ---------------------------------------------------------------------------
+
+/// Parse [V4+ Styles] section to extract font names per style.
+/// oximedia's SubtitleStyle stores alignment/colors/outline but NOT the font name.
+fn parse_style_fontnames(content: &str) -> HashMap<String, String> {
+    let mut fontnames = HashMap::new();
+    let mut in_styles = false;
+    let mut name_col: Option<usize> = None;
+    let mut font_col: Option<usize> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            let section = &line[1..line.len() - 1];
+            in_styles = section == "V4+ Styles" || section == "V4 Styles";
+            name_col = None;
+            font_col = None;
+            continue;
+        }
+        if !in_styles { continue; }
+
+        if line.starts_with("Format:") {
+            let cols: Vec<&str> = line[7..].split(',').map(|s| s.trim()).collect();
+            name_col = cols.iter().position(|&c| c == "Name");
+            font_col = cols.iter().position(|&c| c == "Fontname");
+        } else if line.starts_with("Style:") {
+            let parts: Vec<&str> = line[6..].split(',').collect();
+            let name = name_col.and_then(|c| parts.get(c)).map(|s| s.trim().to_string());
+            let fontname = font_col.and_then(|c| parts.get(c)).map(|s| s.trim().to_string());
+            if let (Some(n), Some(f)) = (name, fontname) {
+                fontnames.insert(n, f);
+            }
+        }
+    }
+    fontnames
+}
+
+// ---------------------------------------------------------------------------
+// oximedia-subtitle type conversions
+// ---------------------------------------------------------------------------
+
+use oximedia_subtitle::style::{Color, SubtitleStyle};
+
+fn convert_oximedia_style(name: &str, s: &SubtitleStyle, fontnames: &HashMap<String, String>) -> OwnedStyle {
+    use oximedia_subtitle::style::FontWeight;
+    let bold = matches!(s.font_weight, FontWeight::Bold | FontWeight::ExtraBold | FontWeight::Black);
+    let italic = matches!(s.font_style, oximedia_subtitle::style::FontStyle::Italic);
+
+    OwnedStyle {
+        name: name.to_string(),
+        fontname: fontnames.get(name).cloned().unwrap_or_else(|| "Arial".to_string()),
+        fontsize: s.font_size,
+        primary_color: oxi_color_to_rgba(s.primary_color),
+        secondary_color: oxi_color_to_rgba(s.secondary_color),
+        outline_color: s
+            .outline
+            .as_ref()
+            .map(|o| oxi_color_to_rgba(o.color))
+            .unwrap_or([0.0, 0.0, 0.0, 1.0]),
+        back_color: s
+            .shadow
+            .as_ref()
+            .map(|sh| oxi_color_to_rgba(sh.color))
+            .unwrap_or([0.0, 0.0, 0.0, 1.0]),
+        bold,
+        italic,
+        underline: false,
+        strikeout: false,
+        scale_x: 100.0,
+        scale_y: 100.0,
+        spacing: 0.0,
+        angle: 0.0,
+        border_style: 1,
+        outline: s.outline.as_ref().map(|o| o.width).unwrap_or(2.0),
+        shadow: s.shadow.as_ref().map(|sh| sh.offset_x.max(sh.offset_y)).unwrap_or(2.0),
+        alignment: convert_oxi_alignment(s.alignment, s.vertical_alignment),
+        margin_l: s.margin_left as i32,
+        margin_r: s.margin_right as i32,
+        margin_v: s.margin_bottom as i32,
+    }
+}
+
+fn convert_oxi_alignment(
+    h: oximedia_subtitle::style::Alignment,
+    v: oximedia_subtitle::style::VerticalAlignment,
+) -> i32 {
+    use oximedia_subtitle::style::{Alignment, VerticalAlignment};
+    match (h, v) {
+        (Alignment::Left, VerticalAlignment::Bottom) => 1,
+        (Alignment::Center, VerticalAlignment::Bottom) => 2,
+        (Alignment::Right, VerticalAlignment::Bottom) => 3,
+        (Alignment::Left, VerticalAlignment::Middle) => 4,
+        (Alignment::Center, VerticalAlignment::Middle) => 5,
+        (Alignment::Right, VerticalAlignment::Middle) => 6,
+        (Alignment::Left, VerticalAlignment::Top) => 7,
+        (Alignment::Center, VerticalAlignment::Top) => 8,
+        (Alignment::Right, VerticalAlignment::Top) => 9,
+    }
+}
+
+fn oxi_color_to_rgba(c: Color) -> [f32; 4] {
+    [
+        c.r as f32 * RECIP_255,
+        c.g as f32 * RECIP_255,
+        c.b as f32 * RECIP_255,
+        c.a as f32 * RECIP_255,
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// Color parsing
 // ---------------------------------------------------------------------------
 
 /// Parse ASS color `&HAABBGGRR` → `[r, g, b, a]` normalized 0..1.
 /// ASS alpha is inverted: `&H00` = opaque, `&HFF` = transparent.
 pub fn ass_color_to_rgba(hex: &str) -> [f32; 4] {
-    match ass_core::utils::parse_bgr_color(hex) {
-        Ok([r, g, b, a_byte]) => {
-            let a = 1.0 - a_byte as f32 * RECIP_255;
-            [r as f32 * RECIP_255, g as f32 * RECIP_255, b as f32 * RECIP_255, a]
-        }
-        Err(_) => [1.0, 1.0, 1.0, 1.0],
+    let hex = hex
+        .trim()
+        .trim_start_matches("&H")
+        .trim_start_matches("&h")
+        .trim_end_matches('&');
+
+    if hex.len() < 6 {
+        return [1.0, 1.0, 1.0, 1.0];
     }
+
+    // ASS colors: &HAABBGGRR — reversed byte order
+    let parse_byte = |start: usize| -> Option<u8> {
+        u8::from_str_radix(hex.get(start..start + 2)?, 16).ok()
+    };
+
+    // Alpha: first 2 chars if 8-char hex (AA in &HAABBGGRR); for 6-char, default 0x00 = opaque
+    let alpha = if hex.len() >= 8 {
+        parse_byte(0).unwrap_or(0x00)
+    } else {
+        0x00
+    };
+
+    // Take last 6 chars for BGR
+    let color_part = if hex.len() >= 6 {
+        &hex[hex.len() - 6..]
+    } else {
+        hex
+    };
+
+    let bb = u8::from_str_radix(&color_part[0..2], 16).unwrap_or(0xFF);
+    let gg = u8::from_str_radix(&color_part[2..4], 16).unwrap_or(0xFF);
+    let rr = u8::from_str_radix(&color_part[4..6], 16).unwrap_or(0xFF);
+
+    let a = 1.0 - alpha as f32 * RECIP_255;
+    [
+        rr as f32 * RECIP_255,
+        gg as f32 * RECIP_255,
+        bb as f32 * RECIP_255,
+        a,
+    ]
 }
 
 /// Parse ASS time `H:MM:SS.cc` → milliseconds.
-/// Uses `ass_core::utils::parse_ass_time` (returns centiseconds) and converts to ms.
 #[allow(dead_code)]
 pub(crate) fn parse_ass_time(s: &str) -> i64 {
-    ass_core::utils::parse_ass_time(s).unwrap_or(0) as i64 * 10
+    parse_ass_timestamp(s).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -803,8 +1009,6 @@ fn reset_all_tags(tags: &mut ParsedTags) {
     tags.karaoke = None;
     tags.drawing_scale = None;
     tags.reset = false;
-    // Note: reset_style is intentionally NOT cleared here — named \r
-    // keeps its style name for the renderer to resolve.
 }
 
 // ---------------------------------------------------------------------------

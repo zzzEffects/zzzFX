@@ -93,7 +93,7 @@ pub(crate) fn direct_composite_max(output: &mut [u8], idx: usize, color: [f32; 4
 }
 
 /// Direct source-over composite with fast transparent-dst path.
-/// `coverage` is ab_glyph coverage in 0..=1.
+/// `coverage` is alpha coverage in 0..=1.
 #[inline]
 pub(crate) fn direct_composite(output: &mut [u8], idx: usize, color: [f32; 4], coverage: f32) {
     let alpha = coverage;

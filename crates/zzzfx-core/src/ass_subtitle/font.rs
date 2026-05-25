@@ -1,7 +1,10 @@
 //! System font enumeration and caching.
+//!
+//! Uses font-kit for system font discovery and oximedia-subtitle's `Font`
+//! (fontdue-backed) for glyph rasterization.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use font_kit::handle::Handle as FkHandle;
 use font_kit::source::SystemSource;
@@ -11,14 +14,14 @@ use font_kit::source::SystemSource;
 // ---------------------------------------------------------------------------
 
 pub(crate) struct FontEntry {
-    family_name: String,
-    full_name: String,
-    postscript_name: String,
-    handle: FkHandle,
+    pub family_name: String,
+    pub full_name: String,
+    pub postscript_name: String,
+    pub handle: FkHandle,
 }
 
 /// Global cache of all installed font entries, built once per process.
-static GLOBAL_FONT_ENTRIES: std::sync::OnceLock<Vec<FontEntry>> = std::sync::OnceLock::new();
+static GLOBAL_FONT_ENTRIES: OnceLock<Vec<FontEntry>> = OnceLock::new();
 
 pub(crate) fn global_font_entries() -> &'static [FontEntry] {
     GLOBAL_FONT_ENTRIES.get_or_init(|| {
@@ -47,44 +50,50 @@ pub(crate) fn global_font_entries() -> &'static [FontEntry] {
 // ---------------------------------------------------------------------------
 
 pub struct FontCache {
+    /// Loaded raw font bytes keyed by font full name (lowercase).
     loaded: Mutex<HashMap<String, Arc<Vec<u8>>>>,
+    /// Memoized font name -> matching indices.
+    matching_cache: Mutex<HashMap<String, Arc<Vec<usize>>>>,
+    /// Per-character glyph coverage cache: (font_full_name, char) -> has_glyph.
+    coverage_cache: Mutex<HashMap<(String, char), bool>>,
 }
 
 impl FontCache {
     pub fn new() -> Self {
         Self {
             loaded: Mutex::new(HashMap::new()),
+            matching_cache: Mutex::new(HashMap::new()),
+            coverage_cache: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Try to match a font name against known variants (exact match, case-insensitive).
     fn matches_name_exact(entry: &FontEntry, q: &str) -> bool {
         entry.family_name == q || entry.full_name == q || entry.postscript_name == q
     }
 
-    /// Lazy-load raw font data for an entry via interior mutability.
+    /// Load raw font data for an entry.
     fn load_font_data(&self, entry: &FontEntry) -> Option<Arc<Vec<u8>>> {
         let key = &entry.full_name;
         {
-            let loaded = self.loaded.lock().unwrap();
+            let loaded = self.loaded.lock().ok()?;
             if let Some(data) = loaded.get(key) {
                 return Some(Arc::clone(data));
             }
         }
         if let Ok(font) = entry.handle.load() {
             if let Some(data) = font.copy_font_data() {
+                let arc: Arc<Vec<u8>> = Arc::new(data.to_vec());
                 self.loaded
                     .lock()
                     .unwrap()
-                    .insert(key.clone(), Arc::clone(&data));
-                return Some(data);
+                    .insert(key.clone(), Arc::clone(&arc));
+                return Some(arc);
             }
         }
         None
     }
 
-    /// Look up entries matching a font name query, returning indices into global list.
-    fn find_matching_indices(font_name: &str) -> Vec<usize> {
+    fn find_matching_indices_inner(font_name: &str) -> Vec<usize> {
         let entries = global_font_entries();
         let q = font_name.to_lowercase();
         let mut indices = Vec::new();
@@ -116,10 +125,68 @@ impl FontCache {
         indices
     }
 
-    /// Find a font by name.
-    pub fn find_font(&self, font_name: &str) -> Option<Arc<Vec<u8>>> {
+    /// Memoized version of find_matching_indices_inner.
+    fn find_matching_indices(&self, font_name: &str) -> Arc<Vec<usize>> {
+        let q = font_name.to_lowercase();
+        if let Ok(cache) = self.matching_cache.lock() {
+            if let Some(hit) = cache.get(&q) {
+                return Arc::clone(hit);
+            }
+        }
+        let result = Arc::new(Self::find_matching_indices_inner(&q));
+        if let Ok(mut cache) = self.matching_cache.lock() {
+            cache.insert(q, Arc::clone(&result));
+        }
+        result
+    }
+
+    /// Check if a char has a glyph in the font, with caching.
+    fn char_has_glyph(&self, font_name: &str, c: char) -> bool {
+        let key = (font_name.to_string(), c);
+        if let Ok(cache) = self.coverage_cache.lock() {
+            if let Some(&has) = cache.get(&key) {
+                return has;
+            }
+        }
+        // Load font and check — expensive, done once per (font, char) pair
         let entries = global_font_entries();
-        for idx in Self::find_matching_indices(font_name) {
+        let q = font_name.to_lowercase();
+        let has = entries
+            .iter()
+            .find(|e| e.full_name == q)
+            .and_then(|e| e.handle.load().ok())
+            .map_or(false, |f| f.glyph_for_char(c).map_or(false, |gid| gid != 0));
+        if let Ok(mut cache) = self.coverage_cache.lock() {
+            cache.insert(key, has);
+        }
+        has
+    }
+
+    /// Find a font by name, optionally preferring a bold/italic variant.
+    /// Returns raw font bytes.
+    pub(crate) fn find_font(
+        &self,
+        font_name: &str,
+        bold: bool,
+        italic: bool,
+    ) -> Option<Arc<Vec<u8>>> {
+        // Try bold/italic variant names first
+        if bold || italic {
+            for variant in build_variant_names(font_name, bold, italic) {
+                if let Some(data) = self.try_load_by_name(&variant) {
+                    return Some(data);
+                }
+            }
+        }
+        // Fall back to the base font name
+        self.try_load_by_name(font_name)
+    }
+
+    /// Try to load a font by name using the matching index cache.
+    fn try_load_by_name(&self, name: &str) -> Option<Arc<Vec<u8>>> {
+        let entries = global_font_entries();
+        let indices = self.find_matching_indices(name);
+        for &idx in indices.iter() {
             if let Some(data) = self.load_font_data(&entries[idx]) {
                 return Some(data);
             }
@@ -128,10 +195,12 @@ impl FontCache {
     }
 
     /// Find a font that covers all given characters, preferring `preferred_name`.
-    pub fn find_font_for_chars(
+    pub(crate) fn find_font_for_chars(
         &self,
         chars: &[char],
         preferred_name: &str,
+        bold: bool,
+        italic: bool,
     ) -> Option<Arc<Vec<u8>>> {
         if chars.is_empty() {
             return None;
@@ -139,28 +208,45 @@ impl FontCache {
         let entries = global_font_entries();
         let q = preferred_name.to_lowercase();
 
-        // Try preferred name first
+        // Helper: check if an entry covers all chars
+        let covers_all = |entry: &FontEntry| {
+            chars.iter().all(|&c| self.char_has_glyph(&entry.full_name, c))
+        };
+
+        // Try preferred name first — exact match, including style variants
         for entry in entries {
             if Self::matches_name_exact(entry, &q) {
-                if let Some(data) = self.load_font_data(entry) {
-                    if let Ok(font) = entry.handle.load() {
-                        if chars.iter().all(|&c| font.glyph_for_char(c).is_some()) {
-                            return Some(data);
-                        }
-                    }
+                if covers_all(entry) {
+                    return self.load_font_data(entry);
                 }
                 break;
             }
         }
 
-        // Scan all fonts for best coverage
+        // If bold/italic requested, try style variants of the preferred font
+        if bold || italic {
+            for variant in build_variant_names(preferred_name, bold, italic) {
+                if let Some(data) = self.find_font(&variant, false, false)
+                    .filter(|_| {
+                        // Check coverage of the variant font
+                        entries
+                            .iter()
+                            .find(|e| e.full_name == variant.to_lowercase())
+                            .map_or(false, |entry| covers_all(entry))
+                    })
+                {
+                    return Some(data);
+                }
+            }
+        }
+
+        // Scan all fonts for best coverage (use coverage cache)
         let mut best: Option<(Arc<Vec<u8>>, usize)> = None;
         for entry in entries {
-            if let Ok(font) = entry.handle.load() {
-                let covered = chars
-                    .iter()
-                    .filter(|&&c| font.glyph_for_char(c).is_some())
-                    .count();
+            let covered = chars
+                .iter()
+                .filter(|&&c| self.char_has_glyph(&entry.full_name, c))
+                .count();
                 if covered == chars.len() {
                     return self.load_font_data(entry);
                 }
@@ -177,53 +263,8 @@ impl FontCache {
                     }
                     _ => {}
                 }
-            }
         }
         best.map(|(d, _)| d)
-    }
-
-    /// Find a font for a single character.
-    pub fn find_font_for_char(&self, ch: char, preferred_name: &str) -> Option<Arc<Vec<u8>>> {
-        let entries = global_font_entries();
-        let q = preferred_name.to_lowercase();
-        for entry in entries {
-            if Self::matches_name_exact(entry, &q) {
-                if let Ok(font) = entry.handle.load() {
-                    if font.glyph_for_char(ch).is_some() {
-                        return self.load_font_data(entry);
-                    }
-                }
-            }
-        }
-        for entry in entries {
-            if let Ok(font) = entry.handle.load() {
-                if font.glyph_for_char(ch).is_some() {
-                    return self.load_font_data(entry);
-                }
-            }
-        }
-        None
-    }
-
-    /// Group characters by Unicode script and find the best font for each group.
-    pub fn find_fonts_for_chars_grouped(
-        &self,
-        chars: &[char],
-        preferred_name: &str,
-    ) -> HashMap<String, Option<Arc<Vec<u8>>>> {
-        let mut groups: HashMap<String, Vec<char>> = HashMap::new();
-        for &c in chars {
-            groups
-                .entry(script_group(c).to_string())
-                .or_default()
-                .push(c);
-        }
-        let mut result = HashMap::new();
-        for (script, group_chars) in &groups {
-            let font = self.find_font_for_chars(group_chars, preferred_name);
-            result.insert(script.clone(), font);
-        }
-        result
     }
 
     /// List all installed font names (sorted, deduplicated).
@@ -236,50 +277,27 @@ impl FontCache {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Unicode script classifier
-// ---------------------------------------------------------------------------
-
-/// Classify a character into a Unicode script group for font fallback purposes.
-fn script_group(c: char) -> &'static str {
-    if c <= '\u{007F}' {
-        return "Latin";
+/// Build a prioritized list of variant names for bold/italic font lookup.
+/// E.g. for "Arial" + bold → ["Arial Bold", "Arial-Bold", "ArialBold"]
+fn build_variant_names(base: &str, bold: bool, italic: bool) -> Vec<String> {
+    let mut names = Vec::new();
+    match (bold, italic) {
+        (true, false) => {
+            names.push(format!("{base} Bold"));
+            names.push(format!("{base}-Bold"));
+            names.push(format!("{base}Bold"));
+        }
+        (false, true) => {
+            names.push(format!("{base} Italic"));
+            names.push(format!("{base}-Italic"));
+            names.push(format!("{base}Italic"));
+        }
+        (true, true) => {
+            names.push(format!("{base} Bold Italic"));
+            names.push(format!("{base}-BoldItalic"));
+            names.push(format!("{base} BoldItalic"));
+        }
+        (false, false) => {}
     }
-    if ('\u{4E00}'..='\u{9FFF}').contains(&c) {
-        return "CJK";
-    }
-    if ('\u{3400}'..='\u{4DBF}').contains(&c) {
-        return "CJK";
-    }
-    if ('\u{F900}'..='\u{FAFF}').contains(&c) {
-        return "CJK";
-    }
-    if ('\u{3040}'..='\u{309F}').contains(&c) {
-        return "Hiragana";
-    }
-    if ('\u{30A0}'..='\u{30FF}').contains(&c) {
-        return "Katakana";
-    }
-    if ('\u{AC00}'..='\u{D7AF}').contains(&c) {
-        return "Hangul";
-    }
-    if ('\u{0600}'..='\u{06FF}').contains(&c) {
-        return "Arabic";
-    }
-    if ('\u{0E00}'..='\u{0E7F}').contains(&c) {
-        return "Thai";
-    }
-    if ('\u{0400}'..='\u{04FF}').contains(&c) {
-        return "Cyrillic";
-    }
-    if ('\u{0370}'..='\u{03FF}').contains(&c) {
-        return "Greek";
-    }
-    if ('\u{0590}'..='\u{05FF}').contains(&c) {
-        return "Hebrew";
-    }
-    if ('\u{0900}'..='\u{097F}').contains(&c) {
-        return "Devanagari";
-    }
-    "Other"
+    names
 }

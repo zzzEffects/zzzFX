@@ -1,7 +1,7 @@
 //! ASS/SSA subtitle parser and renderer.
 //!
-//! Parses `.ass` files via `ass-core`, resolves styles and override tags, then
-//! rasterizes subtitle text using `ab_glyph` onto an RGBA8 output buffer.
+//! Parses `.ass` files via `oximedia-subtitle`, resolves styles and override tags,
+//! then rasterizes subtitle text using fontdue onto an RGBA8 output buffer.
 
 pub mod types;
 pub mod parser;
@@ -10,7 +10,6 @@ pub mod render;
 pub mod cache;
 pub mod composite;
 
-mod outline;
 mod transform;
 
 // Re-export all public types

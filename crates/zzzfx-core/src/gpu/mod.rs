@@ -1,3 +1,4 @@
+pub mod ass_glyph;
 pub mod ass_subtitle;
 pub mod repeater;
 pub mod sprite_sheet;
@@ -69,6 +70,15 @@ pub(crate) fn get_or_init_shared_device() -> Result<(&'static wgpu::Device, &'st
     let _ = SHARED_QUEUE.set(queue);
 
     Ok((SHARED_DEVICE.get().unwrap(), SHARED_QUEUE.get().unwrap()))
+}
+
+/// Check if the shared GPU device is already initialized WITHOUT attempting to create one.
+/// Safe to call from any context (including VEGAS Pro plugin host) — does not block,
+/// does not create resources. Returns false if GPU init was never triggered.
+pub(crate) fn is_shared_device_ready() -> bool {
+    SHARED_GPU_AVAILABLE.load(Ordering::Relaxed)
+        && SHARED_DEVICE.get().is_some()
+        && SHARED_QUEUE.get().is_some()
 }
 
 // ---------------------------------------------------------------------------
