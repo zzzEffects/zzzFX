@@ -398,6 +398,59 @@ i18n_keys! {
 
         ParamAssUseNativeSize = "Use Generator Frame Size";
         ParamAssUseNativeSizeDesc = "When enabled, subtitles are rendered at the generator's output size. When disabled, ASS PlayRes is used for coordinate mapping to preserve original layout.";
+
+        // ── ASCII Art: effect labels ──────────────────
+        EffectAsciiArtName = "zzzFX ASCII Art";
+        EffectAsciiArtDesc = "Converts input into ASCII art style by mapping luminance to character glyphs in a configurable grid.";
+
+        // ── ASCII Art: native param labels & hints ─────
+        NativeAsciiFontChoice = "Font";
+        NativeAsciiFontChoiceHint = "Select a monospace font for character rendering.";
+        NativeAsciiFontAutoDetect = "Auto-detect";
+        NativeAsciiCustomChars = "Custom Characters";
+        NativeAsciiCustomCharsHint = "Characters ordered from darkest to lightest. Only used when Character Set is 'Custom'.";
+
+        // ── ASCII Art: generic param labels ────────────
+        ParamAsciiCharSetGroup = "Character Set";
+        ParamAsciiCharSetGroupDesc = "Select which character categories to include in the ASCII art output.";
+        ParamAsciiUseSymbols = "Symbols";
+        ParamAsciiUseSymbolsDesc = "Include ASCII symbols (@%#*+=-:. ).";
+        ParamAsciiUseNumbers = "Numbers";
+        ParamAsciiUseNumbersDesc = "Include digits (9876543210).";
+        ParamAsciiUseChinese = "Chinese";
+        ParamAsciiUseChineseDesc = "Include Chinese characters ordered by visual density.";
+        ParamAsciiUseKatakana = "Katakana";
+        ParamAsciiUseKatakanaDesc = "Include Japanese katakana characters.";
+        ParamAsciiUseHiragana = "Hiragana";
+        ParamAsciiUseHiraganaDesc = "Include Japanese hiragana characters.";
+        ParamAsciiUseKorean = "Korean";
+        ParamAsciiUseKoreanDesc = "Include Korean Hangul characters.";
+        ParamAsciiUseCustom = "Custom";
+        ParamAsciiUseCustomDesc = "Include user-defined custom characters.";
+        ParamAsciiFontSize = "Font Size";
+        ParamAsciiFontSizeDesc = "Cell size in pixels. Larger values produce fewer, larger characters.";
+        ParamAsciiBrightness = "Brightness";
+        ParamAsciiBrightnessDesc = "Pre-mapping brightness adjustment. 0.5 is neutral, 0 = darker, 1 = brighter.";
+        ParamAsciiContrast = "Contrast";
+        ParamAsciiContrastDesc = "Pre-mapping contrast adjustment. 0.5 is neutral, 0 = flat, 1 = maximum contrast.";
+        ParamAsciiInvertLuma = "Invert Luminance";
+        ParamAsciiInvertLumaDesc = "When enabled, dark source areas map to light characters and vice versa.";
+        ParamAsciiColorMode = "Color Mode";
+        ParamAsciiColorModeDesc = "How to color the output characters.";
+        ParamAsciiBackgroundAlpha = "Background Opacity";
+        ParamAsciiBackgroundAlphaDesc = "Opacity of cell backgrounds. 0 = transparent, 1 = solid black.";
+        ParamAsciiFontName = "Font Name";
+        ParamAsciiFontNameDesc = "Name of the system monospace font to use. Leave empty for auto-detection.";
+        ParamAsciiCustomChars = "Custom Characters";
+        ParamAsciiCustomCharsDesc = "Characters ordered from darkest to lightest. Only used when Character Set is 'Custom'.";
+
+        // ── ASCII Art: color mode menu items ───────────
+        MenuAsciiGrayscale = "Grayscale";
+        MenuAsciiGrayscaleDesc = "White characters on a black background.";
+        MenuAsciiColored = "Colored";
+        MenuAsciiColoredDesc = "Characters retain the average color of their source region.";
+        MenuAsciiGreenTerminal = "Green Terminal";
+        MenuAsciiGreenTerminalDesc = "Green characters on a black background, classic terminal style.";
     }
 }
 

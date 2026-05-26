@@ -10,18 +10,19 @@ mod stroke;
 mod repeater;
 mod sprite_sheet;
 mod ass_subtitle;
+mod ascii_art;
 
 use std::{ffi::c_int, ptr};
 
 use crate::bindings::*;
 
 // ---------------------------------------------------------------------------
-// Global entry points — one DLL, four effects
+// Global entry points — one DLL, five effects
 // ---------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    4
+    5
 }
 
 #[unsafe(no_mangle)]
@@ -31,6 +32,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         1 => repeater::get_plugin(),
         2 => sprite_sheet::get_plugin(),
         3 => ass_subtitle::get_plugin(),
+        4 => ascii_art::get_plugin(),
         _ => ptr::null(),
     }
 }

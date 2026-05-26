@@ -4322,6 +4322,7 @@ dependencies = [
  "effect-settings",
  "example-effect-macros",
  "font-kit",
+ "fontdue",
  "image",
  "num_enum",
  "oximedia-subtitle",

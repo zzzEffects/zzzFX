@@ -347,5 +347,58 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
 
         TrKey::ParamAssUseNativeSize => c"使用生成器的帧大小",
         TrKey::ParamAssUseNativeSizeDesc => c"启用时，字幕以生成器的输出大小渲染。禁用时，使用ASS PlayRes进行坐标映射，保持原始布局。",
+
+        // ── ASCII Art: effect labels ──────────────────
+        TrKey::EffectAsciiArtName => c"zzzFX ASCII 艺术",
+        TrKey::EffectAsciiArtDesc => c"通过将亮度映射到可配置网格中的字符字形，将输入转换为 ASCII 艺术风格。",
+
+        // ── ASCII Art: native param labels & hints ─────
+        TrKey::NativeAsciiFontChoice => c"字体",
+        TrKey::NativeAsciiFontChoiceHint => c"选择用于字符渲染的等宽字体。",
+        TrKey::NativeAsciiFontAutoDetect => c"自动检测",
+        TrKey::NativeAsciiCustomChars => c"自定义字符集",
+        TrKey::NativeAsciiCustomCharsHint => c"从暗到亮排列的字符。仅在字符集为「自定义」时使用。",
+
+        // ── ASCII Art: generic param labels ────────────
+        TrKey::ParamAsciiCharSetGroup => c"字符集",
+        TrKey::ParamAsciiCharSetGroupDesc => c"选择要包含在 ASCII 艺术输出中的字符类别。",
+        TrKey::ParamAsciiUseSymbols => c"符号",
+        TrKey::ParamAsciiUseSymbolsDesc => c"包含 ASCII 符号（@%#*+=-:. ）。",
+        TrKey::ParamAsciiUseNumbers => c"数字",
+        TrKey::ParamAsciiUseNumbersDesc => c"包含数字（9876543210）。",
+        TrKey::ParamAsciiUseChinese => c"汉字",
+        TrKey::ParamAsciiUseChineseDesc => c"包含按视觉密度排序的中文字符。",
+        TrKey::ParamAsciiUseKatakana => c"片假名",
+        TrKey::ParamAsciiUseKatakanaDesc => c"包含日文片假名字符。",
+        TrKey::ParamAsciiUseHiragana => c"平假名",
+        TrKey::ParamAsciiUseHiraganaDesc => c"包含日文平假名字符。",
+        TrKey::ParamAsciiUseKorean => c"韩文",
+        TrKey::ParamAsciiUseKoreanDesc => c"包含韩文谚文字符。",
+        TrKey::ParamAsciiUseCustom => c"自定义",
+        TrKey::ParamAsciiUseCustomDesc => c"包含用户自定义字符。",
+        TrKey::ParamAsciiFontSize => c"字体大小",
+        TrKey::ParamAsciiFontSizeDesc => c"单元格像素大小。值越大，字符越少、越大。",
+        TrKey::ParamAsciiBrightness => c"亮度",
+        TrKey::ParamAsciiBrightnessDesc => c"映射前的亮度调整。0.5 为中性，0 = 更暗，1 = 更亮。",
+        TrKey::ParamAsciiContrast => c"对比度",
+        TrKey::ParamAsciiContrastDesc => c"映射前的对比度调整。0.5 为中性，0 = 平坦，1 = 最大对比度。",
+        TrKey::ParamAsciiInvertLuma => c"反转亮度",
+        TrKey::ParamAsciiInvertLumaDesc => c"启用后，暗色源区域映射到亮色字符，反之亦然。",
+        TrKey::ParamAsciiColorMode => c"颜色模式",
+        TrKey::ParamAsciiColorModeDesc => c"输出字符的着色方式。",
+        TrKey::ParamAsciiBackgroundAlpha => c"背景不透明度",
+        TrKey::ParamAsciiBackgroundAlphaDesc => c"单元格背景的不透明度。0 = 透明，1 = 纯黑。",
+        TrKey::ParamAsciiFontName => c"字体名称",
+        TrKey::ParamAsciiFontNameDesc => c"要使用的系统等宽字体名称。留空则自动检测。",
+        TrKey::ParamAsciiCustomChars => c"自定义字符集",
+        TrKey::ParamAsciiCustomCharsDesc => c"从暗到亮排列的字符。仅在字符集为「自定义」时使用。",
+
+        // ── ASCII Art: color mode menu items ────────────
+        TrKey::MenuAsciiGrayscale => c"灰度",
+        TrKey::MenuAsciiGrayscaleDesc => c"黑底白字。",
+        TrKey::MenuAsciiColored => c"彩色",
+        TrKey::MenuAsciiColoredDesc => c"字符保留源区域的平均颜色。",
+        TrKey::MenuAsciiGreenTerminal => c"绿色终端",
+        TrKey::MenuAsciiGreenTerminalDesc => c"黑底绿字，经典终端风格。",
     }
 }

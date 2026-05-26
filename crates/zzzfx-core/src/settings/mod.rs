@@ -1,3 +1,4 @@
+pub mod ascii_art;
 pub mod ass_subtitle;
 pub mod repeater;
 pub mod sprite_sheet;

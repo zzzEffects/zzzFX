@@ -20,6 +20,9 @@ use zzzfx_core::{CompositorLayer, ZzzRepeater, ZzzRepeaterFullSettings, settings
 #[cfg(feature = "effect-sprite-sheet")]
 use zzzfx_core::{ZzzSpriteSheet, ZzzSpriteSheetFullSettings, settings::SettingsList as SpriteSheetSettingsList};
 
+#[cfg(feature = "effect-ascii-art")]
+use zzzfx_core::{ZzzAsciiArt, ZzzAsciiArtFullSettings, settings::SettingsList as AsciiArtSettingsList};
+
 // ---------------------------------------------------------------------------
 // Plugin struct
 // ---------------------------------------------------------------------------
@@ -31,6 +34,8 @@ struct Plugin {
     settings: RepeaterSettingsList<ZzzRepeaterFullSettings>,
     #[cfg(feature = "effect-sprite-sheet")]
     settings: SpriteSheetSettingsList<ZzzSpriteSheetFullSettings>,
+    #[cfg(feature = "effect-ascii-art")]
+    settings: AsciiArtSettingsList<ZzzAsciiArtFullSettings>,
 }
 
 impl Default for Plugin {
@@ -42,6 +47,8 @@ impl Default for Plugin {
             settings: RepeaterSettingsList::<ZzzRepeaterFullSettings>::new(),
             #[cfg(feature = "effect-sprite-sheet")]
             settings: SpriteSheetSettingsList::<ZzzSpriteSheetFullSettings>::new(),
+            #[cfg(feature = "effect-ascii-art")]
+            settings: AsciiArtSettingsList::<ZzzAsciiArtFullSettings>::new(),
         }
     }
 }
@@ -81,6 +88,12 @@ impl AdobePluginGlobal for Plugin {
             let legacy = ZzzSpriteSheetFullSettings::legacy_value();
             map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
         }
+        #[cfg(feature = "effect-ascii-art")]
+        {
+            let defaults = ZzzAsciiArtFullSettings::default();
+            let legacy = ZzzAsciiArtFullSettings::legacy_value();
+            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
+        }
         Ok(())
     }
 
@@ -105,6 +118,8 @@ impl AdobePluginGlobal for Plugin {
                 #[cfg(feature = "effect-repeater")]
                 update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
                 #[cfg(feature = "effect-sprite-sheet")]
+                update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
+                #[cfg(feature = "effect-ascii-art")]
                 update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
             }
             Command::GetFlattenedSequenceData => {}
@@ -144,6 +159,11 @@ impl Plugin {
         let (name, desc) = (
             i18n::tr(TrKey::EffectSpritesheetName),
             i18n::tr(TrKey::EffectSpritesheetDesc),
+        );
+        #[cfg(feature = "effect-ascii-art")]
+        let (name, desc) = (
+            i18n::tr(TrKey::EffectAsciiArtName),
+            i18n::tr(TrKey::EffectAsciiArtDesc),
         );
 
         out_data.set_return_msg(
@@ -260,6 +280,30 @@ impl Plugin {
         _params: &mut Parameters<ParamID>,
     ) -> Result<(), Error> {
         Err(Error::BadCallbackParameter)
+    }
+
+    #[cfg(feature = "effect-ascii-art")]
+    fn do_render(
+        &self,
+        in_layer: Layer,
+        mut out_layer: Layer,
+        params: &mut Parameters<ParamID>,
+    ) -> Result<(), Error> {
+        let mut full_settings = ZzzAsciiArtFullSettings::default();
+        apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
+        let effect: ZzzAsciiArt = (&full_settings).into();
+
+        let width = in_layer.width().min(out_layer.width()) as usize;
+        let height = in_layer.height().min(out_layer.height()) as usize;
+        let total = width * height * 4;
+
+        let mut src_buf = vec![0u8; total];
+        let mut dst_buf = vec![0u8; total];
+
+        copy_layer_to_contiguous(&in_layer, &mut src_buf, width, height);
+        effect.apply_effect(&src_buf, &mut dst_buf, width, height);
+        copy_contiguous_to_layer(&dst_buf, &mut out_layer, width, height);
+        Ok(())
     }
 }
 

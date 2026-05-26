@@ -12,6 +12,7 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 rotsprite = "0.1.4"
 font-kit = "0.14.3"
+fontdue = "0.9"
 oximedia-subtitle = "0.1.7"
 rayon = "1.10"
 wgpu = { version = "29", features = ["wgsl"] }
