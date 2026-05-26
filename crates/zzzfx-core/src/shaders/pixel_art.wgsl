@@ -21,7 +21,10 @@ struct Uniforms {
     dither_amount: f32,
     show_grid: u32,        // bool
     grid_thickness: f32,
-    grid_opacity: f32,
+    grid_color_r: f32,
+    grid_color_g: f32,
+    grid_color_b: f32,
+    grid_color_a: f32,
     contrast: f32,
     saturation: f32,
     _pad: u32,
@@ -151,10 +154,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let is_grid = f32(local_x) >= f32(cell_w) - grid_px_w
                    || f32(local_y) >= f32(cell_h) - grid_px_h;
         if is_grid {
-            let gw = uniforms.grid_opacity;
-            avg_r = avg_r * (1.0 - gw);
-            avg_g = avg_g * (1.0 - gw);
-            avg_b = avg_b * (1.0 - gw);
+            let ga = uniforms.grid_color_a;
+            avg_r = avg_r * (1.0 - ga) + uniforms.grid_color_r * ga;
+            avg_g = avg_g * (1.0 - ga) + uniforms.grid_color_g * ga;
+            avg_b = avg_b * (1.0 - ga) + uniforms.grid_color_b * ga;
         }
     }
 

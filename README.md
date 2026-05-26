@@ -133,6 +133,56 @@ fn my_effect_works() {
 The `ae-plugin/tests/` and `openfx-plugin/tests/` verify that cdylibs compile.
 Full integration testing requires loading the plugin in the actual host application.
 
+## zzzFX Effects
+
+The `zzzfx-*` crates provide a family of custom video effects:
+
+| Effect | Crate | Description |
+|--------|-------|-------------|
+| zzzFX Stroke | `zzzfx-core` | Alpha-channel stroke with distance transform |
+| zzzFX Repeater | `zzzfx-core` | Keyframe-driven time-offset compositor |
+| zzzFX Sprite Sheet | `zzzfx-core` | Grid-based sprite sheet reader with animation |
+| zzzFX ASS Subtitle | `zzzfx-core` | ASS/SSA subtitle renderer |
+| zzzFX ASCII Art | `zzzfx-core` | Luminance-to-character-glyph mapping |
+| zzzFX Pixel Art Style | `zzzfx-core` | Color quantization in pixel blocks with dithering + grid |
+
+### Building zzzFX
+
+```bash
+# OpenFX plugin (all 6 effects in one .ofx bundle)
+cargo xtask build-zzzfx-ofx-plugin
+
+# AE plugin (build one effect at a time via feature flag)
+cargo build -p zzzfx-ae-plugin --features effect-pixel-art
+```
+
+### GPU Acceleration (Pixel Art Style)
+
+The Pixel Art Style effect supports GPU-accelerated rendering via wgpu compute shaders.
+GPU is used automatically when available; CPU fallback is transparent on failure.
+
+**Feature flags:**
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `gpu` | on | Enable GPU compute path (wgpu) |
+
+**Disable GPU** (pure CPU build):
+
+```bash
+cargo build -p zzzfx-ae-plugin --features effect-pixel-art --no-default-features
+```
+
+**System requirements for GPU path:**
+- Any GPU with Vulkan, Metal, DX12, or WebGPU support
+- Tested on NVIDIA (Vulkan/DX12), AMD (Vulkan), Intel Arc (Vulkan)
+
+The GPU path caches buffers and pipelines across frames (no per-frame allocation),
+and falls back to CPU if:
+- Floyd-Steinberg dithering is selected (serial algorithm)
+- GPU adapter is unavailable
+- GPU device is lost at runtime
+
 ## Dependencies
 
 - **AE Plugin**: Requires the `after-effects` and `pipl` crates (git dependency)

@@ -19,6 +19,7 @@ pub(crate) struct GlyphBitmap {
 }
 
 pub(crate) struct GlyphCache {
+    pub(crate) font_name: String,
     pub(crate) font_size: i32,
     pub(crate) charset: String,
     pub(crate) bitmaps: Arc<[GlyphBitmap]>,
@@ -31,6 +32,7 @@ static GLYPH_CACHE: OnceLock<Mutex<Arc<GlyphCache>>> = OnceLock::new();
 
 fn cache_lock() -> &'static Mutex<Arc<GlyphCache>> {
     GLYPH_CACHE.get_or_init(|| Mutex::new(Arc::new(GlyphCache {
+        font_name: String::new(),
         font_size: 0,
         charset: String::new(),
         bitmaps: Arc::new([]),
@@ -232,6 +234,7 @@ fn build_glyph_cache(font_name: &str, font_size: i32, charset: &str) -> Option<G
     }
 
     Some(GlyphCache {
+        font_name: font_name.to_string(),
         font_size,
         charset: charset.to_string(),
         bitmaps: bitmaps.into(),
@@ -240,7 +243,7 @@ fn build_glyph_cache(font_name: &str, font_size: i32, charset: &str) -> Option<G
 
 fn ensure_cache(font_name: &str, font_size: i32, charset: &str) {
     let mut guard = cache_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let needs_rebuild = guard.font_size != font_size || guard.charset != charset;
+    let needs_rebuild = guard.font_name != font_name || guard.font_size != font_size || guard.charset != charset;
     if needs_rebuild {
         if let Some(new_cache) = build_glyph_cache(font_name, font_size, charset) {
             *guard = Arc::new(new_cache);

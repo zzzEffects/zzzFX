@@ -388,14 +388,14 @@ pub unsafe fn read_generic_param<T: Settings<Key = TrKey> + Clone>(
             pgv(p, time, &mut idx).ofx_ok()?;
             if idx >= 0 && (idx as usize) < options.len() {
                 dst.set_field::<EnumValue>(&desc.id, EnumValue(options[idx as usize].index))
-                    .unwrap();
+                    .ok();
             }
         }
         SettingKind::Percentage { .. } => {
             let mut v: f64 = 0.0;
             pgv(p, time, &mut v).ofx_ok()?;
             dst.set_field::<f32>(&desc.id, v.clamp(0.0, 1.0) as f32)
-                .unwrap();
+                .ok();
         }
         SettingKind::FloatRange { range, .. } => {
             let mut v: f64 = 0.0;
@@ -403,18 +403,18 @@ pub unsafe fn read_generic_param<T: Settings<Key = TrKey> + Clone>(
             let lo = *range.start() as f64;
             let hi = *range.end() as f64;
             dst.set_field::<f32>(&desc.id, v.clamp(lo, hi) as f32)
-                .unwrap();
+                .ok();
         }
         SettingKind::IntRange { range } => {
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
             dst.set_field::<i32>(&desc.id, v.clamp(*range.start(), *range.end()))
-                .unwrap();
+                .ok();
         }
         SettingKind::Boolean => {
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
-            dst.set_field::<bool>(&desc.id, v != 0).unwrap();
+            dst.set_field::<bool>(&desc.id, v != 0).ok();
         }
         SettingKind::Group { .. } => {}
     }
@@ -464,6 +464,12 @@ pub unsafe fn copy_source_to_u8(
     row_bytes_u8: usize,
     depth: usize,
 ) {
+    debug_assert!(
+        src_stride >= row_bytes_u8,
+        "copy_source_to_u8: source stride {} < row_bytes {}",
+        src_stride,
+        row_bytes_u8
+    );
     match depth {
         4 => {
             for y in 0..height {
@@ -506,6 +512,12 @@ pub unsafe fn copy_u8_to_output(
     row_bytes_u8: usize,
     depth: usize,
 ) {
+    debug_assert!(
+        dst_stride >= row_bytes_u8,
+        "copy_u8_to_output: dest stride {} < row_bytes {}",
+        dst_stride,
+        row_bytes_u8
+    );
     match depth {
         4 => {
             for y in 0..height {

@@ -25,6 +25,14 @@ use crate::shared::{
 
 const SQUARE_PARAM: &CStr = c"square";
 const PIXEL_SIZE_V_PARAM: &CStr = c"pixel_size_v";
+const GRID_COLOR_PARAM: &CStr = c"grid_color";
+
+fn is_native_grouped_name(name: &str) -> bool {
+    matches!(
+        name,
+        "grid_color_r" | "grid_color_g" | "grid_color_b" | "grid_color_a"
+    )
+}
 
 // ---------------------------------------------------------------------------
 // Per-effect globals
@@ -297,8 +305,67 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     gp(desc, &mut param_set).ofx_ok()?;
 
-    // --- All params are generic — no native OFX params ---
+    let pd = su.property_suite.propSetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+    let pdef = su.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
+
+    // --- Block A: generic params before grid_color ---
     for desc in d.settings_list.setting_descriptors.iter() {
+        if desc.id.name == "grid_color_r" {
+            break;
+        }
+        define_single_param(
+            su,
+            param_set,
+            desc,
+            &defaults,
+            c"",
+            &d.strings,
+            &d.menu_item_strings,
+        )?;
+    }
+
+    // --- Native RGBA: Grid Color ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(
+            param_set,
+            kOfxParamTypeRGBA.as_ptr(),
+            GRID_COLOR_PARAM.as_ptr(),
+            &mut pp,
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxPropLabel.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeGridColor).as_ptr(),
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxParamPropHint.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeGridColorHint).as_ptr(),
+        )
+        .ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?; // R
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?; // G
+        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 0.0).ofx_ok()?; // B
+        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 0.5).ofx_ok()?; // A
+    }
+
+    // --- Block B: generic params after grid_color (skip the 4 color fields) ---
+    let mut after_grid_color = false;
+    for desc in d.settings_list.setting_descriptors.iter() {
+        if desc.id.name == "grid_color_r" {
+            after_grid_color = true;
+            continue;
+        }
+        if !after_grid_color
+            || is_native_grouped_name(desc.id.name)
+        {
+            continue;
+        }
         define_single_param(
             su,
             param_set,
@@ -538,12 +605,21 @@ unsafe fn action_render(
             std::cell::RefCell::new((Vec::new(), Vec::new()));
     }
     RENDER_BUFS.with(|cell| {
-        let (src_buf, dst_buf) = &mut *cell.borrow_mut();
-        src_buf.resize(total_u8, 0);
-        dst_buf.resize(total_u8, 0);
-        copy_source_to_u8(sp, s_stride, src_buf, width, height, row_bytes_u8, depth);
-        pixel_art.apply_effect(src_buf, dst_buf, width, height);
-        copy_u8_to_output(dst_buf, dp, d_stride, width, height, row_bytes_u8, depth);
+        if let Ok(mut bufs) = cell.try_borrow_mut() {
+            let (src_buf, dst_buf) = &mut *bufs;
+            src_buf.resize(total_u8, 0);
+            dst_buf.resize(total_u8, 0);
+            copy_source_to_u8(sp, s_stride, src_buf, width, height, row_bytes_u8, depth);
+            pixel_art.apply_effect(src_buf, dst_buf, width, height);
+            copy_u8_to_output(dst_buf, dp, d_stride, width, height, row_bytes_u8, depth);
+        } else {
+            // Re-entrant render — allocate fresh buffers
+            let mut src_buf = vec![0u8; total_u8];
+            let mut dst_buf = vec![0u8; total_u8];
+            copy_source_to_u8(sp, s_stride, &mut src_buf, width, height, row_bytes_u8, depth);
+            pixel_art.apply_effect(&src_buf, &mut dst_buf, width, height);
+            copy_u8_to_output(&dst_buf, dp, d_stride, width, height, row_bytes_u8, depth);
+        }
     });
 
     let _ = cri(si);
@@ -562,9 +638,36 @@ unsafe fn apply_params(
 ) -> OfxResult<()> {
     let d = data()?;
     let su = &d.suites;
+    let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
+    let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
+    // Read generic params (skip native RGBA fields)
     for desc in d.settings_list.all_descriptors() {
+        if is_native_grouped_name(desc.id.name) {
+            continue;
+        }
         read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
+    }
+
+    // Native RGBA: Grid Color
+    {
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            GRID_COLOR_PARAM.as_ptr(),
+            &mut p,
+            ptr::null_mut(),
+        )
+        .ofx_ok()?;
+        let mut r: f64 = 0.0;
+        let mut g: f64 = 0.0;
+        let mut b: f64 = 0.0;
+        let mut a: f64 = 0.0;
+        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
+        dst.grid_color_r = r as f32;
+        dst.grid_color_g = g as f32;
+        dst.grid_color_b = b as f32;
+        dst.grid_color_a = a as f32;
     }
 
     Ok(())

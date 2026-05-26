@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR ISC OR Apache-2.0"
 
+[features]
+default = ["gpu"]
+gpu = []
+
 [dependencies]
 effect-settings = { path = "../effect-settings" }
 example-effect-macros = { path = "../macros" }

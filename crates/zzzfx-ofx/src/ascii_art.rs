@@ -384,7 +384,6 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
                     &mut pp,
                 )
                 .ofx_ok()?;
-                pi(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
                 pi(pp, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
                 ps(
                     pp,

@@ -413,10 +413,14 @@ i18n_keys! {
         // ── ASCII Art: generic param labels ────────────
         ParamAsciiCharSetGroup = "Character Set";
         ParamAsciiCharSetGroupDesc = "Select which character categories to include in the ASCII art output.";
+        ParamAsciiUseLatin = "Latin";
+        ParamAsciiUseLatinDesc = "Include Latin alphabet letters ordered by visual density (WMBDKHQARGZPXSONEYUFVTJCLIwm...).";
         ParamAsciiUseSymbols = "Symbols";
         ParamAsciiUseSymbolsDesc = "Include ASCII symbols (@%#*+=-:. ).";
         ParamAsciiUseNumbers = "Numbers";
         ParamAsciiUseNumbersDesc = "Include digits (9876543210).";
+        ParamAsciiUseBlocks = "Blocks";
+        ParamAsciiUseBlocksDesc = "Include Unicode block characters (█▓▒░ ).";
         ParamAsciiUseChinese = "Chinese";
         ParamAsciiUseChineseDesc = "Include Chinese characters ordered by visual density.";
         ParamAsciiUseKatakana = "Katakana";
@@ -473,8 +477,18 @@ i18n_keys! {
         ParamShowGridDesc = "Overlay grid lines between pixel blocks for a retro look.";
         ParamGridThickness = "Grid Thickness";
         ParamGridThicknessDesc = "Grid line thickness as a fraction of the pixel size.";
-        ParamGridOpacity = "Grid Opacity";
-        ParamGridOpacityDesc = "Opacity of the grid lines. 0 = fully transparent, 1 = fully opaque.";
+        ParamGridColorRed = "Grid Color Red";
+        ParamGridColorRedDesc = "Red component of the grid line color.";
+        ParamGridColorGreen = "Grid Color Green";
+        ParamGridColorGreenDesc = "Green component of the grid line color.";
+        ParamGridColorBlue = "Grid Color Blue";
+        ParamGridColorBlueDesc = "Blue component of the grid line color.";
+        ParamGridColorAlpha = "Grid Color Alpha";
+        ParamGridColorAlphaDesc = "Alpha/opacity of the grid lines. 0 = fully transparent, 1 = fully opaque.";
+
+        // Pixel Art: native param labels & hints
+        NativeGridColor = "Grid Color";
+        NativeGridColorHint = "Color of the grid lines between pixel blocks.";
         ParamPixelContrast = "Contrast";
         ParamPixelContrastDesc = "Pre-processing contrast. 0.5 is neutral (1.0x), 0 = 0.5x, 1 = 2.0x.";
         ParamPixelSaturation = "Saturation";
