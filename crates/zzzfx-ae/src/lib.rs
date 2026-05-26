@@ -22,6 +22,10 @@ use zzzfx_core::{ZzzSpriteSheet, ZzzSpriteSheetFullSettings, settings::SettingsL
 
 #[cfg(feature = "effect-ascii-art")]
 use zzzfx_core::{ZzzAsciiArt, ZzzAsciiArtFullSettings, settings::SettingsList as AsciiArtSettingsList};
+#[cfg(feature = "effect-pixel-art")]
+use zzzfx_core::{ZzzPixelArt, ZzzPixelArtFullSettings, settings::SettingsList as PixelArtSettingsList};
+#[cfg(feature = "effect-pixel-art")]
+use zzzfx_core::pixel_art_setting_id;
 
 // ---------------------------------------------------------------------------
 // Plugin struct
@@ -36,6 +40,8 @@ struct Plugin {
     settings: SpriteSheetSettingsList<ZzzSpriteSheetFullSettings>,
     #[cfg(feature = "effect-ascii-art")]
     settings: AsciiArtSettingsList<ZzzAsciiArtFullSettings>,
+    #[cfg(feature = "effect-pixel-art")]
+    settings: PixelArtSettingsList<ZzzPixelArtFullSettings>,
 }
 
 impl Default for Plugin {
@@ -49,6 +55,8 @@ impl Default for Plugin {
             settings: SpriteSheetSettingsList::<ZzzSpriteSheetFullSettings>::new(),
             #[cfg(feature = "effect-ascii-art")]
             settings: AsciiArtSettingsList::<ZzzAsciiArtFullSettings>::new(),
+            #[cfg(feature = "effect-pixel-art")]
+            settings: PixelArtSettingsList::<ZzzPixelArtFullSettings>::new(),
         }
     }
 }
@@ -94,6 +102,12 @@ impl AdobePluginGlobal for Plugin {
             let legacy = ZzzAsciiArtFullSettings::legacy_value();
             map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
         }
+        #[cfg(feature = "effect-pixel-art")]
+        {
+            let defaults = ZzzPixelArtFullSettings::default();
+            let legacy = ZzzPixelArtFullSettings::legacy_value();
+            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
+        }
         Ok(())
     }
 
@@ -121,6 +135,21 @@ impl AdobePluginGlobal for Plugin {
                 update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
                 #[cfg(feature = "effect-ascii-art")]
                 update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
+                #[cfg(feature = "effect-pixel-art")]
+                {
+                    let square = params
+                        .get(ParamID::Param(pixel_art_setting_id::SQUARE.ae_id()))?
+                        .as_checkbox()?
+                        .value();
+                    update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
+                    if square {
+                        if let Ok(p) = params.get(ParamID::Param(pixel_art_setting_id::PIXEL_SIZE_V.ae_id())) {
+                            let mut p = p.clone();
+                            p.set_ui_flag(ae::ParamUIFlags::DISABLED, true);
+                            p.update_param_ui()?;
+                        }
+                    }
+                }
             }
             Command::GetFlattenedSequenceData => {}
             _ => {}
@@ -164,6 +193,11 @@ impl Plugin {
         let (name, desc) = (
             i18n::tr(TrKey::EffectAsciiArtName),
             i18n::tr(TrKey::EffectAsciiArtDesc),
+        );
+        #[cfg(feature = "effect-pixel-art")]
+        let (name, desc) = (
+            i18n::tr(TrKey::EffectPixelArtName),
+            i18n::tr(TrKey::EffectPixelArtDesc),
         );
 
         out_data.set_return_msg(
@@ -292,6 +326,30 @@ impl Plugin {
         let mut full_settings = ZzzAsciiArtFullSettings::default();
         apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
         let effect: ZzzAsciiArt = (&full_settings).into();
+
+        let width = in_layer.width().min(out_layer.width()) as usize;
+        let height = in_layer.height().min(out_layer.height()) as usize;
+        let total = width * height * 4;
+
+        let mut src_buf = vec![0u8; total];
+        let mut dst_buf = vec![0u8; total];
+
+        copy_layer_to_contiguous(&in_layer, &mut src_buf, width, height);
+        effect.apply_effect(&src_buf, &mut dst_buf, width, height);
+        copy_contiguous_to_layer(&dst_buf, &mut out_layer, width, height);
+        Ok(())
+    }
+
+    #[cfg(feature = "effect-pixel-art")]
+    fn do_render(
+        &self,
+        in_layer: Layer,
+        mut out_layer: Layer,
+        params: &mut Parameters<ParamID>,
+    ) -> Result<(), Error> {
+        let mut full_settings = ZzzPixelArtFullSettings::default();
+        apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
+        let effect: ZzzPixelArt = (&full_settings).into();
 
         let width = in_layer.width().min(out_layer.width()) as usize;
         let height = in_layer.height().min(out_layer.height()) as usize;

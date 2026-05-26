@@ -10,6 +10,7 @@ mod stroke;
 mod repeater;
 mod sprite_sheet;
 pub mod ass_subtitle;
+mod pixel_art;
 
 pub use repeater::CompositorLayer;
 
@@ -19,6 +20,10 @@ pub use settings::ascii_art::{
 pub use settings::ass_subtitle::{
     AssBlendMode, ZzzAssSubtitle, ZzzAssSubtitleFullSettings,
 };
+pub use settings::pixel_art::{
+    Dithering as PixelDithering, ZzzPixelArt, ZzzPixelArtFullSettings,
+};
+pub use settings::pixel_art::setting_id as pixel_art_setting_id;
 pub use settings::repeater::{
     LayerOrder, ZzzRepeater, ZzzRepeaterFullSettings,
 };

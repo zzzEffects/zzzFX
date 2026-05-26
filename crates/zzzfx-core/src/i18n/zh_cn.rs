@@ -349,7 +349,7 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamAssUseNativeSizeDesc => c"启用时，字幕以生成器的输出大小渲染。禁用时，使用ASS PlayRes进行坐标映射，保持原始布局。",
 
         // ── ASCII Art: effect labels ──────────────────
-        TrKey::EffectAsciiArtName => c"zzzFX ASCII 艺术",
+        TrKey::EffectAsciiArtName => c"zzzFX ASCII 艺术风格",
         TrKey::EffectAsciiArtDesc => c"通过将亮度映射到可配置网格中的字符字形，将输入转换为 ASCII 艺术风格。",
 
         // ── ASCII Art: native param labels & hints ─────
@@ -400,5 +400,41 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuAsciiColoredDesc => c"字符保留源区域的平均颜色。",
         TrKey::MenuAsciiGreenTerminal => c"绿色终端",
         TrKey::MenuAsciiGreenTerminalDesc => c"黑底绿字，经典终端风格。",
+
+        // ── Pixel Art: effect labels ──────────────────
+        TrKey::EffectPixelArtName => c"zzzFX 像素艺术风格",
+        TrKey::EffectPixelArtDesc => c"通过将颜色量化为色块，并可选抖动和网格叠加，将输入转换为像素艺术风格。",
+
+        // ── Pixel Art: generic param labels ────────────
+        TrKey::ParamPixelSizeH => c"水平像素大小",
+        TrKey::ParamPixelSizeHDesc => c"水平像素块大小，以输出宽度的分数表示。0.1 在 1920 宽的画面 = 192 像素/块。",
+        TrKey::ParamPixelSizeV => c"竖直像素大小",
+        TrKey::ParamPixelSizeVDesc => c"竖直像素块大小，以输出高度的分数表示。当「方形」启用时此参数被忽略。",
+        TrKey::ParamSquare => c"方形",
+        TrKey::ParamSquareDesc => c"启用后，竖直像素大小锁定为与水平一致。禁用「竖直像素大小」参数。",
+        TrKey::ParamColorLevels => c"颜色级别",
+        TrKey::ParamColorLevelsDesc => c"每个通道的颜色级别数。值越低，颜色带越少、越明显。",
+        TrKey::ParamDithering => c"抖动",
+        TrKey::ParamDitheringDesc => c"减少量化区域色带伪影的抖动算法。",
+        TrKey::ParamDitheringAmount => c"抖动强度",
+        TrKey::ParamDitheringAmountDesc => c"抖动效果的强度。0 = 无抖动，1 = 完全抖动。",
+        TrKey::ParamShowGrid => c"显示网格",
+        TrKey::ParamShowGridDesc => c"在像素块之间叠加网格线，呈现复古外观。",
+        TrKey::ParamGridThickness => c"网格粗细",
+        TrKey::ParamGridThicknessDesc => c"网格线粗细，以像素大小的分数表示。",
+        TrKey::ParamGridOpacity => c"网格不透明度",
+        TrKey::ParamGridOpacityDesc => c"网格线的不透明度。0 = 完全透明，1 = 完全不透明。",
+        TrKey::ParamPixelContrast => c"对比度",
+        TrKey::ParamPixelContrastDesc => c"预处理对比度。0.5 为中性（1.0x），0 = 0.5x，1 = 2.0x。",
+        TrKey::ParamPixelSaturation => c"饱和度",
+        TrKey::ParamPixelSaturationDesc => c"颜色饱和度。0.5 为中性（1.0x），0 = 灰度，1 = 2.0x。",
+
+        // ── Pixel Art: dithering menu items ───────────
+        TrKey::MenuDitherNone => c"无",
+        TrKey::MenuDitherNoneDesc => c"无抖动。产生锐利的颜色带。",
+        TrKey::MenuDitherOrdered => c"有序",
+        TrKey::MenuDitherOrderedDesc => c"Bayer 矩阵有序抖动。快速、确定性图案。",
+        TrKey::MenuDitherFloydSteinberg => c"弗洛伊德-斯坦伯格",
+        TrKey::MenuDitherFloydSteinbergDesc => c"误差扩散抖动。质量更高，但计算量更大。",
     }
 }

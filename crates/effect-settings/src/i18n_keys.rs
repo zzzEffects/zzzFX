@@ -400,7 +400,7 @@ i18n_keys! {
         ParamAssUseNativeSizeDesc = "When enabled, subtitles are rendered at the generator's output size. When disabled, ASS PlayRes is used for coordinate mapping to preserve original layout.";
 
         // ── ASCII Art: effect labels ──────────────────
-        EffectAsciiArtName = "zzzFX ASCII Art";
+        EffectAsciiArtName = "zzzFX ASCII Art Style";
         EffectAsciiArtDesc = "Converts input into ASCII art style by mapping luminance to character glyphs in a configurable grid.";
 
         // ── ASCII Art: native param labels & hints ─────
@@ -451,6 +451,42 @@ i18n_keys! {
         MenuAsciiColoredDesc = "Characters retain the average color of their source region.";
         MenuAsciiGreenTerminal = "Green Terminal";
         MenuAsciiGreenTerminalDesc = "Green characters on a black background, classic terminal style.";
+
+        // ── Pixel Art: effect labels ──────────────────
+        EffectPixelArtName = "zzzFX Pixel Art Style";
+        EffectPixelArtDesc = "Converts input into pixel-art style by quantizing colors in blocks with optional dithering and grid overlay.";
+
+        // ── Pixel Art: generic param labels ────────────
+        ParamPixelSizeH = "Pixel Size H";
+        ParamPixelSizeHDesc = "Horizontal pixel block size as a fraction of output width. 0.1 on a 1920-wide frame = 192-pixel blocks.";
+        ParamPixelSizeV = "Pixel Size V";
+        ParamPixelSizeVDesc = "Vertical pixel block size as a fraction of output height. Ignored when 'Square' is enabled.";
+        ParamSquare = "Square";
+        ParamSquareDesc = "When enabled, vertical pixel size is locked to match horizontal. Disables the Vertical Pixel Size parameter.";
+        ParamColorLevels = "Color Levels";
+        ParamColorLevelsDesc = "Number of color levels per channel. Lower values create fewer, more distinct color bands.";
+        ParamDithering = "Dithering";
+        ParamDitheringDesc = "Dithering algorithm to reduce banding artifacts in quantized color regions.";
+        ParamDitheringAmount = "Dithering Amount";
+        ParamDitheringAmountDesc = "Strength of the dithering effect. 0 = no dithering, 1 = full dithering.";
+        ParamShowGrid = "Show Grid";
+        ParamShowGridDesc = "Overlay grid lines between pixel blocks for a retro look.";
+        ParamGridThickness = "Grid Thickness";
+        ParamGridThicknessDesc = "Grid line thickness as a fraction of the pixel size.";
+        ParamGridOpacity = "Grid Opacity";
+        ParamGridOpacityDesc = "Opacity of the grid lines. 0 = fully transparent, 1 = fully opaque.";
+        ParamPixelContrast = "Contrast";
+        ParamPixelContrastDesc = "Pre-processing contrast. 0.5 is neutral (1.0x), 0 = 0.5x, 1 = 2.0x.";
+        ParamPixelSaturation = "Saturation";
+        ParamPixelSaturationDesc = "Color saturation. 0.5 is neutral (1.0x), 0 = grayscale, 1 = 2.0x.";
+
+        // ── Pixel Art: dithering menu items ───────────
+        MenuDitherNone = "None";
+        MenuDitherNoneDesc = "No dithering. Produces sharp color bands.";
+        MenuDitherOrdered = "Ordered";
+        MenuDitherOrderedDesc = "Bayer matrix ordered dithering. Fast, deterministic pattern.";
+        MenuDitherFloydSteinberg = "Floyd-Steinberg";
+        MenuDitherFloydSteinbergDesc = "Error-diffusion dithering. Higher quality but more computationally expensive.";
     }
 }
 
