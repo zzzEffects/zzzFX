@@ -320,7 +320,7 @@ impl ZzzStroke {
                     FillMode::SourceColorExtension => {
                         let nc = nearest_cols[idx] as usize;
                         let src_idx = (y * width + nc) * 4;
-                        if src_idx + 2 < src.len() {
+                        if src_idx + 4 <= src.len() {
                             (
                                 src[src_idx] as f32 * RECIP_255,
                                 src[src_idx + 1] as f32 * RECIP_255,

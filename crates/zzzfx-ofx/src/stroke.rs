@@ -113,6 +113,21 @@ unsafe extern "C" fn main_entry(
     inArgs: OfxPropertySetHandle,
     outArgs: OfxPropertySetHandle,
 ) -> OfxStatus {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        main_entry_inner(action, handle, inArgs, outArgs)
+    }));
+    match result {
+        Ok(status) => status,
+        Err(_) => OfxStat::kOfxStatFailed,
+    }
+}
+
+unsafe fn main_entry_inner(
+    action: *const c_char,
+    handle: *const c_void,
+    inArgs: OfxPropertySetHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxStatus {
     if action.is_null() { return OfxStat::kOfxStatFailed; }
     let effect = handle as OfxImageEffectHandle;
     let action = CStr::from_ptr(action);
@@ -401,8 +416,10 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     pgi(si, kOfxImagePropBounds.as_ptr(), 2, &mut r).ofx_ok()?;
     pgi(si, kOfxImagePropBounds.as_ptr(), 3, &mut t).ofx_ok()?;
 
-    let width = (r - l) as usize;
-    let height = (t - b) as usize;
+    let width = (r - l).max(0) as usize;
+    let height = (t - b).max(0) as usize;
+    if width == 0 || height == 0 { return Err(OfxStat::kOfxStatFailed); }
+    if width > 16384 || height > 16384 { return Err(OfxStat::kOfxStatErrFormat); }
     let s_stride = srb.max(0) as usize;
     let d_stride = drb.max(0) as usize;
 

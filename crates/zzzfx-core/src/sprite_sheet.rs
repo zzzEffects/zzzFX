@@ -84,7 +84,7 @@ impl ZzzSpriteSheet {
         } else {
             n
         };
-        let total = n_adj + m * self.repeat_count;
+        let total = n_adj.saturating_add(m.saturating_mul(self.repeat_count));
         if total <= 0 {
             return None;
         }
@@ -375,12 +375,15 @@ impl ZzzSpriteSheet {
 
         // Build crop buffer in original pixel coords
         let crop_size = (cw as usize) * (ch as usize) * 4;
+        if crop_size == 0 { return; }
         crop_buf.resize(crop_size, 0u8);
+        let cw_usize = cw as usize;
+        if cw_usize == 0 { return; }
         let sh_usize = sheet_h as usize;
         let sw_usize = sheet_w as usize;
         use rayon::prelude::*;
         crop_buf
-            .par_chunks_mut(cw as usize * 4)
+            .par_chunks_mut(cw_usize * 4)
             .enumerate()
             .for_each(|(row, row_data)| {
                 let src_y = cy as usize + row;
@@ -434,7 +437,14 @@ impl ZzzSpriteSheet {
         // --- Step 2: Scale ---
         if self.scale != 1.0 {
             let (pw, ph) = if pre_rotated.is_some() { (sw as u32, sh as u32) } else { (cw, ch) };
-            let src_img = image::RgbaImage::from_raw(pw, ph, pre_buf.to_vec())
+            // Take ownership of source data to avoid cloning: move from pre_rotated
+            // or from crop_buf (crop_buf is restored from SPRITE_BUFS after render).
+            let src_owned: Vec<u8> = if let Some(rotated) = pre_rotated {
+                rotated
+            } else {
+                std::mem::take(&mut crop_buf)
+            };
+            let src_img = image::RgbaImage::from_vec(pw, ph, src_owned)
                 .unwrap_or_else(|| image::RgbaImage::new(pw, ph));
             let filter = match self.scale_algorithm {
                 ScaleAlgorithm::Nearest => image::imageops::FilterType::Nearest,

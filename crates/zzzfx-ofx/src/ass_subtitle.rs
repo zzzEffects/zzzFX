@@ -41,7 +41,10 @@ fn cached_font_names() -> &'static Vec<String> {
 // Instance data
 // ---------------------------------------------------------------------------
 
+const INSTANCE_MAGIC: u64 = 0xA55E_A55E_A55E_A55E;
+
 struct InstanceData {
+    magic: u64,
     ass_script: Option<AssScript>,
     file_path: String,
     font_cache: FontCache,
@@ -168,6 +171,21 @@ unsafe extern "C" fn set_host_info(host: *mut OfxHost) {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn main_entry(
+    action: *const c_char,
+    handle: *const c_void,
+    inArgs: OfxPropertySetHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxStatus {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        main_entry_inner(action, handle, inArgs, outArgs)
+    }));
+    match result {
+        Ok(status) => status,
+        Err(_) => OfxStat::kOfxStatFailed,
+    }
+}
+
+unsafe fn main_entry_inner(
     action: *const c_char,
     handle: *const c_void,
     inArgs: OfxPropertySetHandle,
@@ -371,6 +389,7 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
     gp(effect, &mut ep).ofx_ok()?;
 
     let idata = Box::new(InstanceData {
+        magic: INSTANCE_MAGIC,
         ass_script: None,
         file_path: String::new(),
         font_cache: FontCache::new(),
@@ -394,7 +413,12 @@ unsafe fn action_destroy_instance(effect: OfxImageEffectHandle) -> OfxResult<()>
 
     let mut data_ptr: *mut c_void = ptr::null_mut();
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
-    if !data_ptr.is_null() { let _ = Box::from_raw(data_ptr as *mut InstanceData); }
+    if !data_ptr.is_null() {
+        let idata = &*(data_ptr as *const InstanceData);
+        if idata.magic == INSTANCE_MAGIC {
+            let _ = Box::from_raw(data_ptr as *mut InstanceData);
+        }
+    }
     Ok(())
 }
 
@@ -557,33 +581,9 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
-    // Try to recover from hidden String param if instance data has no ASS file loaded
-    if matches!(&idata, None) || idata.as_deref().is_some_and(|i| i.ass_script.is_none()) {
-        let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
-        let pgvt = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut path_ptr: *mut c_char = ptr::null_mut();
-        if pgvt(p, 0.0, &mut path_ptr).ofx_ok().is_ok() && !path_ptr.is_null() {
-            let path = CStr::from_ptr(path_ptr).to_string_lossy();
-            if !path.is_empty() {
-                if let Ok(file_bytes) = std::fs::read(std::path::Path::new(path.as_ref())) {
-                    if let Ok(content) = decode_ass_file(&file_bytes) {
-                        if let Ok(ass_script) = parse_ass_file(&content) {
-                            if let Some(idata) = &mut idata {
-                                idata.render_cache.invalidate_script_cache();
-                                idata.font_cache.invalidate();
-                                idata.ass_script = Some(ass_script);
-                                idata.file_path = path.into_owned();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Try to recover font_override from hidden string param
+    // If instance data is missing or no ASS file loaded, render empty frame.
+    // File recovery must happen in InstanceChanged, not during render.
+    // Font override recovery from hidden string param is safe (no file I/O).
     if let Some(ref mut idata_inner) = idata {
         if idata_inner.font_override.is_none() {
             let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
@@ -614,14 +614,22 @@ unsafe fn action_render(
     pgi(di, kOfxImagePropBounds.as_ptr(), 2, &mut r).ofx_ok()?;
     pgi(di, kOfxImagePropBounds.as_ptr(), 3, &mut t).ofx_ok()?;
 
-    let width = (r - l) as usize;
-    let height = (t - b) as usize;
+    let width = (r - l).max(0) as usize;
+    let height = (t - b).max(0) as usize;
+    if width == 0 || height == 0 { return Err(OfxStat::kOfxStatFailed); }
+    if width > 16384 || height > 16384 { return Err(OfxStat::kOfxStatErrFormat); }
 
-    let mut comp_ptr: *mut c_char = ptr::null_mut();
-    let _ = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?(
-        di, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr,
-    );
-    let num_components = if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 };
+    let num_components = {
+        let mut comp_ptr: *mut c_char = ptr::null_mut();
+        if su.property_suite.propGetString
+            .and_then(|pgs| pgs(di, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr).ofx_ok().ok())
+            .is_some() && !comp_ptr.is_null()
+        {
+            if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 }
+        } else {
+            4
+        }
+    };
 
     // Read project frame rate for time normalization.
     // Some hosts (e.g. VEGAS Pro) give generator plugins a fixed 1000 fps
@@ -707,11 +715,17 @@ unsafe fn action_render(
     pgi(di, kOfxImagePropRowBytes.as_ptr(), 0, &mut drb).ofx_ok()?;
     let d_stride = drb.max(0) as usize;
 
-    let mut depth_ptr: *mut c_char = ptr::null_mut();
-    let _ = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?(
-        di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr,
-    );
-    let depth_str = CStr::from_ptr(depth_ptr);
+    let depth_str = {
+        let mut depth_ptr: *mut c_char = ptr::null_mut();
+        if su.property_suite.propGetString
+            .and_then(|pgs| pgs(di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr).ofx_ok().ok())
+            .is_some() && !depth_ptr.is_null()
+        {
+            CStr::from_ptr(depth_ptr)
+        } else {
+            kOfxBitDepthByte
+        }
+    };
 
     let src_row_bytes = width * 4;
     if depth_str == kOfxBitDepthByte {

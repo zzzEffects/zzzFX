@@ -391,6 +391,7 @@ pub fn copy_layer_to_contiguous(in_layer: &ae::Layer, buf: &mut [u8], width: usi
     let src_row_bytes = in_layer.row_bytes();
     let stride = if src_row_bytes > 0 { src_row_bytes as usize } else { -src_row_bytes as usize };
     let row_bytes = width * 4;
+    if stride < row_bytes { return; }
     for y in 0..height {
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -406,6 +407,7 @@ pub fn copy_contiguous_to_layer(buf: &[u8], out_layer: &mut ae::Layer, width: us
     let dst_row_bytes = out_layer.row_bytes();
     let stride = if dst_row_bytes > 0 { dst_row_bytes as usize } else { -dst_row_bytes as usize };
     let row_bytes = width * 4;
+    if stride < row_bytes { return; }
     for y in 0..height {
         unsafe {
             std::ptr::copy_nonoverlapping(

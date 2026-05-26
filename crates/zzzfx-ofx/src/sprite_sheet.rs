@@ -42,7 +42,10 @@ fn is_native_grouped_name(name: &str) -> bool {
 // Instance data
 // ---------------------------------------------------------------------------
 
+const INSTANCE_MAGIC: u64 = 0x5AFE_5AFE_5AFE_5AFE;
+
 struct InstanceData {
+    magic: u64,
     file_path: String,
     decoded_rgba: Vec<u8>,
     sheet_width: u32,
@@ -133,6 +136,21 @@ unsafe extern "C" fn set_host_info(host: *mut OfxHost) {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn main_entry(
+    action: *const c_char,
+    handle: *const c_void,
+    inArgs: OfxPropertySetHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxStatus {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        main_entry_inner(action, handle, inArgs, outArgs)
+    }));
+    match result {
+        Ok(status) => status,
+        Err(_) => OfxStat::kOfxStatFailed,
+    }
+}
+
+unsafe fn main_entry_inner(
     action: *const c_char,
     handle: *const c_void,
     inArgs: OfxPropertySetHandle,
@@ -303,6 +321,7 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
     gp(effect, &mut ep).ofx_ok()?;
 
     let idata = Box::new(InstanceData {
+        magic: INSTANCE_MAGIC,
         file_path: String::new(), decoded_rgba: Vec::new(),
         sheet_width: 0, sheet_height: 0,
         cached_dst: Vec::new(), cache_valid: false,
@@ -332,12 +351,17 @@ unsafe fn action_destroy_instance(effect: OfxImageEffectHandle) -> OfxResult<()>
 
     let mut data_ptr: *mut c_void = ptr::null_mut();
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
-    if !data_ptr.is_null() { let _ = Box::from_raw(data_ptr as *mut InstanceData); }
+    if !data_ptr.is_null() {
+        let idata = &*(data_ptr as *const InstanceData);
+        if idata.magic == INSTANCE_MAGIC {
+            let _ = Box::from_raw(data_ptr as *mut InstanceData);
+        }
+    }
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// GetClipPreferences
+// GetClipPreferences (SpriteSheet)
 // ---------------------------------------------------------------------------
 
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
@@ -362,14 +386,20 @@ unsafe fn action_instance_changed(
     let paramSetValue = su.parameter_suite.paramSetValue.ok_or(OfxStat::kOfxStatFailed)?;
 
     let mut target_type: *mut c_char = ptr::null_mut();
-    propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok()?;
+    if propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok().is_err() {
+        return Ok(());
+    }
+    if target_type.is_null() { return Ok(()); }
 
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     getParamSet(effect, &mut param_set).ofx_ok()?;
 
     if CStr::from_ptr(target_type) == kOfxTypeParameter {
         let mut target_name: *mut c_char = ptr::null_mut();
-        propGetString(inArgs, kOfxPropName.as_ptr(), 0, &mut target_name).ofx_ok()?;
+        if propGetString(inArgs, kOfxPropName.as_ptr(), 0, &mut target_name).ofx_ok().is_err() {
+            return Ok(());
+        }
+        if target_name.is_null() { return Ok(()); }
 
         if FILE_SELECT_PARAM == CStr::from_ptr(target_name) {
             let Some(path) = rfd::FileDialog::new()
@@ -443,29 +473,10 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
-    // Try to recover from hidden String param if instance data is empty
+    // If instance data is missing or no image loaded, render empty frame.
+    // File recovery must happen in InstanceChanged, not during render.
     if matches!(&idata, None) || idata.as_deref().is_some_and(|i| i.decoded_rgba.is_empty()) {
-        let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
-        let pgvt = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut path_ptr: *mut c_char = ptr::null_mut();
-        if pgvt(p, 0.0, &mut path_ptr).ofx_ok().is_ok() && !path_ptr.is_null() {
-            let path = CStr::from_ptr(path_ptr).to_string_lossy();
-            if !path.is_empty() {
-                if let Ok(img) = image::open(std::path::Path::new(path.as_ref())) {
-                    let rgba = img.to_rgba8();
-                    let (w, h) = rgba.dimensions();
-                    let raw = rgba.into_raw();
-                    if let Some(idata) = &mut idata {
-                        idata.file_path = path.into_owned();
-                        idata.decoded_rgba = raw;
-                        idata.sheet_width = w;
-                        idata.sheet_height = h;
-                    }
-                }
-            }
-        }
+        // Still need to get output clip for bounds, then fill transparent
     }
 
     // Get output clip and its property set (for frame range query)
@@ -483,8 +494,10 @@ unsafe fn action_render(
     pgi(di, kOfxImagePropBounds.as_ptr(), 2, &mut r).ofx_ok()?;
     pgi(di, kOfxImagePropBounds.as_ptr(), 3, &mut t).ofx_ok()?;
 
-    let width = (r - l) as usize;
-    let height = (t - b) as usize;
+    let width = (r - l).max(0) as usize;
+    let height = (t - b).max(0) as usize;
+    if width == 0 || height == 0 { return Err(OfxStat::kOfxStatFailed); }
+    if width > 16384 || height > 16384 { return Err(OfxStat::kOfxStatErrFormat); }
 
     // Store output dimensions for use by the overlay interact (coordinate mapping)
     if let Some(ref mut idata_inner) = idata {
@@ -492,11 +505,17 @@ unsafe fn action_render(
         idata_inner.output_h = height;
     }
 
-    let mut comp_ptr: *mut c_char = ptr::null_mut();
-    let _ = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?(
-        di, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr,
-    );
-    let num_components = if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 };
+    let num_components = {
+        let mut comp_ptr: *mut c_char = ptr::null_mut();
+        if su.property_suite.propGetString
+            .and_then(|pgs| pgs(di, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr).ofx_ok().ok())
+            .is_some() && !comp_ptr.is_null()
+        {
+            if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 }
+        } else {
+            4
+        }
+    };
 
     let mut frame_rate: f64 = 1.0;
     let _ = pgd(ep, kOfxImageEffectPropFrameRate.as_ptr(), 0, &mut frame_rate);
@@ -683,11 +702,17 @@ unsafe fn action_render(
     pgi(di, kOfxImagePropRowBytes.as_ptr(), 0, &mut drb).ofx_ok()?;
     let d_stride = drb.max(0) as usize;
 
-    let mut depth_ptr: *mut c_char = ptr::null_mut();
-    let _ = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?(
-        di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr,
-    );
-    let depth_str = CStr::from_ptr(depth_ptr);
+    let depth_str = {
+        let mut depth_ptr: *mut c_char = ptr::null_mut();
+        if su.property_suite.propGetString
+            .and_then(|pgs| pgs(di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr).ofx_ok().ok())
+            .is_some() && !depth_ptr.is_null()
+        {
+            CStr::from_ptr(depth_ptr)
+        } else {
+            kOfxBitDepthByte
+        }
+    };
 
     let src_row_bytes = width * 4;
     if depth_str == kOfxBitDepthByte {
@@ -864,6 +889,21 @@ unsafe fn apply_params(
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn overlay_main(
+    action: *const c_char,
+    handle: *const c_void,
+    inArgs: OfxPropertySetHandle,
+    _outArgs: OfxPropertySetHandle,
+) -> OfxStatus {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        overlay_main_inner(action, handle, inArgs, _outArgs)
+    }));
+    match result {
+        Ok(status) => status,
+        Err(_) => OfxStat::kOfxStatFailed,
+    }
+}
+
+unsafe fn overlay_main_inner(
     action: *const c_char,
     handle: *const c_void,
     inArgs: OfxPropertySetHandle,

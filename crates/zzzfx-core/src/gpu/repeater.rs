@@ -109,8 +109,17 @@ pub fn try_repeater_gpu_render(
 
     let is_below = matches!(settings.layer_order, crate::settings::repeater::LayerOrder::Below);
 
-    // Zero out dst buffer before first dispatch
-    guard.queue.write_buffer(&guard.bufs.dst_buf, 0, &vec![0u8; image_size as usize]);
+    // Zero out dst buffer before first dispatch — reuse a thread-local buffer
+    thread_local! {
+        static ZERO_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::new());
+    }
+    ZERO_BUF.with(|zb| {
+        let mut zb = zb.borrow_mut();
+        if zb.len() < image_size as usize {
+            zb.resize(image_size as usize, 0);
+        }
+        guard.queue.write_buffer(&guard.bufs.dst_buf, 0, &zb[..image_size as usize]);
+    });
 
     let workgroup_count_x = (w + 15) / 16;
     let workgroup_count_y = (h + 15) / 16;
