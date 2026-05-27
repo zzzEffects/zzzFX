@@ -11,6 +11,7 @@ mod repeater;
 mod sprite_sheet;
 mod ass_subtitle;
 mod ascii_art;
+mod long_shadow;
 mod pixel_art;
 
 use std::{ffi::c_int, ptr};
@@ -23,7 +24,7 @@ use crate::bindings::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    6
+    7
 }
 
 #[unsafe(no_mangle)]
@@ -35,6 +36,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         3 => ass_subtitle::get_plugin(),
         4 => ascii_art::get_plugin(),
         5 => pixel_art::get_plugin(),
+        6 => long_shadow::get_plugin(),
         _ => ptr::null(),
     }
 }

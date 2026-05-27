@@ -475,5 +475,31 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuDitherOrderedDesc => c"Bayer 矩阵有序抖动。快速、确定性图案。",
         TrKey::MenuDitherFloydSteinberg => c"弗洛伊德-斯坦伯格",
         TrKey::MenuDitherFloydSteinbergDesc => c"误差扩散抖动。质量更高，但计算量更大。",
+
+        // ── Long Shadow: effect labels ─────────────
+        TrKey::EffectLongShadowName => c"zzzFX 长阴影",
+        TrKey::EffectLongShadowDesc => c"从 Alpha 通道投射长方向阴影，营造扁平设计风格的效果。",
+
+        // ── Long Shadow: native param labels & hints ─
+        TrKey::NativeShadowColor => c"阴影颜色",
+        TrKey::NativeShadowColorHint => c"长阴影的颜色。",
+        TrKey::NativeShadowOffset => c"阴影偏移",
+        TrKey::NativeShadowOffsetHint => c"阴影投射的原点偏移。",
+
+        // ── Long Shadow: generic param labels ──────
+        TrKey::ParamShadowAngle => c"角度",
+        TrKey::ParamShadowAngleDesc => c"阴影方向（度）。0 = 右，90 = 下。",
+        TrKey::ParamShadowLength => c"长度",
+        TrKey::ParamShadowLengthDesc => c"阴影延伸距离，以画面对角线的比例表示。",
+        TrKey::ParamShadowSoftness => c"柔和度",
+        TrKey::ParamShadowSoftnessDesc => c"阴影边缘模糊程度。0 = 锐利（扁平设计），1 = 非常柔和。",
+        TrKey::ParamShadowFade => c"渐隐",
+        TrKey::ParamShadowFadeDesc => c"阴影长度方向上的不透明度衰减。0 = 均匀，1 = 线性衰减至末端透明。",
+        TrKey::ParamShadowOpacity => c"不透明度",
+        TrKey::ParamShadowOpacityDesc => c"阴影整体不透明度乘数。",
+        TrKey::ParamShadowAlphaThreshold => c"Alpha 阈值",
+        TrKey::ParamShadowAlphaThresholdDesc => c"Alpha 值低于此值的源像素不产生阴影。",
+        TrKey::ParamShadowSourceOpacity => c"源不透明度",
+        TrKey::ParamShadowSourceOpacityDesc => c"源图像的不透明度。0 = 仅显示阴影，1 = 完全不透明。",
     }
 }

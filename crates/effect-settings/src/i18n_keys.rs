@@ -527,6 +527,32 @@ i18n_keys! {
         MenuDitherOrderedDesc = "Bayer matrix ordered dithering. Fast, deterministic pattern.";
         MenuDitherFloydSteinberg = "Floyd-Steinberg";
         MenuDitherFloydSteinbergDesc = "Error-diffusion dithering. Higher quality but more computationally expensive.";
+
+        // ── Long Shadow: effect labels ─────────────
+        EffectLongShadowName = "zzzFX Long Shadow";
+        EffectLongShadowDesc = "Projects a long directional shadow from the alpha channel for a flat-design style effect.";
+
+        // ── Long Shadow: native param labels & hints ─
+        NativeShadowColor = "Shadow Color";
+        NativeShadowColorHint = "Color of the long shadow.";
+        NativeShadowOffset = "Shadow Offset";
+        NativeShadowOffsetHint = "Origin offset for the shadow projection.";
+
+        // ── Long Shadow: generic param labels ──────
+        ParamShadowAngle = "Angle";
+        ParamShadowAngleDesc = "Direction of the shadow in degrees. 0 = right, 90 = down.";
+        ParamShadowLength = "Length";
+        ParamShadowLengthDesc = "How far the shadow extends, as a fraction of the frame diagonal.";
+        ParamShadowSoftness = "Softness";
+        ParamShadowSoftnessDesc = "Edge blur of the shadow. 0 = razor sharp (flat design), 1 = very soft.";
+        ParamShadowFade = "Fade";
+        ParamShadowFadeDesc = "Opacity falloff along the shadow length. 0 = uniform, 1 = linear fade to transparent.";
+        ParamShadowOpacity = "Opacity";
+        ParamShadowOpacityDesc = "Overall shadow opacity multiplier.";
+        ParamShadowAlphaThreshold = "Alpha Threshold";
+        ParamShadowAlphaThresholdDesc = "Source pixels with alpha below this value do not cast shadows.";
+        ParamShadowSourceOpacity = "Source Opacity";
+        ParamShadowSourceOpacityDesc = "Opacity of the source image. 0 = shadow only, 1 = fully opaque.";
     }
 }
 

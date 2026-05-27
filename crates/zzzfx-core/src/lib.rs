@@ -6,6 +6,7 @@ pub mod settings;
 pub use effect_settings::setting_id;
 
 mod ascii_art;
+mod long_shadow;
 mod stroke;
 mod repeater;
 mod sprite_sheet;
@@ -23,6 +24,7 @@ pub use settings::ass_subtitle::{
 pub use settings::pixel_art::{
     Dithering as PixelDithering, ZzzPixelArt, ZzzPixelArtFullSettings,
 };
+pub use settings::long_shadow::{ZzzLongShadow, ZzzLongShadowFullSettings};
 pub use settings::ascii_art::setting_id as ascii_art_setting_id;
 pub use settings::pixel_art::setting_id as pixel_art_setting_id;
 pub use settings::repeater::{
