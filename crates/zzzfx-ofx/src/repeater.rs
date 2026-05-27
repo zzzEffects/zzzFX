@@ -443,7 +443,7 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
-    let depth = detect_pixel_depth(su, si0).unwrap_or(4);
+    let depth = detect_pixel_depth(su, si0).ok_or(OfxStat::kOfxStatErrFormat)?;
 
     let mut srb0: c_int = 0;
     pgi(si0, kOfxImagePropRowBytes.as_ptr(), 0, &mut srb0).ofx_ok()?;

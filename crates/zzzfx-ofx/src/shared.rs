@@ -175,7 +175,7 @@ pub unsafe fn define_single_param<T: Settings<Key = TrKey> + Clone>(
         .propSetString
         .ok_or(OfxStat::kOfxStatFailed)?;
 
-    let ds = strings.get(&descriptor.id).unwrap();
+    let ds = strings.get(&descriptor.id).ok_or(OfxStat::kOfxStatFailed)?;
     let id_cstr = ds.0.as_c_str();
     let mut pp: OfxPropertySetHandle = ptr::null_mut();
 
@@ -196,7 +196,7 @@ pub unsafe fn define_single_param<T: Settings<Key = TrKey> + Clone>(
             for (i, mi) in options.iter().enumerate() {
                 let is = menu_item_strings
                     .get(&(descriptor.id.clone(), mi.index))
-                    .unwrap();
+                    .ok_or(OfxStat::kOfxStatFailed)?;
                 ps(
                     pp,
                     kOfxParamPropChoiceOption.as_ptr(),
@@ -309,7 +309,7 @@ pub unsafe fn define_single_param<T: Settings<Key = TrKey> + Clone>(
             let dv = default_settings
                 .get_field::<bool>(&descriptor.id)
                 .map_err(|_| OfxStat::kOfxStatFailed)?;
-            let gnc: &CStr = ds.3.as_ref().expect("group name").as_c_str();
+            let gnc: &CStr = ds.3.as_ref().ok_or(OfxStat::kOfxStatFailed)?.as_c_str();
             pdef(
                 param_set,
                 kOfxParamTypeGroup.as_ptr(),
@@ -376,7 +376,7 @@ pub unsafe fn read_generic_param<T: Settings<Key = TrKey> + Clone>(
         .parameter_suite
         .paramGetValueAtTime
         .ok_or(OfxStat::kOfxStatFailed)?;
-    let ds = strings.get(&desc.id).unwrap();
+    let ds = strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
     let id_cstr = ds.0.as_c_str();
 
     let mut p: OfxParamHandle = ptr::null_mut();
@@ -464,12 +464,10 @@ pub unsafe fn copy_source_to_u8(
     row_bytes_u8: usize,
     depth: usize,
 ) {
-    debug_assert!(
-        src_stride >= row_bytes_u8,
-        "copy_source_to_u8: source stride {} < row_bytes {}",
-        src_stride,
-        row_bytes_u8
-    );
+    // Safety guard: if stride is insufficient, abort to avoid UB from copy_nonoverlapping
+    if src_stride < row_bytes_u8 {
+        return;
+    }
     match depth {
         4 => {
             for y in 0..height {
@@ -512,12 +510,10 @@ pub unsafe fn copy_u8_to_output(
     row_bytes_u8: usize,
     depth: usize,
 ) {
-    debug_assert!(
-        dst_stride >= row_bytes_u8,
-        "copy_u8_to_output: dest stride {} < row_bytes {}",
-        dst_stride,
-        row_bytes_u8
-    );
+    // Safety guard: if stride is insufficient, abort to avoid UB from copy_nonoverlapping
+    if dst_stride < row_bytes_u8 {
+        return;
+    }
     match depth {
         4 => {
             for y in 0..height {

@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -20,7 +19,7 @@ pub(crate) struct GlyphBitmap {
 
 pub(crate) struct GlyphCache {
     pub(crate) font_name: String,
-    pub(crate) font_size: i32,
+    pub(crate) font_size: f32,
     pub(crate) charset: String,
     pub(crate) bitmaps: Arc<[GlyphBitmap]>,
 }
@@ -33,7 +32,7 @@ static GLYPH_CACHE: OnceLock<Mutex<Arc<GlyphCache>>> = OnceLock::new();
 fn cache_lock() -> &'static Mutex<Arc<GlyphCache>> {
     GLYPH_CACHE.get_or_init(|| Mutex::new(Arc::new(GlyphCache {
         font_name: String::new(),
-        font_size: 0,
+        font_size: 0.0,
         charset: String::new(),
         bitmaps: Arc::new([]),
     })))
@@ -200,7 +199,7 @@ fn get_or_load_cjk(charset: &str) -> Option<Vec<u8>> {
     Some(data)
 }
 
-fn build_glyph_cache(font_name: &str, font_size: i32, charset: &str) -> Option<GlyphCache> {
+fn build_glyph_cache(font_name: &str, font_size: f32, charset: &str) -> Option<GlyphCache> {
     // Font data is cached — reloaded only when font_name changes (fixes lag
     // when toggling char set or adjusting font_size).
     let font_data = get_or_load_font(font_name)?;
@@ -241,9 +240,11 @@ fn build_glyph_cache(font_name: &str, font_size: i32, charset: &str) -> Option<G
     })
 }
 
-fn ensure_cache(font_name: &str, font_size: i32, charset: &str) {
+fn ensure_cache(font_name: &str, font_size: f32, charset: &str) {
     let mut guard = cache_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let needs_rebuild = guard.font_name != font_name || guard.font_size != font_size || guard.charset != charset;
+    let needs_rebuild = guard.font_name != font_name
+        || (guard.font_size - font_size).abs() > 1e-4
+        || guard.charset != charset;
     if needs_rebuild {
         if let Some(new_cache) = build_glyph_cache(font_name, font_size, charset) {
             *guard = Arc::new(new_cache);
@@ -254,34 +255,6 @@ fn ensure_cache(font_name: &str, font_size: i32, charset: &str) {
 // ---------------------------------------------------------------------------
 // Per-thread reusable cell buffers (fixes B6 — avoids frame allocation)
 // ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-struct CellMeta {
-    char_idx: usize,
-    avg_r: f32,
-    avg_g: f32,
-    avg_b: f32,
-}
-
-/// Cells binned by output strip for O(N) lookup (fixes B5).
-struct BinnedCells {
-    /// `bins[s]` contains all cells whose rows overlap strip `s`.
-    bins: Vec<Vec<CellMeta>>,
-}
-
-struct RenderBufs {
-    binned: BinnedCells,
-}
-
-impl Default for RenderBufs {
-    fn default() -> Self {
-        Self { binned: BinnedCells { bins: Vec::new() } }
-    }
-}
-
-thread_local! {
-    static RENDER_BUFS: RefCell<RenderBufs> = RefCell::new(RenderBufs::default());
-}
 
 // ---------------------------------------------------------------------------
 // GPU path (forward declaration)
@@ -310,6 +283,39 @@ mod gpu_impl {
 /// Reciprocal of 255, for converting u8→f32.
 const RCP_255: f64 = 1.0 / 255.0;
 
+#[inline]
+fn sample_glyph_x(local: f32, bm_w: u32, cell_size: f32, fill: bool, scale: f32) -> u32 {
+    sample_glyph_1d(local, bm_w, cell_size, fill, scale)
+}
+
+#[inline]
+fn sample_glyph_y(local: f32, bm_h: u32, cell_size: f32, fill: bool, scale: f32) -> u32 {
+    sample_glyph_1d(local, bm_h, cell_size, fill, scale)
+}
+
+/// Map a local coordinate [0,1] within a cell to a glyph bitmap index,
+/// applying fill/stretch. Returns `size` (sentinel) if out of bounds.
+fn sample_glyph_1d(local: f32, bm_size: u32, cell_size: f32, fill: bool, scale: f32) -> u32 {
+    if bm_size == 0 { return 0; }
+    let bms = bm_size as f32;
+    if fill {
+        // Glyph fills the cell: local [0,1] → bitmap [0, bms-1], with scale
+        let c = (local - 0.5) / scale + 0.5;
+        if c < 0.0 || c > 1.0 { return bm_size; }
+        ((c * (bms - 1.0)).round() as u32).min(bm_size - 1)
+    } else {
+        // Glyph at native size, centered: local offset maps to bitmap
+        let glyph_w = bms;
+        let _margin = (cell_size - glyph_w).max(0.0) * 0.5 / cell_size;
+        // With scale: glyph appears scale× larger in the cell
+        let scaled_w = glyph_w * scale;
+        let scaled_margin = (cell_size - scaled_w).max(0.0) * 0.5 / cell_size;
+        if local < scaled_margin || local > 1.0 - scaled_margin { return bm_size; }
+        let c = (local - scaled_margin) / (1.0 - 2.0 * scaled_margin);
+        ((c * (bms - 1.0)).round() as u32).min(bm_size - 1)
+    }
+}
+
 impl ZzzAsciiArt {
     pub fn is_identity(&self) -> bool {
         false
@@ -318,198 +324,208 @@ impl ZzzAsciiArt {
     pub fn apply_effect(&self, src: &[u8], dst: &mut [u8], width: usize, height: usize) {
         let len = width * height * 4;
 
-        // Fix B1: early return instead of panic
         if src.len() < len || dst.len() < len || width == 0 || height == 0 {
             return;
         }
+        // Clear output to prevent ghosting when host reuses buffers (VEGAS Pro)
+        dst[..len].fill(0);
 
-        let font_size = self.font_size.clamp(4, 64) as usize;
         let charset = self.resolve_charset();
-        ensure_cache(&self.font_name, self.font_size, &charset);
 
-        // Fix B2: clone Arc, drop lock before rendering
+        // Compute floating-point cell size — no rounding (user request #1)
+        let min_dim = width.min(height) as f32;
+        let cell_size = if self.font_size > 0.0 {
+            self.font_size * min_dim / 100.0
+        } else {
+            1.0 // fallback for zero/negative font_size (crash fix #3)
+        };
+
+        ensure_cache(&self.font_name, cell_size, &charset);
+
         let cache = get_cache_snapshot();
         let bitmaps = &cache.bitmaps;
-        let cache_font_size = cache.font_size as usize;
+        if bitmaps.is_empty() {
+            return; // crash fix #3: no glyphs → nothing to render
+        }
 
         // ── Try GPU first ──────────────────────────────────────────
         match gpu_impl::try_gpu_render(self, src, dst, width, height, &cache) {
             Ok(true) => return,
-            Ok(false) => {} // GPU unavailable → fall through to CPU
-            Err(_) => {}    // GPU error → fall through to CPU
+            Ok(false) => {}
+            Err(_) => {}
         }
 
-        // ── CPU path (rayon parallel, pre-binned, reusable buffers) ─
+        // ── CPU path ───────────────────────────────────────────────
 
-        let bg_alpha = self.background_alpha.clamp(0.0, 1.0);
+        let bg_r = self.bg_color_r.clamp(0.0, 1.0);
+        let bg_g = self.bg_color_g.clamp(0.0, 1.0);
+        let bg_b = self.bg_color_b.clamp(0.0, 1.0);
+        let bg_a = self.bg_color_a.clamp(0.0, 1.0);
         let brightness = self.brightness.clamp(0.0, 1.0) as f64;
         let contrast = self.contrast.clamp(0.0, 1.0) as f64;
         let invert = self.invert_luma;
         let color_mode = self.color_mode;
         let charset_len = charset.chars().count();
-
-        let cols = (width + font_size - 1) / font_size;
-        let rows = (height + font_size - 1) / font_size;
-        let strips = rows; // one strip per cell-row for simplicity
         let contrast_factor = 1.0 + (contrast - 0.5) * 2.0;
 
-        // ── Cell analysis + binning (O1: pre-bin during analysis) ──
-        RENDER_BUFS.with(|bufs_cell| {
-            let bufs = &mut *bufs_cell.borrow_mut();
-            let binned = &mut bufs.binned;
-            binned.bins.clear();
-            binned.bins.resize(strips, Vec::new());
+        let w = width as f32;
+        let h = height as f32;
 
-            let row_indices: Vec<usize> = (0..rows).collect();
+        // Grid dimensions — +2 ensures cells on both sides fully cover the frame
+        // regardless of offset direction (fixes edge gaps).
+        let cols = (w / cell_size).ceil().max(1.0) as usize + 2;
+        let rows = (h / cell_size).ceil().max(1.0) as usize + 2;
 
-            // Parallel cell analysis with manual 4-pixel unrolling (O4)
-            let all_bins: Vec<Vec<CellMeta>> = row_indices
-                .par_iter()
-                .map(|&row| {
-                    let cell_y = row * font_size;
-                    let cell_h = font_size.min(height - cell_y);
-                    let _strip_idx = row; // one strip per row
-                    let mut strip_cells = Vec::with_capacity(cols);
+        // Position snaps a cell corner to (px*w, py*h), then shifted left/up by
+        // one cell so the grid always starts before the frame origin.
+        let ox = self.pos_x * w - (self.pos_x * w / cell_size).round() * cell_size - cell_size;
+        let oy = self.pos_y * h - (self.pos_y * h / cell_size).round() * cell_size - cell_size;
 
-                    for col in 0..cols {
-                        let cell_x = col * font_size;
-                        let cell_w = font_size.min(width - cell_x);
+        // ── Cell analysis (per output pixel → determine cell → sample source) ──
+        let cell_size_f64 = cell_size as f64;
+        let ox_f64 = ox as f64;
+        let oy_f64 = oy as f64;
+        let w_f64 = w as f64;
+        let h_f64 = h as f64;
 
-                        let mut sum_luma = 0.0f64;
-                        let mut sum_r = 0.0f64;
-                        let mut sum_g = 0.0f64;
-                        let mut sum_b = 0.0f64;
-                        let mut pixel_count = 0u64;
+        // Compute cell metadata: for each cell, average the source pixels it covers
+        struct CellData {
+            char_idx: usize,
+            avg_r: f32,
+            avg_g: f32,
+            avg_b: f32,
+        }
 
-                        // 4-pixel unrolled inner loop for better ILP
-                        for dy in 0..cell_h {
-                            let src_row = (cell_y + dy) * width;
-                            let mut dx = 0usize;
-                            let end4 = cell_w - (cell_w % 4);
-                            while dx < end4 {
-                                let i0 = (src_row + cell_x + dx) * 4;
-                                let i1 = i0 + 4;
-                                let i2 = i1 + 4;
-                                let i3 = i2 + 4;
-                                let r0 = src[i0] as f64; let g0 = src[i0+1] as f64; let b0 = src[i0+2] as f64;
-                                let r1 = src[i1] as f64; let g1 = src[i1+1] as f64; let b1 = src[i1+2] as f64;
-                                let r2 = src[i2] as f64; let g2 = src[i2+1] as f64; let b2 = src[i2+2] as f64;
-                                let r3 = src[i3] as f64; let g3 = src[i3+1] as f64; let b3 = src[i3+2] as f64;
-                                sum_luma += 0.299*(r0+r1+r2+r3) + 0.587*(g0+g1+g2+g3) + 0.114*(b0+b1+b2+b3);
-                                sum_r += r0 + r1 + r2 + r3;
-                                sum_g += g0 + g1 + g2 + g3;
-                                sum_b += b0 + b1 + b2 + b3;
-                                pixel_count += 4;
-                                dx += 4;
-                            }
-                            for dx in end4..cell_w {
-                                let idx = (src_row + cell_x + dx) * 4;
-                                let r = src[idx] as f64;
-                                let g = src[idx + 1] as f64;
-                                let b = src[idx + 2] as f64;
-                                sum_luma += 0.299 * r + 0.587 * g + 0.114 * b;
-                                sum_r += r;
-                                sum_g += g;
-                                sum_b += b;
-                                pixel_count += 1;
-                            }
-                        }
+        let all_cells: Vec<Vec<CellData>> = (0..rows)
+            .into_par_iter()
+            .map(|row| {
+                let cy0 = row as f64 * cell_size_f64 + oy_f64;
+                let cy1 = (cy0 + cell_size_f64).min(h_f64);
+                let cy0 = cy0.max(0.0);
+                let iy0 = cy0.floor() as usize;
+                let iy1 = (cy1.ceil() as usize).min(height);
+                let mut row_cells = Vec::with_capacity(cols);
 
-                        let np = pixel_count.max(1) as f64;
-                        let avg_luma = sum_luma * RCP_255 / np;
-                        let avg_r = (sum_r * RCP_255 / np) as f32;
-                        let avg_g = (sum_g * RCP_255 / np) as f32;
-                        let avg_b = (sum_b * RCP_255 / np) as f32;
+                for col in 0..cols {
+                    let cx0 = col as f64 * cell_size_f64 + ox_f64;
+                    let cx1 = (cx0 + cell_size_f64).min(w_f64);
+                    let cx0 = cx0.max(0.0);
+                    let ix0 = cx0.floor() as usize;
+                    let ix1 = (cx1.ceil() as usize).min(width);
 
-                        let adjusted = ((avg_luma - 0.5) * contrast_factor + 0.5
-                            + (brightness - 0.5))
-                        .clamp(0.0, 1.0);
+                    let mut sum_luma = 0.0f64;
+                    let mut sum_r = 0.0f64;
+                    let mut sum_g = 0.0f64;
+                    let mut sum_b = 0.0f64;
+                    let mut total_weight = 0.0f64;
 
-                        let luma = if invert { 1.0 - adjusted } else { adjusted };
-                        let raw = ((luma * (charset_len - 1) as f64).round() as usize)
-                            .min(charset_len - 1);
-                        let char_idx = charset_len - 1 - raw;
+                    for iy in iy0..iy1 {
+                        let py0 = iy as f64;
+                        let py1 = py0 + 1.0;
+                        let wy = (py1.min(cy1) - py0.max(cy0)).max(0.0);
+                        let src_row = iy * width;
 
-                        strip_cells.push(CellMeta { char_idx, avg_r, avg_g, avg_b });
-                    }
-                    strip_cells
-                })
-                .collect();
+                        for ix in ix0..ix1 {
+                            let px0 = ix as f64;
+                            let px1 = px0 + 1.0;
+                            let wx = (px1.min(cx1) - px0.max(cx0)).max(0.0);
+                            let w = wx * wy;
 
-            // Merge parallel results into bins
-            for (i, strip_cells) in all_bins.into_iter().enumerate() {
-                binned.bins[i] = strip_cells;
-            }
-
-            // ── Cell rendering (O(N) strip lookup, no filtering) ──
-            let strip_height = font_size;
-            let strip_bytes = width * strip_height * 4;
-
-            dst.par_chunks_mut(strip_bytes)
-                .enumerate()
-                .for_each(|(strip_idx, strip)| {
-                    let strip_start_row = strip_idx * strip_height;
-                    let strip_end_row = (strip_start_row + strip_height).min(height);
-
-                    let strip_cells = &binned.bins[strip_idx];
-
-                    for (col, cell) in strip_cells.iter().enumerate() {
-                        let cell_y = strip_idx * font_size;
-                        let cell_x = col * font_size;
-                        let cell_w = font_size.min(width - cell_x);
-                        let cell_h = font_size.min(height - cell_y);
-
-                        let bitmap = &bitmaps[cell.char_idx];
-                        let bm_w = bitmap.width as usize;
-                        let bm_h = bitmap.height as usize;
-
-                        let offset_x = (cache_font_size.saturating_sub(bm_w)) / 2;
-                        let offset_y = (cache_font_size.saturating_sub(bm_h)) / 2;
-
-                        let (fg_r, fg_g, fg_b): (f32, f32, f32) = match color_mode {
-                            ColorMode::Grayscale => (1.0, 1.0, 1.0),
-                            ColorMode::Colored => (cell.avg_r, cell.avg_g, cell.avg_b),
-                            ColorMode::GreenTerminal => (0.0, 1.0, 0.0),
-                        };
-
-                        for dy in 0..cell_h {
-                            let abs_y = cell_y + dy;
-                            if abs_y < strip_start_row || abs_y >= strip_end_row {
-                                continue;
-                            }
-                            let strip_row = abs_y - strip_start_row;
-                            let out_row = strip_row * width;
-                            let gy_base = dy as isize - offset_y as isize;
-
-                            for dx in 0..cell_w {
-                                let out_idx = (out_row + cell_x + dx) * 4;
-                                let gx = dx as isize - offset_x as isize;
-
-                                let glyph_alpha: f32 = if gx >= 0
-                                    && (gx as usize) < bm_w
-                                    && gy_base >= 0
-                                    && (gy_base as usize) < bm_h
-                                {
-                                    bitmap.data[(gy_base as usize) * bm_w + gx as usize]
-                                        as f32 / 255.0
-                                } else {
-                                    0.0
-                                };
-
-                                let fa = glyph_alpha;
-                                let out_r = (fg_r * fa).clamp(0.0, 1.0);
-                                let out_g = (fg_g * fa).clamp(0.0, 1.0);
-                                let out_b = (fg_b * fa).clamp(0.0, 1.0);
-                                let out_a = (fa + (1.0 - fa) * bg_alpha).clamp(0.0, 1.0);
-
-                                strip[out_idx] = (out_r * 255.0).round() as u8;
-                                strip[out_idx + 1] = (out_g * 255.0).round() as u8;
-                                strip[out_idx + 2] = (out_b * 255.0).round() as u8;
-                                strip[out_idx + 3] = (out_a * 255.0).round() as u8;
-                            }
+                            let idx = (src_row + ix) * 4;
+                            let r = src[idx] as f64;
+                            let g = src[idx + 1] as f64;
+                            let b = src[idx + 2] as f64;
+                            sum_luma += (0.2126 * r + 0.7152 * g + 0.0722 * b) * w;
+                            sum_r += r * w;
+                            sum_g += g * w;
+                            sum_b += b * w;
+                            total_weight += w;
                         }
                     }
-                });
-        });
+
+                    let inv = if total_weight > 0.0 { 1.0 / total_weight } else { 0.0 };
+                    let avg_luma = sum_luma * RCP_255 * inv;
+                    let avg_r = (sum_r * RCP_255 * inv) as f32;
+                    let avg_g = (sum_g * RCP_255 * inv) as f32;
+                    let avg_b = (sum_b * RCP_255 * inv) as f32;
+
+                    let adjusted = ((avg_luma - 0.5) * contrast_factor + 0.5
+                        + (brightness - 0.5))
+                    .clamp(0.0, 1.0);
+
+                    let luma = if invert { 1.0 - adjusted } else { adjusted };
+                    let raw = ((luma * (charset_len - 1) as f64).round() as usize)
+                        .min(charset_len.saturating_sub(1));
+                    let char_idx = charset_len.saturating_sub(1).saturating_sub(raw);
+
+                    row_cells.push(CellData { char_idx, avg_r, avg_g, avg_b });
+                }
+                row_cells
+            })
+            .collect();
+
+        // ── Cell rendering: per-output-row, parallel ───────────
+        let row_bytes = width * 4;
+        dst.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(iy, row)| {
+                let row_f = iy as f32;
+                let grid_row = ((row_f - oy) / cell_size).floor() as isize;
+                if grid_row < 0 || grid_row as usize >= rows {
+                    // outside grid → fill with background
+                    for ix in 0..width {
+                        let o = ix * 4;
+                        row[o] = (bg_r * 255.0).round() as u8;
+                        row[o + 1] = (bg_g * 255.0).round() as u8;
+                        row[o + 2] = (bg_b * 255.0).round() as u8;
+                        row[o + 3] = (bg_a * 255.0).round() as u8;
+                    }
+                    return;
+                }
+                let r = grid_row as usize;
+                let row_cells = &all_cells[r];
+                let cell_y0 = r as f32 * cell_size + oy;
+
+                for (col, cell) in row_cells.iter().enumerate() {
+                    let cell_x0 = col as f32 * cell_size + ox;
+                    let bitmap = &bitmaps[cell.char_idx];
+                    let bm_w = bitmap.width;
+                    let bm_h = bitmap.height;
+                    if bm_w == 0 || bm_h == 0 { continue; }
+
+                    let (fg_r, fg_g, fg_b): (f32, f32, f32) = match color_mode {
+                        ColorMode::Grayscale => (1.0, 1.0, 1.0),
+                        ColorMode::Colored => (cell.avg_r, cell.avg_g, cell.avg_b),
+                        ColorMode::GreenTerminal => (0.0, 1.0, 0.0),
+                    };
+
+                    let ix0 = (cell_x0.floor() as isize).max(0) as usize;
+                    let ix1 = ((cell_x0 + cell_size).ceil() as isize).max(0) as usize;
+                    let ix1 = ix1.min(width);
+
+                    let cos_a = self.font_rotation.to_radians().cos();
+                    let sin_a = self.font_rotation.to_radians().sin();
+
+                    for ix in ix0..ix1 {
+                        let lx = (ix as f32 + 0.5 - cell_x0) / cell_size;
+                        let ly = (row_f + 0.5 - cell_y0) / cell_size;
+                        // Rotation around cell center
+                        let rx = (lx - 0.5) * cos_a - (ly - 0.5) * sin_a + 0.5;
+                        let ry = (lx - 0.5) * sin_a + (ly - 0.5) * cos_a + 0.5;
+                        let bm_y = sample_glyph_y(ry, bm_h, cell_size, self.font_fill, self.font_scale_y);
+                        if bm_y >= bm_h { continue; }
+                        let bm_x = sample_glyph_x(rx, bm_w, cell_size, self.font_fill, self.font_scale_x);
+                        if bm_x >= bm_w { continue; }
+                        let glyph_alpha = bitmap.data[bm_y as usize * bm_w as usize + bm_x as usize] as f32 / 255.0;
+
+                        let fa = glyph_alpha;
+                        let o = ix * 4;
+                        row[o] = (fg_r * fa + bg_r * (1.0 - fa)).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                        row[o + 1] = (fg_g * fa + bg_g * (1.0 - fa)).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                        row[o + 2] = (fg_b * fa + bg_b * (1.0 - fa)).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                        row[o + 3] = (fa + (1.0 - fa) * bg_a).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                    }
+                }
+            });
     }
 }

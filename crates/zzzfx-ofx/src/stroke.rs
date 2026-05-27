@@ -423,7 +423,7 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     let s_stride = srb.max(0) as usize;
     let d_stride = drb.max(0) as usize;
 
-    let depth = detect_pixel_depth(su, si).unwrap_or(4);
+    let depth = detect_pixel_depth(su, si).ok_or(OfxStat::kOfxStatErrFormat)?;
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 

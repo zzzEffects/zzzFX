@@ -20,6 +20,26 @@ use crate::shared::{
 };
 
 // ---------------------------------------------------------------------------
+// RAII guard for host image handles — ensures clipReleaseImage is called
+// even if a panic unwinds past the render function
+// ---------------------------------------------------------------------------
+
+struct ClipImageGuard {
+    img: OfxPropertySetHandle,
+    release_fn: unsafe extern "C" fn(OfxPropertySetHandle) -> OfxStatus,
+}
+
+impl Drop for ClipImageGuard {
+    fn drop(&mut self) {
+        if !self.img.is_null() {
+            unsafe {
+                let _ = (self.release_fn)(self.img);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Native OFX parameter names (for pixel_size_v enable/disable via square)
 // ---------------------------------------------------------------------------
 
@@ -563,8 +583,10 @@ unsafe fn action_render(
 
     let mut si: OfxPropertySetHandle = ptr::null_mut();
     cgi(sc, time, ptr::null(), &mut si).ofx_ok()?;
+    let _si_guard = ClipImageGuard { img: si, release_fn: cri };
     let mut di: OfxPropertySetHandle = ptr::null_mut();
     cgi(dc, time, ptr::null(), &mut di).ofx_ok()?;
+    let _di_guard = ClipImageGuard { img: di, release_fn: cri };
 
     let mut sp: *mut c_void = ptr::null_mut();
     pgp(si, kOfxImagePropData.as_ptr(), 0, &mut sp).ofx_ok()?;
@@ -596,7 +618,7 @@ unsafe fn action_render(
     let s_stride = srb.max(0) as usize;
     let d_stride = drb.max(0) as usize;
 
-    let depth = detect_pixel_depth(su, si).unwrap_or(4);
+    let depth = detect_pixel_depth(su, si).ok_or(OfxStat::kOfxStatErrFormat)?;
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
@@ -622,8 +644,7 @@ unsafe fn action_render(
         }
     });
 
-    let _ = cri(si);
-    let _ = cri(di);
+    // Image handles released by ClipImageGuard drop
     Ok(())
 }
 

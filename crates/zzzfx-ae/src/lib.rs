@@ -5,7 +5,7 @@ mod shared;
 
 use after_effects::{self as ae, Error, Layer};
 use zzzfx_core::{i18n, settings::{Settings, TrKey}};
-use shared::{ParamID, apply_settings_list, global_setup_common, pre_render_common, map_params, update_controls_disabled, copy_layer_to_contiguous, copy_contiguous_to_layer};
+use shared::{ParamID, IDExt, apply_settings_list, global_setup_common, pre_render_common, map_params, update_controls_disabled, copy_layer_to_contiguous, copy_contiguous_to_layer};
 
 // ---------------------------------------------------------------------------
 // Effect-specific types selected by cargo feature

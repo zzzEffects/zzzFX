@@ -27,6 +27,7 @@ pub struct ZzzPixelArt {
     pub pixel_size_h: f32,
     pub pixel_size_v: f32,
     pub square: bool,
+    pub use_same_integer: bool,
     pub color_levels: f32,
     pub dithering: Dithering,
     pub dithering_amount: f32,
@@ -43,9 +44,10 @@ pub struct ZzzPixelArt {
 impl Default for ZzzPixelArt {
     fn default() -> Self {
         Self {
-            pixel_size_h: 0.001,
-            pixel_size_v: 0.001,
+            pixel_size_h: 0.5,
+            pixel_size_v: 0.5,
             square: true,
+            use_same_integer: true,
             color_levels: 16.0,
             dithering: Dithering::None,
             dithering_amount: 0.5,
@@ -73,8 +75,9 @@ pub mod setting_id {
 
     pub const PIXEL_SIZE_H:     SID = setting_id!("pixel_size_h", pixel_size_h);
     pub const PIXEL_SIZE_V:     SID = setting_id!("pixel_size_v", pixel_size_v);
-    pub const SQUARE:           SID = setting_id!("square", square);
-    pub const COLOR_LEVELS:     SID = setting_id!("color_levels", color_levels);
+    pub const SQUARE:              SID = setting_id!("square", square);
+    pub const USE_SAME_INTEGER:     SID = setting_id!("use_same_integer", use_same_integer);
+    pub const COLOR_LEVELS:         SID = setting_id!("color_levels", color_levels);
     pub const DITHERING:        SID = setting_id!("dithering", dithering);
     pub const DITHERING_AMOUNT: SID = setting_id!("dithering_amount", dithering_amount);
     pub const SHOW_GRID:        SID = setting_id!("show_grid", show_grid);
@@ -100,7 +103,7 @@ impl Settings for ZzzPixelArtFullSettings {
                 label_key: TrKey::ParamPixelSizeH,
                 description_key: Some(TrKey::ParamPixelSizeHDesc),
                 kind: SettingKind::FloatRange {
-                    range: 0.0..=1.0,
+                    range: 0.0..=100.0,
                     logarithmic: false,
                 },
                 id: setting_id::PIXEL_SIZE_H,
@@ -109,7 +112,7 @@ impl Settings for ZzzPixelArtFullSettings {
                 label_key: TrKey::ParamPixelSizeV,
                 description_key: Some(TrKey::ParamPixelSizeVDesc),
                 kind: SettingKind::FloatRange {
-                    range: 0.0..=1.0,
+                    range: 0.0..=100.0,
                     logarithmic: false,
                 },
                 id: setting_id::PIXEL_SIZE_V,
@@ -119,6 +122,12 @@ impl Settings for ZzzPixelArtFullSettings {
                 description_key: Some(TrKey::ParamSquareDesc),
                 kind: SettingKind::Boolean,
                 id: setting_id::SQUARE,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamUseSamePixelSize,
+                description_key: Some(TrKey::ParamUseSamePixelSizeDesc),
+                kind: SettingKind::Boolean,
+                id: setting_id::USE_SAME_INTEGER,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamColorLevels,

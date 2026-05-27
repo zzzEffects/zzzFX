@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! GPU-accelerated ASCII art rendering via wgpu compute shader.
 //!
 //! ## Architecture
@@ -69,7 +70,7 @@ pub(crate) fn try_render(
         return Ok(false);
     }
 
-    let cell_size = settings.font_size.clamp(6, 64) as u32;
+    let cell_size = (settings.font_size * 256.0 / 100.0).round() as u32;
     let w = width as u32;
     let h = height as u32;
     let charset_len = cache.bitmaps.len() as u32;
@@ -103,7 +104,7 @@ pub(crate) fn try_render(
         contrast: settings.contrast.clamp(0.0, 1.0),
         invert_luma: if settings.invert_luma { 1 } else { 0 },
         color_mode: settings.color_mode as u32,
-        bg_alpha: settings.background_alpha.clamp(0.0, 1.0),
+        bg_alpha: settings.bg_color_a.clamp(0.0, 1.0),
         _pad: [0; 1],
     };
 

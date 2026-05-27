@@ -51,12 +51,21 @@ pub struct ZzzAsciiArt {
     pub use_korean: bool,
     pub use_custom: bool,
     pub custom_chars: String,
-    pub font_size: i32,
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub font_size: f32,
+    pub font_fill: bool,
+    pub font_scale_x: f32,
+    pub font_scale_y: f32,
+    pub font_rotation: f32,
     pub brightness: f32,
     pub contrast: f32,
     pub invert_luma: bool,
     pub color_mode: ColorMode,
-    pub background_alpha: f32,
+    pub bg_color_r: f32,
+    pub bg_color_g: f32,
+    pub bg_color_b: f32,
+    pub bg_color_a: f32,
     pub font_name: String,
 }
 
@@ -111,12 +120,21 @@ impl Default for ZzzAsciiArt {
             use_korean: false,
             use_custom: false,
             custom_chars: String::new(),
-            font_size: 8,
+            pos_x: 0.5,
+            pos_y: 0.5,
+            font_size: 5.0,
+            font_fill: false,
+            font_scale_x: 1.0,
+            font_scale_y: 1.0,
+            font_rotation: 0.0,
             brightness: 0.5,
             contrast: 0.5,
             invert_luma: false,
             color_mode: ColorMode::Colored,
-            background_alpha: 0.0,
+            bg_color_r: 0.0,
+            bg_color_g: 0.0,
+            bg_color_b: 0.0,
+            bg_color_a: 0.0,
             font_name: String::new(),
         }
     }
@@ -139,12 +157,21 @@ pub struct ZzzAsciiArtFullSettings {
     pub use_korean: bool,
     pub use_custom: bool,
     pub custom_chars: String,
-    pub font_size: i32,
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub font_size: f32,
+    pub font_fill: bool,
+    pub font_scale_x: f32,
+    pub font_scale_y: f32,
+    pub font_rotation: f32,
     pub brightness: f32,
     pub contrast: f32,
     pub invert_luma: bool,
     pub color_mode: ColorMode,
-    pub background_alpha: f32,
+    pub bg_color_r: f32,
+    pub bg_color_g: f32,
+    pub bg_color_b: f32,
+    pub bg_color_a: f32,
     pub font_name: String,
 }
 
@@ -168,12 +195,21 @@ impl From<&ZzzAsciiArt> for ZzzAsciiArtFullSettings {
             use_korean: value.use_korean,
             use_custom: value.use_custom,
             custom_chars: value.custom_chars.clone(),
+            pos_x: value.pos_x,
+            pos_y: value.pos_y,
             font_size: value.font_size,
+            font_fill: value.font_fill,
+            font_scale_x: value.font_scale_x,
+            font_scale_y: value.font_scale_y,
+            font_rotation: value.font_rotation,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
             color_mode: value.color_mode,
-            background_alpha: value.background_alpha,
+            bg_color_r: value.bg_color_r,
+            bg_color_g: value.bg_color_g,
+            bg_color_b: value.bg_color_b,
+            bg_color_a: value.bg_color_a,
             font_name: value.font_name.clone(),
         }
     }
@@ -193,12 +229,21 @@ impl From<ZzzAsciiArt> for ZzzAsciiArtFullSettings {
             use_korean: value.use_korean,
             use_custom: value.use_custom,
             custom_chars: value.custom_chars,
+            pos_x: value.pos_x,
+            pos_y: value.pos_y,
             font_size: value.font_size,
+            font_fill: value.font_fill,
+            font_scale_x: value.font_scale_x,
+            font_scale_y: value.font_scale_y,
+            font_rotation: value.font_rotation,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
             color_mode: value.color_mode,
-            background_alpha: value.background_alpha,
+            bg_color_r: value.bg_color_r,
+            bg_color_g: value.bg_color_g,
+            bg_color_b: value.bg_color_b,
+            bg_color_a: value.bg_color_a,
             font_name: value.font_name,
         }
     }
@@ -218,12 +263,21 @@ impl From<&ZzzAsciiArtFullSettings> for ZzzAsciiArt {
             use_korean: value.use_korean,
             use_custom: value.use_custom,
             custom_chars: value.custom_chars.clone(),
+            pos_x: value.pos_x,
+            pos_y: value.pos_y,
             font_size: value.font_size,
+            font_fill: value.font_fill,
+            font_scale_x: value.font_scale_x,
+            font_scale_y: value.font_scale_y,
+            font_rotation: value.font_rotation,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
             color_mode: value.color_mode,
-            background_alpha: value.background_alpha,
+            bg_color_r: value.bg_color_r,
+            bg_color_g: value.bg_color_g,
+            bg_color_b: value.bg_color_b,
+            bg_color_a: value.bg_color_a,
             font_name: value.font_name.clone(),
         }
     }
@@ -243,12 +297,21 @@ impl From<ZzzAsciiArtFullSettings> for ZzzAsciiArt {
             use_korean: value.use_korean,
             use_custom: value.use_custom,
             custom_chars: value.custom_chars,
+            pos_x: value.pos_x,
+            pos_y: value.pos_y,
             font_size: value.font_size,
+            font_fill: value.font_fill,
+            font_scale_x: value.font_scale_x,
+            font_scale_y: value.font_scale_y,
+            font_rotation: value.font_rotation,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
             color_mode: value.color_mode,
-            background_alpha: value.background_alpha,
+            bg_color_r: value.bg_color_r,
+            bg_color_g: value.bg_color_g,
+            bg_color_b: value.bg_color_b,
+            bg_color_a: value.bg_color_a,
             font_name: value.font_name,
         }
     }
@@ -274,12 +337,21 @@ pub mod setting_id {
     pub const USE_HIRAGANA:     SID = setting_id!("use_hiragana", use_hiragana);
     pub const USE_KOREAN:       SID = setting_id!("use_korean", use_korean);
     pub const USE_CUSTOM:       SID = setting_id!("use_custom", use_custom);
+    pub const POS_X:            SID = setting_id!("pos_x", pos_x);
+    pub const POS_Y:            SID = setting_id!("pos_y", pos_y);
     pub const FONT_SIZE:        SID = setting_id!("font_size", font_size);
+    pub const FONT_FILL:        SID = setting_id!("font_fill", font_fill);
+    pub const FONT_SCALE_X:     SID = setting_id!("font_scale_x", font_scale_x);
+    pub const FONT_SCALE_Y:     SID = setting_id!("font_scale_y", font_scale_y);
+    pub const FONT_ROTATION:    SID = setting_id!("font_rotation", font_rotation);
     pub const BRIGHTNESS:       SID = setting_id!("brightness", brightness);
     pub const CONTRAST:         SID = setting_id!("contrast", contrast);
     pub const INVERT_LUMA:      SID = setting_id!("invert_luma", invert_luma);
     pub const COLOR_MODE:       SID = setting_id!("color_mode", color_mode);
-    pub const BACKGROUND_ALPHA: SID = setting_id!("background_alpha", background_alpha);
+    pub const BG_COLOR_R: SID = setting_id!("bg_color_r", bg_color_r);
+    pub const BG_COLOR_G: SID = setting_id!("bg_color_g", bg_color_g);
+    pub const BG_COLOR_B: SID = setting_id!("bg_color_b", bg_color_b);
+    pub const BG_COLOR_A: SID = setting_id!("bg_color_a", bg_color_a);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +398,32 @@ impl Settings for ZzzAsciiArtFullSettings {
             SettingDescriptor {
                 label_key: TrKey::ParamAsciiFontSize,
                 description_key: Some(TrKey::ParamAsciiFontSizeDesc),
-                kind: SettingKind::IntRange { range: 4..=64 },
+                kind: SettingKind::FloatRange { range: 0.0..=100.0, logarithmic: false },
                 id: setting_id::FONT_SIZE,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamAsciiFontFill,
+                description_key: Some(TrKey::ParamAsciiFontFillDesc),
+                kind: SettingKind::Boolean,
+                id: setting_id::FONT_FILL,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamAsciiFontScaleX,
+                description_key: Some(TrKey::ParamAsciiFontScaleXDesc),
+                kind: SettingKind::FloatRange { range: 0.1..=10.0, logarithmic: false },
+                id: setting_id::FONT_SCALE_X,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamAsciiFontScaleY,
+                description_key: Some(TrKey::ParamAsciiFontScaleYDesc),
+                kind: SettingKind::FloatRange { range: 0.1..=10.0, logarithmic: false },
+                id: setting_id::FONT_SCALE_Y,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamAsciiFontRotation,
+                description_key: Some(TrKey::ParamAsciiFontRotationDesc),
+                kind: SettingKind::FloatRange { range: -360.0..=360.0, logarithmic: false },
+                id: setting_id::FONT_ROTATION,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamAsciiBrightness,
@@ -370,12 +466,6 @@ impl Settings for ZzzAsciiArtFullSettings {
                     ],
                 },
                 id: setting_id::COLOR_MODE,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamAsciiBackgroundAlpha,
-                description_key: Some(TrKey::ParamAsciiBackgroundAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::BACKGROUND_ALPHA,
             },
         ]
         .into_boxed_slice()

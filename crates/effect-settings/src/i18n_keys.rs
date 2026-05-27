@@ -408,6 +408,10 @@ i18n_keys! {
         NativeAsciiFontChoiceHint = "Select a monospace font for character rendering.";
         NativeAsciiFontAutoDetect = "Auto-detect";
         NativeAsciiCustomChars = "Custom Characters";
+        NativeAsciiPosition = "Position";
+        NativeAsciiPositionHint = "Normalized position of the character grid (0-1). 0.5 = center.";
+        NativeAsciiBgColor = "Background Color";
+        NativeAsciiBgColorHint = "Color of the background behind characters.";
         NativeAsciiCustomCharsHint = "Characters ordered from darkest to lightest. Only used when Character Set is 'Custom'.";
 
         // ── ASCII Art: generic param labels ────────────
@@ -432,7 +436,15 @@ i18n_keys! {
         ParamAsciiUseCustom = "Custom";
         ParamAsciiUseCustomDesc = "Include user-defined custom characters.";
         ParamAsciiFontSize = "Font Size";
-        ParamAsciiFontSizeDesc = "Cell size in pixels. Larger values produce fewer, larger characters.";
+        ParamAsciiFontSizeDesc = "Cell size as a fraction of the smaller output dimension. 5 on 1920×1080 = 54 px.";
+        ParamAsciiFontFill = "Font Fill";
+        ParamAsciiFontFillDesc = "When enabled, the glyph is scaled to fill the entire cell. When disabled, the glyph is shown at native size, centered.";
+        ParamAsciiFontScaleX = "Font Stretch X";
+        ParamAsciiFontScaleXDesc = "Horizontal stretch factor for glyphs within each cell. 1.0 = native size.";
+        ParamAsciiFontScaleY = "Font Stretch Y";
+        ParamAsciiFontScaleYDesc = "Vertical stretch factor for glyphs within each cell. 1.0 = native size.";
+        ParamAsciiFontRotation = "Font Rotation";
+        ParamAsciiFontRotationDesc = "Rotation angle in degrees for glyphs within each cell.";
         ParamAsciiBrightness = "Brightness";
         ParamAsciiBrightnessDesc = "Pre-mapping brightness adjustment. 0.5 is neutral, 0 = darker, 1 = brighter.";
         ParamAsciiContrast = "Contrast";
@@ -441,8 +453,6 @@ i18n_keys! {
         ParamAsciiInvertLumaDesc = "When enabled, dark source areas map to light characters and vice versa.";
         ParamAsciiColorMode = "Color Mode";
         ParamAsciiColorModeDesc = "How to color the output characters.";
-        ParamAsciiBackgroundAlpha = "Background Opacity";
-        ParamAsciiBackgroundAlphaDesc = "Opacity of cell backgrounds. 0 = transparent, 1 = solid black.";
         ParamAsciiFontName = "Font Name";
         ParamAsciiFontNameDesc = "Name of the system monospace font to use. Leave empty for auto-detection.";
         ParamAsciiCustomChars = "Custom Characters";
@@ -467,6 +477,8 @@ i18n_keys! {
         ParamPixelSizeVDesc = "Vertical pixel block size as a fraction of output height. Ignored when 'Square' is enabled.";
         ParamSquare = "Square";
         ParamSquareDesc = "When enabled, vertical pixel size is locked to match horizontal. Disables the Vertical Pixel Size parameter.";
+        ParamUseSamePixelSize = "Use Same Pixel Size";
+        ParamUseSamePixelSizeDesc = "When enabled, all pixel blocks use the same integer pixel size. When disabled, cell sizes alternate (e.g. 20, 21, 20, 21) for smoother distribution of fractional sizes.";
         ParamColorLevels = "Color Levels";
         ParamColorLevelsDesc = "Number of color levels per channel. Lower values create fewer, more distinct color bands.";
         ParamDithering = "Dithering";

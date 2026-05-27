@@ -26,10 +26,17 @@ use crate::shared::{
 
 const FONT_CHOICE_PARAM: &CStr = c"font_choice";
 const FONT_NAME_PARAM: &CStr = c"font_name";
+const POS_PARAM: &CStr = c"position";
+const BG_COLOR_PARAM: &CStr = c"bg_color";
 const CUSTOM_CHARS_PARAM: &CStr = c"custom_chars";
 
 fn is_native_grouped_name(name: &str) -> bool {
-    matches!(name, "font_choice" | "font_name" | "custom_chars")
+    matches!(
+        name,
+        "font_choice" | "font_name" | "custom_chars"
+            | "bg_color_r" | "bg_color_g" | "bg_color_b" | "bg_color_a"
+            | "pos_x" | "pos_y"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +287,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let gp = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
     let ps = su.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
     let pi = su.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
+    let pd = su.property_suite.propSetDouble.ok_or(OfxStat::kOfxStatFailed)?;
     let pdef = su.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
     let defaults = ZzzAsciiArtFullSettings::default();
 
@@ -319,6 +327,72 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     // --- Parameter set ---
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     gp(desc, &mut param_set).ofx_ok()?;
+
+    // --- Native Choice: Font selection ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(
+            param_set,
+            kOfxParamTypeChoice.as_ptr(),
+            FONT_CHOICE_PARAM.as_ptr(),
+            &mut pp,
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxPropLabel.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeAsciiFontChoice).as_ptr(),
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxParamPropHint.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeAsciiFontChoiceHint).as_ptr(),
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxParamPropChoiceOption.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeAsciiFontAutoDetect).as_ptr(),
+        )
+        .ofx_ok()?;
+        let font_names = cached_font_names();
+        let name_cstrs: Vec<CString> = font_names
+            .iter()
+            .filter_map(|n| CString::new(n.as_str()).ok())
+            .collect();
+        for (i, name_cstr) in name_cstrs.iter().enumerate() {
+            ps(
+                pp,
+                kOfxParamPropChoiceOption.as_ptr(),
+                (i + 1) as i32,
+                name_cstr.as_ptr(),
+            )
+            .ofx_ok()?;
+        }
+        let pi2 = d.suites.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
+        pi2(pp, kOfxParamPropDefault.as_ptr(), 0, 0).ofx_ok()?;
+    }
+
+    // --- Native String (hidden): font_name persistence ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(
+            param_set,
+            kOfxParamTypeString.as_ptr(),
+            FONT_NAME_PARAM.as_ptr(),
+            &mut pp,
+        )
+        .ofx_ok()?;
+        let pi2 = d.suites.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
+        pi2(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
+        pi2(pp, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
+        let empty = CString::new("").unwrap_or_else(|_| CString::new("").unwrap());
+        ps(pp, kOfxParamPropDefault.as_ptr(), 0, empty.as_ptr()).ofx_ok()?;
+    }
 
     let pen = CString::new(i18n::tr(TrKey::CommonEnabled))
         .unwrap_or_else(|_| CString::new("Enabled").unwrap());
@@ -416,13 +490,13 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         }
     }
 
-    // --- Native Choice: Font selection ---
+    // --- Native Double2D: Position ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
         pdef(
             param_set,
-            kOfxParamTypeChoice.as_ptr(),
-            FONT_CHOICE_PARAM.as_ptr(),
+            kOfxParamTypeDouble2D.as_ptr(),
+            POS_PARAM.as_ptr(),
             &mut pp,
         )
         .ofx_ok()?;
@@ -430,58 +504,48 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
             pp,
             kOfxPropLabel.as_ptr(),
             0,
-            i18n::tr_cstr(TrKey::NativeAsciiFontChoice).as_ptr(),
+            i18n::tr_cstr(TrKey::NativeAsciiPosition).as_ptr(),
         )
         .ofx_ok()?;
         ps(
             pp,
             kOfxParamPropHint.as_ptr(),
             0,
-            i18n::tr_cstr(TrKey::NativeAsciiFontChoiceHint).as_ptr(),
+            i18n::tr_cstr(TrKey::NativeAsciiPositionHint).as_ptr(),
         )
         .ofx_ok()?;
-        // Option 0: Auto-detect
-        ps(
-            pp,
-            kOfxParamPropChoiceOption.as_ptr(),
-            0,
-            i18n::tr_cstr(TrKey::NativeAsciiFontAutoDetect).as_ptr(),
-        )
-        .ofx_ok()?;
-        // Options 1..N: installed font names
-        let font_names = cached_font_names();
-        let name_cstrs: Vec<CString> = font_names
-            .iter()
-            .filter_map(|n| CString::new(n.as_str()).ok())
-            .collect();
-        for (i, name_cstr) in name_cstrs.iter().enumerate() {
-            ps(
-                pp,
-                kOfxParamPropChoiceOption.as_ptr(),
-                (i + 1) as i32,
-                name_cstr.as_ptr(),
-            )
-            .ofx_ok()?;
-        }
-        let pi2 = d.suites.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
-        pi2(pp, kOfxParamPropDefault.as_ptr(), 0, 0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.5).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.5).ofx_ok()?;
     }
 
-    // --- Native String (hidden): font_name persistence ---
+    // --- Native RGBA: Background Color ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
         pdef(
             param_set,
-            kOfxParamTypeString.as_ptr(),
-            FONT_NAME_PARAM.as_ptr(),
+            kOfxParamTypeRGBA.as_ptr(),
+            BG_COLOR_PARAM.as_ptr(),
             &mut pp,
         )
         .ofx_ok()?;
-        let pi2 = d.suites.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
-        pi2(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
-        pi2(pp, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
-        let empty = CString::new("").unwrap_or_else(|_| CString::new("").unwrap());
-        ps(pp, kOfxParamPropDefault.as_ptr(), 0, empty.as_ptr()).ofx_ok()?;
+        ps(
+            pp,
+            kOfxPropLabel.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeAsciiBgColor).as_ptr(),
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxParamPropHint.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeAsciiBgColorHint).as_ptr(),
+        )
+        .ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 0.0).ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 0.0).ofx_ok()?;
     }
 
     Ok(())
@@ -496,7 +560,7 @@ unsafe fn action_get_regions_of_interest(
 }
 
 unsafe fn action_get_clip_preferences(outArgs: OfxPropertySetHandle) -> OfxResult<()> {
-    action_get_clip_preferences_common(&data()?.suites, outArgs, 0, kOfxImageOpaque)
+    action_get_clip_preferences_common(&data()?.suites, outArgs, 0, kOfxImageComponentRGBA)
 }
 
 unsafe fn action_instance_changed(
@@ -642,7 +706,7 @@ unsafe fn action_render(
     let s_stride = srb.max(0) as usize;
     let d_stride = drb.max(0) as usize;
 
-    let depth = detect_pixel_depth(su, si).unwrap_or(4);
+    let depth = detect_pixel_depth(su, si).ok_or(OfxStat::kOfxStatErrFormat)?;
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
@@ -684,6 +748,38 @@ unsafe fn apply_params(
             continue;
         }
         read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
+    }
+
+    // --- Native Double2D: Position ---
+    {
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(param_set, POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+        let mut x: f64 = 0.0;
+        let mut y: f64 = 0.0;
+        pgv(p, time, &mut x, &mut y).ofx_ok()?;
+        dst.pos_x = x as f32;
+        dst.pos_y = y as f32;
+    }
+
+    // --- Native RGBA: Background Color ---
+    {
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            BG_COLOR_PARAM.as_ptr(),
+            &mut p,
+            ptr::null_mut(),
+        )
+        .ofx_ok()?;
+        let mut r: f64 = 0.0;
+        let mut g: f64 = 0.0;
+        let mut b: f64 = 0.0;
+        let mut a: f64 = 0.0;
+        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
+        dst.bg_color_r = r as f32;
+        dst.bg_color_g = g as f32;
+        dst.bg_color_b = b as f32;
+        dst.bg_color_a = a as f32;
     }
 
     // --- Font name: read Choice param directly, fall back to hidden String ---

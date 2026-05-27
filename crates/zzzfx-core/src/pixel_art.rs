@@ -151,7 +151,7 @@ impl PixelArtProcessor for FallbackProcessor {
 static PROCESSOR: OnceLock<FallbackProcessor> = OnceLock::new();
 
 fn get_processor() -> &'static FallbackProcessor {
-    PROCESSOR.get_or_init(|| FallbackProcessor::new())
+    PROCESSOR.get_or_init(FallbackProcessor::new)
 }
 
 // ---------------------------------------------------------------------------
@@ -159,9 +159,33 @@ fn get_processor() -> &'static FallbackProcessor {
 // ---------------------------------------------------------------------------
 
 impl ZzzPixelArt {
+    /// Returns true if the effect is an identity for ALL frame dimensions.
+    /// This covers the pixel_size=0 case which always produces 1×1 blocks.
     pub fn is_identity(&self) -> bool {
-        // Pixel count depends on frame dimensions — cannot determine at settings level.
-        false
+        self.pixel_size_h <= 0.0
+            && self.pixel_size_v <= 0.0
+            && !self.show_grid
+            && self.color_levels >= 256.0
+            && matches!(self.dithering, Dithering::None)
+            && (self.contrast - 0.5).abs() < 0.001
+            && (self.saturation - 0.5).abs() < 0.001
+    }
+
+    /// Returns true when the effect would produce no visible change for the given frame size.
+    pub fn is_identity_for(&self, width: u32, height: u32) -> bool {
+        let pw = ((width as f32 * (self.pixel_size_h.clamp(0.0, 100.0) / 100.0)).round() as u32).clamp(1, width);
+        let ph = if self.square {
+            pw
+        } else {
+            ((height as f32 * (self.pixel_size_v.clamp(0.0, 100.0) / 100.0)).round() as u32).clamp(1, height)
+        };
+        pw == 1
+            && ph == 1
+            && !self.show_grid
+            && self.color_levels >= 256.0
+            && matches!(self.dithering, Dithering::None)
+            && (self.contrast - 0.5).abs() < 0.001
+            && (self.saturation - 0.5).abs() < 0.001
     }
 
     pub fn apply_effect(&self, src: &[u8], dst: &mut [u8], width: usize, height: usize) {
@@ -169,7 +193,9 @@ impl ZzzPixelArt {
         if src.len() < len || dst.len() < len || width == 0 || height == 0 {
             return;
         }
-        let _ = get_processor().process(self, src, dst, width, height);
+        if let Err(e) = get_processor().process(self, src, dst, width, height) {
+            eprintln!("[zzzfx] pixel art render failed: {e}");
+        }
     }
 }
 
@@ -184,13 +210,13 @@ fn cpu_render(
     width: usize,
     height: usize,
 ) {
-    // ── Compute pixel dimensions from fractions ─────────────────
-    let pixel_w = ((width as f32 * settings.pixel_size_h.clamp(0.0, 1.0)).round() as usize)
+    // ── Compute pixel dimensions from percentages ─────────────────
+    let pixel_w = ((width as f32 * (settings.pixel_size_h.clamp(0.0, 100.0) / 100.0)).round() as usize)
         .clamp(1, width);
     let pixel_h = if settings.square {
         pixel_w
     } else {
-        ((height as f32 * settings.pixel_size_v.clamp(0.0, 1.0)).round() as usize)
+        ((height as f32 * (settings.pixel_size_v.clamp(0.0, 100.0) / 100.0)).round() as usize)
             .clamp(1, height)
     };
 
@@ -208,77 +234,84 @@ fn cpu_render(
     let contrast_factor = 1.0 + (contrast - 0.5) * 2.0;
     let saturation_factor = 1.0 + (saturation - 0.5) * 2.0;
 
-    let cols = (width + pixel_w - 1) / pixel_w;
-    let rows = (height + pixel_h - 1) / pixel_h;
+    let cols = width.div_ceil(pixel_w);
+    let rows = height.div_ceil(pixel_h);
+
+    // ── Variable-cell path: per-column/row widths via Bresenham rounding ──
+    if !settings.use_same_integer {
+        cpu_render_variable(settings, src, dst, width, height);
+        return;
+    }
 
     // Stage 1: Parallel cell analysis — compute average color per cell,
     // apply contrast/saturation/ordered-dithering, then quantize
     // (skip quantization for Floyd-Steinberg — it handles it in pass 1b).
     let is_fs = matches!(settings.dithering, Dithering::FloydSteinberg);
 
-    let mut cells: Vec<[f32; 3]> = (0..rows)
+    let total_cells = rows * cols;
+    let mut cells: Vec<[f32; 4]> = (0..total_cells)
         .into_par_iter()
-        .flat_map(|row| {
+        .map(|cell_idx| {
+            let row = cell_idx / cols;
+            let col = cell_idx % cols;
             let cell_y = row * pixel_h;
             let cell_h = pixel_h.min(height - cell_y);
-            let mut row_cells: Vec<[f32; 3]> = Vec::with_capacity(cols);
+            let cell_x = col * pixel_w;
+            let cell_w = pixel_w.min(width - cell_x);
 
-            for col in 0..cols {
-                let cell_x = col * pixel_w;
-                let cell_w = pixel_w.min(width - cell_x);
+            let mut sum_r = 0.0f64;
+            let mut sum_g = 0.0f64;
+            let mut sum_b = 0.0f64;
+            let mut sum_a = 0.0f64;
+            let mut count = 0u64;
 
-                let mut sum_r = 0.0f64;
-                let mut sum_g = 0.0f64;
-                let mut sum_b = 0.0f64;
-                let mut count = 0u64;
-
-                for dy in 0..cell_h {
-                    let src_row = (cell_y + dy) * width;
-                    for dx in 0..cell_w {
-                        let i = (src_row + cell_x + dx) * 4;
-                        sum_r += src[i] as f64;
-                        sum_g += src[i + 1] as f64;
-                        sum_b += src[i + 2] as f64;
-                        count += 1;
-                    }
+            for dy in 0..cell_h {
+                let src_row = (cell_y + dy) * width;
+                for dx in 0..cell_w {
+                    let i = (src_row + cell_x + dx) * 4;
+                    sum_r += src[i] as f64;
+                    sum_g += src[i + 1] as f64;
+                    sum_b += src[i + 2] as f64;
+                    sum_a += src[i + 3] as f64;
+                    count += 1;
                 }
-
-                let np = count.max(1) as f64;
-                let mut r = (sum_r * RCP_255 / np) as f32;
-                let mut g = (sum_g * RCP_255 / np) as f32;
-                let mut b = (sum_b * RCP_255 / np) as f32;
-
-                // Apply contrast: (v - 0.5) * factor + 0.5
-                r = (((r as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
-                g = (((g as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
-                b = (((b as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
-
-                // Apply saturation: (v - lum) * factor + lum
-                let lum = 0.299_f64 * r as f64 + 0.587_f64 * g as f64 + 0.114_f64 * b as f64;
-                r = (((r as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
-                g = (((g as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
-                b = (((b as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
-
-                // Apply ordered dithering before quantization
-                if matches!(settings.dithering, Dithering::Ordered) {
-                    let bayer_val = BAYER_4X4[row % 4][col % 4];
-                    let noise = (bayer_val - 0.5) * dither_amount;
-                    r = (r + noise).clamp(0.0, 1.0);
-                    g = (g + noise).clamp(0.0, 1.0);
-                    b = (b + noise).clamp(0.0, 1.0);
-                }
-
-                // Quantize — skip for Floyd-Steinberg (handled in pass 1b)
-                if !is_fs {
-                    let levels_f = (color_levels - 1) as f32;
-                    r = (r * levels_f + 0.5).floor() / levels_f;
-                    g = (g * levels_f + 0.5).floor() / levels_f;
-                    b = (b * levels_f + 0.5).floor() / levels_f;
-                }
-
-                row_cells.push([r, g, b]);
             }
-            row_cells
+
+            let np = count.max(1) as f64;
+            let mut r = (sum_r * RCP_255 / np) as f32;
+            let mut g = (sum_g * RCP_255 / np) as f32;
+            let mut b = (sum_b * RCP_255 / np) as f32;
+            let a = (sum_a * RCP_255 / np) as f32;
+
+            // Apply contrast: (v - 0.5) * factor + 0.5
+            r = (((r as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
+            g = (((g as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
+            b = (((b as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
+
+            // Apply saturation: (v - lum) * factor + lum (Rec.709)
+            let lum = 0.2126_f64 * r as f64 + 0.7152_f64 * g as f64 + 0.0722_f64 * b as f64;
+            r = (((r as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
+            g = (((g as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
+            b = (((b as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
+
+            // Apply ordered dithering before quantization
+            if matches!(settings.dithering, Dithering::Ordered) {
+                let bayer_val = BAYER_4X4[row % 4][col % 4];
+                let noise = (bayer_val - 0.5) * dither_amount;
+                r = (r + noise).clamp(0.0, 1.0);
+                g = (g + noise).clamp(0.0, 1.0);
+                b = (b + noise).clamp(0.0, 1.0);
+            }
+
+            // Quantize — skip for Floyd-Steinberg (handled in pass 1b)
+            if !is_fs {
+                let levels_f = (color_levels - 1) as f32;
+                r = (r * levels_f + 0.5).floor() / levels_f;
+                g = (g * levels_f + 0.5).floor() / levels_f;
+                b = (b * levels_f + 0.5).floor() / levels_f;
+            }
+
+            [r, g, b, a]
         })
         .collect();
 
@@ -317,7 +350,7 @@ fn cpu_render(
                 for col in 0..cols {
                     let cell_x = col * pixel_w;
                     let cell_w = pixel_w.min(width - cell_x);
-                    let [cr, cg, cb] = cells[row * cols + col];
+                    let [cr, cg, cb, ca] = cells[row * cols + col];
 
                     for dy in 0..pixel_h {
                         let abs_y = cell_y + dy;
@@ -350,9 +383,208 @@ fn cpu_render(
                             strip[out_idx] = (out_r * 255.0).round() as u8;
                             strip[out_idx + 1] = (out_g * 255.0).round() as u8;
                             strip[out_idx + 2] = (out_b * 255.0).round() as u8;
-                            strip[out_idx + 3] = 255;
+                            strip[out_idx + 3] = (ca * 255.0).round() as u8;
                         }
                     }
+                }
+            }
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Variable-cell CPU render path (use_same_integer = false)
+// ---------------------------------------------------------------------------
+
+/// Compute per-column (or per-row) widths via Bresenham cumulative rounding.
+/// Returns (count, widths) where widths sum to `total` and each width is
+/// either floor(target) or ceil(target), except possibly the last.
+fn compute_variable_sizes(target: f32, total: usize) -> (usize, Vec<usize>) {
+    if target <= 0.5 {
+        return (1, vec![total]);
+    }
+    let mut starts = vec![0usize];
+    let mut i = 1;
+    loop {
+        let s = (i as f32 * target).round() as usize;
+        if s >= total {
+            break;
+        }
+        starts.push(s);
+        i += 1;
+    }
+    starts.push(total);
+    let count = starts.len() - 1;
+    let widths: Vec<usize> = starts.windows(2).map(|w| (w[1] - w[0]).max(1)).collect();
+    (count, widths)
+}
+
+fn cpu_render_variable(
+    settings: &ZzzPixelArt,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    height: usize,
+) {
+    let target_w = width as f32 * (settings.pixel_size_h.clamp(0.0, 100.0) / 100.0);
+    let target_h = if settings.square {
+        target_w
+    } else {
+        height as f32 * (settings.pixel_size_v.clamp(0.0, 100.0) / 100.0)
+    };
+
+    let (cols, col_widths) = compute_variable_sizes(target_w, width);
+    let (rows, row_heights) = compute_variable_sizes(target_h, height);
+
+    // Cumulative start positions
+    let col_starts: Vec<usize> = std::iter::once(0)
+        .chain(col_widths.iter().scan(0, |acc, w| {
+            *acc += w;
+            Some(*acc)
+        }))
+        .take(cols)
+        .collect();
+    let row_starts: Vec<usize> = std::iter::once(0)
+        .chain(row_heights.iter().scan(0, |acc, h| {
+            *acc += h;
+            Some(*acc)
+        }))
+        .take(rows)
+        .collect();
+
+    let color_levels = (settings.color_levels.clamp(2.0, 256.0).floor() as usize).max(2);
+    let dither_amount = settings.dithering_amount.clamp(0.0, 1.0);
+    let show_grid = settings.show_grid;
+    let grid_thickness = settings.grid_thickness.clamp(0.0, 1.0);
+    let grid_r = settings.grid_color_r.clamp(0.0, 1.0);
+    let grid_g = settings.grid_color_g.clamp(0.0, 1.0);
+    let grid_b = settings.grid_color_b.clamp(0.0, 1.0);
+    let grid_a = settings.grid_color_a.clamp(0.0, 1.0);
+    let contrast = settings.contrast.clamp(0.0, 1.0) as f64;
+    let saturation = settings.saturation.clamp(0.0, 1.0) as f64;
+
+    let contrast_factor = 1.0 + (contrast - 0.5) * 2.0;
+    let saturation_factor = 1.0 + (saturation - 0.5) * 2.0;
+    let is_fs = matches!(settings.dithering, Dithering::FloydSteinberg);
+
+    // Stage 1: Parallel cell analysis with per-cell dimensions
+    let total_cells = rows * cols;
+    let mut cells: Vec<[f32; 4]> = (0..total_cells)
+        .into_par_iter()
+        .map(|cell_idx| {
+            let row = cell_idx / cols;
+            let col = cell_idx % cols;
+            let cell_h = row_heights[row];
+            let cell_w = col_widths[col];
+            let cell_y = row_starts[row];
+            let cell_x = col_starts[col];
+
+            let mut sum_r = 0.0f64;
+            let mut sum_g = 0.0f64;
+            let mut sum_b = 0.0f64;
+            let mut sum_a = 0.0f64;
+            let mut count = 0u64;
+
+            for dy in 0..cell_h {
+                let src_row = (cell_y + dy) * width;
+                for dx in 0..cell_w {
+                    let i = (src_row + cell_x + dx) * 4;
+                    sum_r += src[i] as f64;
+                    sum_g += src[i + 1] as f64;
+                    sum_b += src[i + 2] as f64;
+                    sum_a += src[i + 3] as f64;
+                    count += 1;
+                }
+            }
+
+            let np = count.max(1) as f64;
+            let mut r = (sum_r * RCP_255 / np) as f32;
+            let mut g = (sum_g * RCP_255 / np) as f32;
+            let mut b = (sum_b * RCP_255 / np) as f32;
+            let a = (sum_a * RCP_255 / np) as f32;
+
+            r = (((r as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
+            g = (((g as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
+            b = (((b as f64 - 0.5) * contrast_factor + 0.5).clamp(0.0, 1.0)) as f32;
+
+            let lum = 0.2126_f64 * r as f64 + 0.7152_f64 * g as f64 + 0.0722_f64 * b as f64;
+            r = (((r as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
+            g = (((g as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
+            b = (((b as f64 - lum) * saturation_factor + lum).clamp(0.0, 1.0)) as f32;
+
+            if matches!(settings.dithering, Dithering::Ordered) {
+                let bayer_val = BAYER_4X4[row % 4][col % 4];
+                let noise = (bayer_val - 0.5) * dither_amount;
+                r = (r + noise).clamp(0.0, 1.0);
+                g = (g + noise).clamp(0.0, 1.0);
+                b = (b + noise).clamp(0.0, 1.0);
+            }
+
+            if !is_fs {
+                let levels_f = (color_levels - 1) as f32;
+                r = (r * levels_f + 0.5).floor() / levels_f;
+                g = (g * levels_f + 0.5).floor() / levels_f;
+                b = (b * levels_f + 0.5).floor() / levels_f;
+            }
+
+            [r, g, b, a]
+        })
+        .collect();
+
+    // Stage 1b: Floyd-Steinberg error diffusion
+    if is_fs {
+        floyd_steinberg_diffuse(&mut cells, cols, rows, color_levels, dither_amount);
+    }
+
+    // Stage 2: Fill destination pixels. Process cells in parallel via output rows.
+    // Each output row belongs to exactly one cell row, so we can parallelise by row.
+    dst.par_chunks_mut(width * 4)
+        .enumerate()
+        .for_each(|(y, out_row)| {
+            // Find which row this pixel y belongs to
+            let cell_row = match row_starts.binary_search(&y) {
+                Ok(r) => r,
+                Err(r) => r.saturating_sub(1),
+            };
+            if cell_row >= rows || y >= row_starts[cell_row] + row_heights[cell_row] {
+                return; // shouldn't happen
+            }
+
+            let cell_h = row_heights[cell_row];
+            let cell_y = row_starts[cell_row];
+            let dy = y - cell_y;
+
+            let grid_px_v = (grid_thickness * target_h).round() as usize;
+            let is_grid_row = show_grid && dy >= cell_h.saturating_sub(grid_px_v) && dy < cell_h;
+
+            for col in 0..cols {
+                let cell_w = col_widths[col];
+                let cell_x = col_starts[col];
+                let cell_end_x = cell_x + cell_w;
+                let [cr, cg, cb, ca] = cells[cell_row * cols + col];
+
+                let grid_px_h = (grid_thickness * target_w).round() as usize;
+                let grid_start_x = cell_end_x.saturating_sub(grid_px_h);
+
+                for x in cell_x..cell_end_x.min(width) {
+                    let out_idx = (x) * 4;
+                    let is_grid_col =
+                        show_grid && x >= grid_start_x && x < cell_end_x;
+                    let is_grid = is_grid_row || is_grid_col;
+
+                    let (out_r, out_g, out_b) = if is_grid {
+                        (
+                            cr * (1.0 - grid_a) + grid_r * grid_a,
+                            cg * (1.0 - grid_a) + grid_g * grid_a,
+                            cb * (1.0 - grid_a) + grid_b * grid_a,
+                        )
+                    } else {
+                        (cr, cg, cb)
+                    };
+
+                    out_row[out_idx] = (out_r * 255.0).round() as u8;
+                    out_row[out_idx + 1] = (out_g * 255.0).round() as u8;
+                    out_row[out_idx + 2] = (out_b * 255.0).round() as u8;
+                    out_row[out_idx + 3] = (ca * 255.0).round() as u8;
                 }
             }
         });
@@ -362,8 +594,8 @@ fn cpu_render(
 // Floyd-Steinberg error diffusion
 // ---------------------------------------------------------------------------
 
-fn floyd_steinberg_diffuse(
-    cells: &mut [[f32; 3]],
+pub(crate) fn floyd_steinberg_diffuse(
+    cells: &mut [[f32; 4]],
     cols: usize,
     rows: usize,
     color_levels: usize,
@@ -371,9 +603,9 @@ fn floyd_steinberg_diffuse(
 ) {
     let levels_f = (color_levels - 1) as f32;
 
-    // Save original unquantized values for blending (skip when dither_amount == 1.0)
+    // Save original unquantized RGB values for blending (skip when dither_amount == 1.0)
     let originals: Option<Vec<[f32; 3]>> = if dither_amount < 1.0 {
-        Some(cells.to_vec())
+        Some(cells.iter().map(|c| [c[0], c[1], c[2]]).collect())
     } else {
         None
     };
@@ -397,7 +629,7 @@ fn floyd_steinberg_diffuse(
                 cells[idx][1] = o[1] + (new_g - o[1]) * dither_amount;
                 cells[idx][2] = o[2] + (new_b - o[2]) * dither_amount;
             } else {
-                cells[idx] = [new_r, new_g, new_b];
+                cells[idx] = [new_r, new_g, new_b, cells[idx][3]];
             }
 
             // Compute error relative to the blended result, then diffuse
