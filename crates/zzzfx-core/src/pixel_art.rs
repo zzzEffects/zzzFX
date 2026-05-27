@@ -164,7 +164,6 @@ impl ZzzPixelArt {
     pub fn is_identity(&self) -> bool {
         self.pixel_size_h <= 0.0
             && self.pixel_size_v <= 0.0
-            && !self.show_grid
             && self.color_levels >= 256.0
             && matches!(self.dithering, Dithering::None)
             && (self.contrast - 0.5).abs() < 0.001
@@ -181,7 +180,6 @@ impl ZzzPixelArt {
         };
         pw == 1
             && ph == 1
-            && !self.show_grid
             && self.color_levels >= 256.0
             && matches!(self.dithering, Dithering::None)
             && (self.contrast - 0.5).abs() < 0.001
@@ -222,7 +220,6 @@ fn cpu_render(
 
     let color_levels = (settings.color_levels.clamp(2.0, 256.0).floor() as usize).max(2);
     let dither_amount = settings.dithering_amount.clamp(0.0, 1.0);
-    let show_grid = settings.show_grid;
     let grid_thickness = settings.grid_thickness.clamp(0.0, 1.0);
     let grid_r = settings.grid_color_r.clamp(0.0, 1.0);
     let grid_g = settings.grid_color_g.clamp(0.0, 1.0);
@@ -234,8 +231,20 @@ fn cpu_render(
     let contrast_factor = 1.0 + (contrast - 0.5) * 2.0;
     let saturation_factor = 1.0 + (saturation - 0.5) * 2.0;
 
-    let cols = width.div_ceil(pixel_w);
-    let rows = height.div_ceil(pixel_h);
+    if pixel_w == 0 || pixel_h == 0 {
+        return;
+    }
+    // Snap grid intersection to nearest cell boundary at (pos * frame_dim).
+    // Per ASCII Art: ox = pos*W - round(pos*W/cell)*cell
+    let px = settings.grid_position_x.clamp(0.0, 1.0);
+    let py = settings.grid_position_y.clamp(0.0, 1.0);
+    let ox = px * width as f32 - (px * width as f32 / pixel_w as f32).round() * pixel_w as f32;
+    let oy = py * height as f32 - (py * height as f32 / pixel_h as f32).round() * pixel_h as f32;
+    let off_x = ox.rem_euclid(pixel_w as f32).round() as usize % pixel_w;
+    let off_y = oy.rem_euclid(pixel_h as f32).round() as usize % pixel_h;
+
+    let cols = if off_x > 0 { (width - off_x).div_ceil(pixel_w) + 1 } else { width.div_ceil(pixel_w) };
+    let rows = if off_y > 0 { (height - off_y).div_ceil(pixel_h) + 1 } else { height.div_ceil(pixel_h) };
 
     // ── Variable-cell path: per-column/row widths via Bresenham rounding ──
     if !settings.use_same_integer {
@@ -254,10 +263,10 @@ fn cpu_render(
         .map(|cell_idx| {
             let row = cell_idx / cols;
             let col = cell_idx % cols;
-            let cell_y = row * pixel_h;
-            let cell_h = pixel_h.min(height - cell_y);
-            let cell_x = col * pixel_w;
-            let cell_w = pixel_w.min(width - cell_x);
+            let cell_y = if off_y > 0 && row == 0 { 0 } else if off_y > 0 { off_y + (row - 1) * pixel_h } else { row * pixel_h };
+            let cell_h = if off_y > 0 && row == 0 { off_y.min(height) } else { pixel_h.min(height - cell_y) };
+            let cell_x = if off_x > 0 && col == 0 { 0 } else if off_x > 0 { off_x + (col - 1) * pixel_w } else { col * pixel_w };
+            let cell_w = if off_x > 0 && col == 0 { off_x.min(width) } else { pixel_w.min(width - cell_x) };
 
             let mut sum_r = 0.0f64;
             let mut sum_g = 0.0f64;
@@ -320,72 +329,62 @@ fn cpu_render(
         floyd_steinberg_diffuse(&mut cells, cols, rows, color_levels, dither_amount);
     }
 
-    // Stage 2: Fill destination pixels with cell colors + grid overlay
-    // Hoist grid pixel constants outside the loop
-    let grid_px_h = if show_grid {
-        (grid_thickness * pixel_w as f32).round() as usize
-    } else {
-        0
-    };
-    let grid_px_v = if show_grid {
-        (grid_thickness * pixel_h as f32).round() as usize
-    } else {
-        0
-    };
+    // Stage 2: Fill destination pixels with cell colors + grid overlay.
+    // Grid alpha is multiplied by the cell's average alpha so that
+    // transparent regions show a proportionally weaker grid.
+    let grid_px_h = (grid_thickness * pixel_w as f32).round() as usize;
+    let grid_px_v = (grid_thickness * pixel_h as f32).round() as usize;
 
-    let strip_height = pixel_h;
-    let strip_bytes = width * strip_height * 4;
-
-    dst.par_chunks_mut(strip_bytes)
+    dst.par_chunks_mut(width * 4)
         .enumerate()
-        .for_each(|(strip_idx, strip)| {
-            let strip_start_y = strip_idx * strip_height;
-            let strip_end_y = (strip_start_y + strip_height).min(height);
+        .for_each(|(y, out_row)| {
+            // Determine cell row from pixel y
+            let (crow, _cell_y, cell_h, dy) = if off_y > 0 && y < off_y {
+                (0usize, 0usize, off_y, y)
+            } else if off_y > 0 {
+                let y_rel = y - off_y;
+                let r = 1 + y_rel / pixel_h;
+                let cy = off_y + (r - 1) * pixel_h;
+                (r, cy, pixel_h.min(height - cy), y - cy)
+            } else {
+                let r = y / pixel_h;
+                (r, r * pixel_h, pixel_h.min(height - r * pixel_h), y - r * pixel_h)
+            };
+            if crow >= rows { return; }
 
-            for row in 0..rows {
-                let cell_y = row * pixel_h;
-                if cell_y >= strip_end_y || (cell_y + pixel_h) <= strip_start_y {
-                    continue;
-                }
-                for col in 0..cols {
-                    let cell_x = col * pixel_w;
-                    let cell_w = pixel_w.min(width - cell_x);
-                    let [cr, cg, cb, ca] = cells[row * cols + col];
+            let is_grid_row = dy >= cell_h.saturating_sub(grid_px_v);
 
-                    for dy in 0..pixel_h {
-                        let abs_y = cell_y + dy;
-                        if abs_y < strip_start_y || abs_y >= strip_end_y {
-                            continue;
-                        }
-                        let strip_row = abs_y - strip_start_y;
-                        let out_row_base = strip_row * width;
+            for col in 0..cols {
+                let (cell_x, cell_w) = if off_x > 0 && col == 0 {
+                    (0usize, off_x.min(width))
+                } else if off_x > 0 {
+                    let cx = off_x + (col - 1) * pixel_w;
+                    (cx, pixel_w.min(width - cx))
+                } else {
+                    let cx = col * pixel_w;
+                    (cx, pixel_w.min(width - cx))
+                };
 
-                        let is_grid_row =
-                            show_grid && dy >= pixel_h - grid_px_v && dy < pixel_h;
+                let [cr, cg, cb, ca] = cells[crow * cols + col];
+                let ga = grid_a * ca;
+                let grid_start_x = (cell_x + cell_w).saturating_sub(grid_px_h);
 
-                        for dx in 0..cell_w {
-                            let out_idx = (out_row_base + cell_x + dx) * 4;
-
-                            let is_grid_col =
-                                show_grid && dx >= cell_w - grid_px_h && dx < cell_w;
-                            let is_grid = is_grid_row || is_grid_col;
-
-                            let (out_r, out_g, out_b) = if is_grid {
-                                (
-                                    cr * (1.0 - grid_a) + grid_r * grid_a,
-                                    cg * (1.0 - grid_a) + grid_g * grid_a,
-                                    cb * (1.0 - grid_a) + grid_b * grid_a,
-                                )
-                            } else {
-                                (cr, cg, cb)
-                            };
-
-                            strip[out_idx] = (out_r * 255.0).round() as u8;
-                            strip[out_idx + 1] = (out_g * 255.0).round() as u8;
-                            strip[out_idx + 2] = (out_b * 255.0).round() as u8;
-                            strip[out_idx + 3] = (ca * 255.0).round() as u8;
-                        }
-                    }
+                for x in cell_x..(cell_x + cell_w).min(width) {
+                    let out_idx = x * 4;
+                    let is_grid = is_grid_row || (x >= grid_start_x);
+                    let (out_r, out_g, out_b) = if is_grid {
+                        (
+                            cr * (1.0 - ga) + grid_r * ga,
+                            cg * (1.0 - ga) + grid_g * ga,
+                            cb * (1.0 - ga) + grid_b * ga,
+                        )
+                    } else {
+                        (cr, cg, cb)
+                    };
+                    out_row[out_idx] = (out_r * 255.0).round() as u8;
+                    out_row[out_idx + 1] = (out_g * 255.0).round() as u8;
+                    out_row[out_idx + 2] = (out_b * 255.0).round() as u8;
+                    out_row[out_idx + 3] = (ca * 255.0).round() as u8;
                 }
             }
         });
@@ -395,29 +394,6 @@ fn cpu_render(
 // Variable-cell CPU render path (use_same_integer = false)
 // ---------------------------------------------------------------------------
 
-/// Compute per-column (or per-row) widths via Bresenham cumulative rounding.
-/// Returns (count, widths) where widths sum to `total` and each width is
-/// either floor(target) or ceil(target), except possibly the last.
-fn compute_variable_sizes(target: f32, total: usize) -> (usize, Vec<usize>) {
-    if target <= 0.5 {
-        return (1, vec![total]);
-    }
-    let mut starts = vec![0usize];
-    let mut i = 1;
-    loop {
-        let s = (i as f32 * target).round() as usize;
-        if s >= total {
-            break;
-        }
-        starts.push(s);
-        i += 1;
-    }
-    starts.push(total);
-    let count = starts.len() - 1;
-    let widths: Vec<usize> = starts.windows(2).map(|w| (w[1] - w[0]).max(1)).collect();
-    (count, widths)
-}
-
 fn cpu_render_variable(
     settings: &ZzzPixelArt,
     src: &[u8],
@@ -425,35 +401,58 @@ fn cpu_render_variable(
     width: usize,
     height: usize,
 ) {
-    let target_w = width as f32 * (settings.pixel_size_h.clamp(0.0, 100.0) / 100.0);
+    let target_w = (width as f32 * (settings.pixel_size_h.clamp(0.0, 100.0) / 100.0)).max(1.0);
     let target_h = if settings.square {
         target_w
     } else {
-        height as f32 * (settings.pixel_size_v.clamp(0.0, 100.0) / 100.0)
+        (height as f32 * (settings.pixel_size_v.clamp(0.0, 100.0) / 100.0)).max(1.0)
     };
 
-    let (cols, col_widths) = compute_variable_sizes(target_w, width);
-    let (rows, row_heights) = compute_variable_sizes(target_h, height);
+    let px = settings.grid_position_x.clamp(0.0, 1.0);
+    let py = settings.grid_position_y.clamp(0.0, 1.0);
+    let ox = px * width as f32 - (px * width as f32 / target_w).round() * target_w;
+    let oy = py * height as f32 - (py * height as f32 / target_h).round() * target_h;
+    let off_x = ox.rem_euclid(target_w).round() as usize % (target_w.ceil() as usize).max(1);
+    let off_y = oy.rem_euclid(target_h).round() as usize % (target_h.ceil() as usize).max(1);
 
-    // Cumulative start positions
-    let col_starts: Vec<usize> = std::iter::once(0)
-        .chain(col_widths.iter().scan(0, |acc, w| {
-            *acc += w;
-            Some(*acc)
-        }))
-        .take(cols)
-        .collect();
-    let row_starts: Vec<usize> = std::iter::once(0)
-        .chain(row_heights.iter().scan(0, |acc, h| {
-            *acc += h;
-            Some(*acc)
-        }))
-        .take(rows)
-        .collect();
+    // Build column starts with offset: [0, off_x, round(off_x+target_w), round(off_x+2*target_w), ..., width]
+    let mut col_starts = vec![0usize];
+    if off_x > 0 {
+        col_starts.push(off_x);
+    }
+    if off_x < width {
+        let mut i = 1u32;
+        loop {
+            let s = (off_x as f32 + i as f32 * target_w).round() as usize;
+            if s >= width { break; }
+            col_starts.push(s);
+            i += 1;
+        }
+    }
+    col_starts.push(width);
+    let cols = col_starts.len() - 1;
+    let col_widths: Vec<usize> = col_starts.windows(2).map(|w| (w[1] - w[0]).max(1)).collect();
+
+    // Build row starts similarly
+    let mut row_starts = vec![0usize];
+    if off_y > 0 {
+        row_starts.push(off_y);
+    }
+    if off_y < height {
+        let mut j = 1u32;
+        loop {
+            let s = (off_y as f32 + j as f32 * target_h).round() as usize;
+            if s >= height { break; }
+            row_starts.push(s);
+            j += 1;
+        }
+    }
+    row_starts.push(height);
+    let rows = row_starts.len() - 1;
+    let row_heights: Vec<usize> = row_starts.windows(2).map(|w| (w[1] - w[0]).max(1)).collect();
 
     let color_levels = (settings.color_levels.clamp(2.0, 256.0).floor() as usize).max(2);
     let dither_amount = settings.dithering_amount.clamp(0.0, 1.0);
-    let show_grid = settings.show_grid;
     let grid_thickness = settings.grid_thickness.clamp(0.0, 1.0);
     let grid_r = settings.grid_color_r.clamp(0.0, 1.0);
     let grid_g = settings.grid_color_g.clamp(0.0, 1.0);
@@ -554,7 +553,7 @@ fn cpu_render_variable(
             let dy = y - cell_y;
 
             let grid_px_v = (grid_thickness * target_h).round() as usize;
-            let is_grid_row = show_grid && dy >= cell_h.saturating_sub(grid_px_v) && dy < cell_h;
+            let is_grid_row = dy >= cell_h.saturating_sub(grid_px_v) && dy < cell_h;
 
             for col in 0..cols {
                 let cell_w = col_widths[col];
@@ -568,14 +567,15 @@ fn cpu_render_variable(
                 for x in cell_x..cell_end_x.min(width) {
                     let out_idx = (x) * 4;
                     let is_grid_col =
-                        show_grid && x >= grid_start_x && x < cell_end_x;
+                        x >= grid_start_x && x < cell_end_x;
                     let is_grid = is_grid_row || is_grid_col;
 
+                    let ga = grid_a * ca;
                     let (out_r, out_g, out_b) = if is_grid {
                         (
-                            cr * (1.0 - grid_a) + grid_r * grid_a,
-                            cg * (1.0 - grid_a) + grid_g * grid_a,
-                            cb * (1.0 - grid_a) + grid_b * grid_a,
+                            cr * (1.0 - ga) + grid_r * ga,
+                            cg * (1.0 - ga) + grid_g * ga,
+                            cb * (1.0 - ga) + grid_b * ga,
                         )
                     } else {
                         (cr, cg, cb)

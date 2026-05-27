@@ -31,12 +31,13 @@ pub struct ZzzPixelArt {
     pub color_levels: f32,
     pub dithering: Dithering,
     pub dithering_amount: f32,
-    pub show_grid: bool,
     pub grid_thickness: f32,
     pub grid_color_r: f32,
     pub grid_color_g: f32,
     pub grid_color_b: f32,
     pub grid_color_a: f32,
+    pub grid_position_x: f32,
+    pub grid_position_y: f32,
     pub contrast: f32,
     pub saturation: f32,
 }
@@ -44,19 +45,20 @@ pub struct ZzzPixelArt {
 impl Default for ZzzPixelArt {
     fn default() -> Self {
         Self {
-            pixel_size_h: 0.5,
-            pixel_size_v: 0.5,
+            pixel_size_h: 0.1,
+            pixel_size_v: 0.1,
             square: true,
             use_same_integer: true,
             color_levels: 16.0,
             dithering: Dithering::None,
             dithering_amount: 0.5,
-            show_grid: false,
-            grid_thickness: 0.1,
+            grid_thickness: 0.0,
             grid_color_r: 0.0,
             grid_color_g: 0.0,
             grid_color_b: 0.0,
             grid_color_a: 0.5,
+            grid_position_x: 0.5,
+            grid_position_y: 0.5,
             contrast: 0.5,
             saturation: 0.5,
         }
@@ -80,12 +82,13 @@ pub mod setting_id {
     pub const COLOR_LEVELS:         SID = setting_id!("color_levels", color_levels);
     pub const DITHERING:        SID = setting_id!("dithering", dithering);
     pub const DITHERING_AMOUNT: SID = setting_id!("dithering_amount", dithering_amount);
-    pub const SHOW_GRID:        SID = setting_id!("show_grid", show_grid);
     pub const GRID_THICKNESS:   SID = setting_id!("grid_thickness", grid_thickness);
     pub const GRID_COLOR_R:     SID = setting_id!("grid_color_r", grid_color_r);
     pub const GRID_COLOR_G:     SID = setting_id!("grid_color_g", grid_color_g);
     pub const GRID_COLOR_B:     SID = setting_id!("grid_color_b", grid_color_b);
     pub const GRID_COLOR_A:     SID = setting_id!("grid_color_a", grid_color_a);
+    pub const GRID_POSITION_X:  SID = setting_id!("grid_position_x", grid_position_x);
+    pub const GRID_POSITION_Y:  SID = setting_id!("grid_position_y", grid_position_y);
     pub const CONTRAST:         SID = setting_id!("contrast", contrast);
     pub const SATURATION:       SID = setting_id!("saturation", saturation);
 }
@@ -99,6 +102,24 @@ impl Settings for ZzzPixelArtFullSettings {
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
+            SettingDescriptor {
+                label_key: TrKey::ParamGridPositionX,
+                description_key: Some(TrKey::ParamGridPositionXDesc),
+                kind: SettingKind::FloatRange {
+                    range: 0.0..=1.0,
+                    logarithmic: false,
+                },
+                id: setting_id::GRID_POSITION_X,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridPositionY,
+                description_key: Some(TrKey::ParamGridPositionYDesc),
+                kind: SettingKind::FloatRange {
+                    range: 0.0..=1.0,
+                    logarithmic: false,
+                },
+                id: setting_id::GRID_POSITION_Y,
+            },
             SettingDescriptor {
                 label_key: TrKey::ParamPixelSizeH,
                 description_key: Some(TrKey::ParamPixelSizeHDesc),
@@ -128,6 +149,36 @@ impl Settings for ZzzPixelArtFullSettings {
                 description_key: Some(TrKey::ParamUseSamePixelSizeDesc),
                 kind: SettingKind::Boolean,
                 id: setting_id::USE_SAME_INTEGER,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridThickness,
+                description_key: Some(TrKey::ParamGridThicknessDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_THICKNESS,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorRed,
+                description_key: Some(TrKey::ParamGridColorRedDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_R,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorGreen,
+                description_key: Some(TrKey::ParamGridColorGreenDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_G,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorBlue,
+                description_key: Some(TrKey::ParamGridColorBlueDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_B,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorAlpha,
+                description_key: Some(TrKey::ParamGridColorAlphaDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_A,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamColorLevels,
@@ -167,42 +218,6 @@ impl Settings for ZzzPixelArtFullSettings {
                 description_key: Some(TrKey::ParamDitheringAmountDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
                 id: setting_id::DITHERING_AMOUNT,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamShowGrid,
-                description_key: Some(TrKey::ParamShowGridDesc),
-                kind: SettingKind::Boolean,
-                id: setting_id::SHOW_GRID,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridThickness,
-                description_key: Some(TrKey::ParamGridThicknessDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_THICKNESS,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorRed,
-                description_key: Some(TrKey::ParamGridColorRedDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorGreen,
-                description_key: Some(TrKey::ParamGridColorGreenDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorBlue,
-                description_key: Some(TrKey::ParamGridColorBlueDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorAlpha,
-                description_key: Some(TrKey::ParamGridColorAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_A,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamPixelContrast,

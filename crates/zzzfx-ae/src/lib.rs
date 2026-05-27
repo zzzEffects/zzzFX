@@ -22,6 +22,8 @@ use zzzfx_core::{ZzzSpriteSheet, ZzzSpriteSheetFullSettings, settings::SettingsL
 
 #[cfg(feature = "effect-ascii-art")]
 use zzzfx_core::{ZzzAsciiArt, ZzzAsciiArtFullSettings, settings::SettingsList as AsciiArtSettingsList};
+#[cfg(feature = "effect-ascii-art")]
+use zzzfx_core::{ascii_art_setting_id, AsciiColorMode};
 #[cfg(feature = "effect-pixel-art")]
 use zzzfx_core::{ZzzPixelArt, ZzzPixelArtFullSettings, settings::SettingsList as PixelArtSettingsList};
 #[cfg(feature = "effect-pixel-art")]
@@ -134,7 +136,30 @@ impl AdobePluginGlobal for Plugin {
                 #[cfg(feature = "effect-sprite-sheet")]
                 update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
                 #[cfg(feature = "effect-ascii-art")]
-                update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
+                {
+                    update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
+                    let color_mode_val: u32 = params
+                        .get(ParamID::Param(ascii_art_setting_id::COLOR_MODE.ae_id()))?
+                        .as_enum()?
+                        .value();
+                    let is_solid = color_mode_val == AsciiColorMode::Solid as u32
+                        || color_mode_val == AsciiColorMode::SolidMapGrayscale as u32;
+                    for sid in [
+                        ascii_art_setting_id::FONT_COLOR_R,
+                        ascii_art_setting_id::FONT_COLOR_G,
+                        ascii_art_setting_id::FONT_COLOR_B,
+                        ascii_art_setting_id::FONT_COLOR_A,
+                    ] {
+                        if let Ok(p) = params.get(ParamID::Param(sid.ae_id())) {
+                            let was_disabled = p.ui_flags().contains(ae::ParamUIFlags::DISABLED);
+                            if was_disabled == is_solid {
+                                let mut p = p.clone();
+                                p.set_ui_flag(ae::ParamUIFlags::DISABLED, !is_solid);
+                                p.update_param_ui()?;
+                            }
+                        }
+                    }
+                }
                 #[cfg(feature = "effect-pixel-art")]
                 {
                     let square = params

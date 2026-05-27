@@ -410,6 +410,12 @@ i18n_keys! {
         NativeAsciiCustomChars = "Custom Characters";
         NativeAsciiPosition = "Position";
         NativeAsciiPositionHint = "Normalized position of the character grid (0-1). 0.5 = center.";
+        ParamAsciiPositionX = "Position X";
+        ParamAsciiPositionXDesc = "Horizontal anchor of the character grid. 0 = left, 0.5 = center, 1 = right.";
+        ParamAsciiPositionY = "Position Y";
+        ParamAsciiPositionYDesc = "Vertical anchor of the character grid. 0 = top, 0.5 = center, 1 = bottom.";
+        NativeAsciiFontColor = "Font Color";
+        NativeAsciiFontColorHint = "Color used for all characters when Color Mode is set to Solid Color.";
         NativeAsciiBgColor = "Background Color";
         NativeAsciiBgColorHint = "Color of the background behind characters.";
         NativeAsciiCustomCharsHint = "Characters ordered from darkest to lightest. Only used when Character Set is 'Custom'.";
@@ -463,8 +469,10 @@ i18n_keys! {
         MenuAsciiGrayscaleDesc = "White characters on a black background.";
         MenuAsciiColored = "Colored";
         MenuAsciiColoredDesc = "Characters retain the average color of their source region.";
-        MenuAsciiGreenTerminal = "Green Terminal";
-        MenuAsciiGreenTerminalDesc = "Green characters on a black background, classic terminal style.";
+        MenuAsciiSolid = "Solid Color";
+        MenuAsciiSolidDesc = "All characters rendered in a single custom color.";
+        MenuAsciiSolidMapGrayscale = "Solid Map Grayscale";
+        MenuAsciiSolidMapGrayscaleDesc = "All characters rendered in a single custom color, with source luminance mapped to opacity.";
 
         // ── Pixel Art: effect labels ──────────────────
         EffectPixelArtName = "zzzFX Pixel Art Style";
@@ -501,6 +509,12 @@ i18n_keys! {
         // Pixel Art: native param labels & hints
         NativeGridColor = "Grid Color";
         NativeGridColorHint = "Color of the grid lines between pixel blocks.";
+        NativeGridPosition = "Grid Position";
+        NativeGridPositionHint = "Anchor point for the pixel grid. (0,0) = top-left, (0.5,0.5) = center, (1,1) = bottom-right.";
+        ParamGridPositionX = "Grid Position X";
+        ParamGridPositionXDesc = "Horizontal anchor of the pixel grid. 0 = left-aligned, 0.5 = centered, 1 = right-aligned.";
+        ParamGridPositionY = "Grid Position Y";
+        ParamGridPositionYDesc = "Vertical anchor of the pixel grid. 0 = top-aligned, 0.5 = centered, 1 = bottom-aligned.";
         ParamPixelContrast = "Contrast";
         ParamPixelContrastDesc = "Pre-processing contrast. 0.5 is neutral (1.0x), 0 = 0.5x, 1 = 2.0x.";
         ParamPixelSaturation = "Saturation";

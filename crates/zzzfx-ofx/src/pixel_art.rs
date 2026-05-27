@@ -46,11 +46,13 @@ impl Drop for ClipImageGuard {
 const SQUARE_PARAM: &CStr = c"square";
 const PIXEL_SIZE_V_PARAM: &CStr = c"pixel_size_v";
 const GRID_COLOR_PARAM: &CStr = c"grid_color";
+const GRID_POSITION_PARAM: &CStr = c"grid_position";
 
 fn is_native_grouped_name(name: &str) -> bool {
     matches!(
         name,
         "grid_color_r" | "grid_color_g" | "grid_color_b" | "grid_color_a"
+            | "grid_position_x" | "grid_position_y"
     )
 }
 
@@ -333,6 +335,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         if desc.id.name == "grid_color_r" {
             break;
         }
+        if is_native_grouped_name(desc.id.name) {
+            continue;
+        }
         define_single_param(
             su,
             param_set,
@@ -372,6 +377,34 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?; // G
         pd(pp, kOfxParamPropDefault.as_ptr(), 2, 0.0).ofx_ok()?; // B
         pd(pp, kOfxParamPropDefault.as_ptr(), 3, 0.5).ofx_ok()?; // A
+    }
+
+    // --- Native Double2D: Grid Position ---
+    {
+        let mut pp: OfxPropertySetHandle = ptr::null_mut();
+        pdef(
+            param_set,
+            kOfxParamTypeDouble2D.as_ptr(),
+            GRID_POSITION_PARAM.as_ptr(),
+            &mut pp,
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxPropLabel.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeGridPosition).as_ptr(),
+        )
+        .ofx_ok()?;
+        ps(
+            pp,
+            kOfxParamPropHint.as_ptr(),
+            0,
+            i18n::tr_cstr(TrKey::NativeGridPositionHint).as_ptr(),
+        )
+        .ofx_ok()?;
+        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.5).ofx_ok()?; // X
+        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.5).ofx_ok()?; // Y
     }
 
     // --- Block B: generic params after grid_color (skip the 4 color fields) ---
@@ -689,6 +722,23 @@ unsafe fn apply_params(
         dst.grid_color_g = g as f32;
         dst.grid_color_b = b as f32;
         dst.grid_color_a = a as f32;
+    }
+
+    // Native Double2D: Grid Position
+    {
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            GRID_POSITION_PARAM.as_ptr(),
+            &mut p,
+            ptr::null_mut(),
+        )
+        .ofx_ok()?;
+        let mut x: f64 = 0.0;
+        let mut y: f64 = 0.0;
+        pgv(p, time, &mut x, &mut y).ofx_ok()?;
+        dst.grid_position_x = x as f32;
+        dst.grid_position_y = y as f32;
     }
 
     Ok(())

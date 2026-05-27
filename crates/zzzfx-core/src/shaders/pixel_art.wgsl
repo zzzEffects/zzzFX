@@ -7,7 +7,7 @@
 //
 //   Pass 2 "fill": one invocation per OUTPUT PIXEL.
 //     Looks up the cell's quantized color from cell_colors, applies the
-//     grid overlay, and writes to the output buffer.
+//     grid overlay (with alpha multiplied by cell alpha), and writes output.
 //
 // This avoids the redundant per-pixel cell averaging of the single-pass
 // approach. For pixel_size=16×16, Pass 1 does the averaging once per cell
@@ -30,12 +30,13 @@ struct Uniforms {
     color_levels: u32,
     dithering: u32,       // 0=None, 1=Ordered, 2=FloydSteinberg
     dither_amount: f32,
-    show_grid: u32,        // bool
     grid_thickness: f32,
     grid_color_r: f32,
     grid_color_g: f32,
     grid_color_b: f32,
     grid_color_a: f32,
+    grid_offset_x: u32,
+    grid_offset_y: u32,
     contrast: f32,
     saturation: f32,
     _pad: u32,
@@ -58,6 +59,21 @@ fn bayer_value(x: u32, y: u32) -> f32 {
     return f32(bayer[idx]) / 16.0;
 }
 
+// Helper to compute cell bounds given a grid index, offset, and pixel size
+fn cell_bounds(idx: u32, offset: u32, pixel_size: u32, frame_size: u32) -> vec2<u32> {
+    if offset > 0u && idx == 0u {
+        return vec2<u32>(0u, min(offset, frame_size));
+    }
+    if offset > 0u {
+        let start_x = offset + (idx - 1u) * pixel_size;
+        let end_x = min(start_x + pixel_size, frame_size);
+        return vec2<u32>(start_x, end_x);
+    }
+    let start_x = idx * pixel_size;
+    let end_x = min(start_x + pixel_size, frame_size);
+    return vec2<u32>(start_x, end_x);
+}
+
 // ── Pass 1: compute one cell's average color ──────────────────────────────
 
 @compute @workgroup_size(8, 8)
@@ -68,10 +84,12 @@ fn cell_average(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let cell_start_x = cx * uniforms.pixel_size_w;
-    let cell_start_y = cy * uniforms.pixel_size_h;
-    let cell_end_x = min(cell_start_x + uniforms.pixel_size_w, uniforms.frame_width);
-    let cell_end_y = min(cell_start_y + uniforms.pixel_size_h, uniforms.frame_height);
+    let xb = cell_bounds(cx, uniforms.grid_offset_x, uniforms.pixel_size_w, uniforms.frame_width);
+    let yb = cell_bounds(cy, uniforms.grid_offset_y, uniforms.pixel_size_h, uniforms.frame_height);
+    let cell_start_x = xb.x;
+    let cell_end_x = xb.y;
+    let cell_start_y = yb.x;
+    let cell_end_y = yb.y;
 
     var sum_r = 0.0;
     var sum_g = 0.0;
@@ -148,36 +166,60 @@ fn fill(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // Determine which cell this pixel belongs to
-    let cell_x = px / uniforms.pixel_size_w;
-    let cell_y = py / uniforms.pixel_size_h;
-    let cell_start_x = cell_x * uniforms.pixel_size_w;
-    let cell_start_y = cell_y * uniforms.pixel_size_h;
-    let cell_end_x = min(cell_start_x + uniforms.pixel_size_w, uniforms.frame_width);
-    let cell_end_y = min(cell_start_y + uniforms.pixel_size_h, uniforms.frame_height);
+    // Determine cell column from pixel x
+    let (cell_x, cell_start_x, cell_end_x) = if uniforms.grid_offset_x > 0u && px < uniforms.grid_offset_x {
+        (0u, 0u, uniforms.grid_offset_x)
+    } else if uniforms.grid_offset_x > 0u {
+        let xr = px - uniforms.grid_offset_x;
+        let c = 1u + xr / uniforms.pixel_size_w;
+        let sx = uniforms.grid_offset_x + (c - 1u) * uniforms.pixel_size_w;
+        let ex = min(sx + uniforms.pixel_size_w, uniforms.frame_width);
+        (c, sx, ex)
+    } else {
+        let c = px / uniforms.pixel_size_w;
+        let sx = c * uniforms.pixel_size_w;
+        let ex = min(sx + uniforms.pixel_size_w, uniforms.frame_width);
+        (c, sx, ex)
+    };
+
+    // Determine cell row from pixel y
+    let (cell_y, cell_start_y, cell_end_y) = if uniforms.grid_offset_y > 0u && py < uniforms.grid_offset_y {
+        (0u, 0u, uniforms.grid_offset_y)
+    } else if uniforms.grid_offset_y > 0u {
+        let yr = py - uniforms.grid_offset_y;
+        let r = 1u + yr / uniforms.pixel_size_h;
+        let sy = uniforms.grid_offset_y + (r - 1u) * uniforms.pixel_size_h;
+        let ey = min(sy + uniforms.pixel_size_h, uniforms.frame_height);
+        (r, sy, ey)
+    } else {
+        let r = py / uniforms.pixel_size_h;
+        let sy = r * uniforms.pixel_size_h;
+        let ey = min(sy + uniforms.pixel_size_h, uniforms.frame_height);
+        (r, sy, ey)
+    };
 
     // Look up pre-computed cell color
     let cell_idx = cell_y * uniforms.num_cols + cell_x;
     let packed = cell_colors[cell_idx];
     var color = unpack_rgba8(packed);
 
-    // Apply grid at right/bottom cell boundaries
-    if uniforms.show_grid != 0u {
-        let local_x = px - cell_start_x;
-        let local_y = py - cell_start_y;
-        let cell_w = cell_end_x - cell_start_x;
-        let cell_h = cell_end_y - cell_start_y;
-        let grid_px_w = uniforms.grid_thickness * f32(uniforms.pixel_size_w);
-        let grid_px_h = uniforms.grid_thickness * f32(uniforms.pixel_size_h);
+    // Apply grid at right/bottom cell boundaries.
+    // Grid alpha is multiplied by the cell's average alpha so that
+    // transparent regions show a proportionally weaker grid.
+    let local_x = px - cell_start_x;
+    let local_y = py - cell_start_y;
+    let cell_w = cell_end_x - cell_start_x;
+    let cell_h = cell_end_y - cell_start_y;
+    let grid_px_w = uniforms.grid_thickness * f32(uniforms.pixel_size_w);
+    let grid_px_h = uniforms.grid_thickness * f32(uniforms.pixel_size_h);
 
-        let is_grid = f32(local_x) >= f32(cell_w) - grid_px_w
-                   || f32(local_y) >= f32(cell_h) - grid_px_h;
-        if is_grid {
-            let ga = uniforms.grid_color_a;
-            color.r = color.r * (1.0 - ga) + uniforms.grid_color_r * ga;
-            color.g = color.g * (1.0 - ga) + uniforms.grid_color_g * ga;
-            color.b = color.b * (1.0 - ga) + uniforms.grid_color_b * ga;
-        }
+    let is_grid = f32(local_x) >= f32(cell_w) - grid_px_w
+               || f32(local_y) >= f32(cell_h) - grid_px_h;
+    if is_grid {
+        let ga = uniforms.grid_color_a * color.a;
+        color.r = color.r * (1.0 - ga) + uniforms.grid_color_r * ga;
+        color.g = color.g * (1.0 - ga) + uniforms.grid_color_g * ga;
+        color.b = color.b * (1.0 - ga) + uniforms.grid_color_b * ga;
     }
 
     let idx = py * uniforms.frame_width + px;

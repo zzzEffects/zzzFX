@@ -27,15 +27,19 @@ use crate::shared::{
 const FONT_CHOICE_PARAM: &CStr = c"font_choice";
 const FONT_NAME_PARAM: &CStr = c"font_name";
 const POS_PARAM: &CStr = c"position";
+const FONT_COLOR_PARAM: &CStr = c"font_color";
 const BG_COLOR_PARAM: &CStr = c"bg_color";
+const GRID_COLOR_PARAM: &CStr = c"grid_color";
 const CUSTOM_CHARS_PARAM: &CStr = c"custom_chars";
 
 fn is_native_grouped_name(name: &str) -> bool {
     matches!(
         name,
         "font_choice" | "font_name" | "custom_chars"
+            | "font_color_r" | "font_color_g" | "font_color_b" | "font_color_a"
             | "bg_color_r" | "bg_color_g" | "bg_color_b" | "bg_color_a"
             | "pos_x" | "pos_y"
+            | "grid_color_r" | "grid_color_g" | "grid_color_b" | "grid_color_a"
     )
 }
 
@@ -397,11 +401,111 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let pen = CString::new(i18n::tr(TrKey::CommonEnabled))
         .unwrap_or_else(|_| CString::new("Enabled").unwrap());
 
-    // --- Generic params (skip native params; handle Group specially) ---
+    // --- Generic params with native params interspersed ---
+    // Descriptor order: char_set → pos_x/y (skip) → font_size..font_scale_y →
+    //   font_rotation → color_mode → font_color_* (skip) → grid_thickness →
+    //   grid_color_* (skip) → brightness..bg_color_* (skip)
+    // Native inserts: Position before font_size, Font Color before grid_thickness,
+    //   Grid Color before brightness, BG Color after loop.
+    let mut passed_position = false;
+    let mut passed_font_color = false;
+    let mut passed_grid_color = false;
     for desc in d.settings_list.setting_descriptors.iter() {
         if is_native_grouped_name(desc.id.name) {
             continue;
         }
+
+        // Insert Position native param before font_size (after char_set group)
+        if !passed_position && desc.id.name == "font_size" {
+            passed_position = true;
+            let mut pp: OfxPropertySetHandle = ptr::null_mut();
+            pdef(
+                param_set,
+                kOfxParamTypeDouble2D.as_ptr(),
+                POS_PARAM.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            ps(
+                pp,
+                kOfxPropLabel.as_ptr(),
+                0,
+                i18n::tr_cstr(TrKey::NativeAsciiPosition).as_ptr(),
+            )
+            .ofx_ok()?;
+            ps(
+                pp,
+                kOfxParamPropHint.as_ptr(),
+                0,
+                i18n::tr_cstr(TrKey::NativeAsciiPositionHint).as_ptr(),
+            )
+            .ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.5).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.5).ofx_ok()?;
+        }
+
+        // Insert Font Color native param before grid_thickness (after color_mode)
+        if !passed_font_color && desc.id.name == "grid_thickness" {
+            passed_font_color = true;
+            let mut pp: OfxPropertySetHandle = ptr::null_mut();
+            pdef(
+                param_set,
+                kOfxParamTypeRGBA.as_ptr(),
+                FONT_COLOR_PARAM.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            ps(
+                pp,
+                kOfxPropLabel.as_ptr(),
+                0,
+                i18n::tr_cstr(TrKey::NativeAsciiFontColor).as_ptr(),
+            )
+            .ofx_ok()?;
+            ps(
+                pp,
+                kOfxParamPropHint.as_ptr(),
+                0,
+                i18n::tr_cstr(TrKey::NativeAsciiFontColorHint).as_ptr(),
+            )
+            .ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 2, 0.0).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
+        }
+
+        // Insert Grid Color native param before brightness (after grid_thickness)
+        if !passed_grid_color && desc.id.name == "brightness" {
+            passed_grid_color = true;
+            let mut pp: OfxPropertySetHandle = ptr::null_mut();
+            pdef(
+                param_set,
+                kOfxParamTypeRGBA.as_ptr(),
+                GRID_COLOR_PARAM.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            ps(
+                pp,
+                kOfxPropLabel.as_ptr(),
+                0,
+                i18n::tr_cstr(TrKey::NativeGridColor).as_ptr(),
+            )
+            .ofx_ok()?;
+            ps(
+                pp,
+                kOfxParamPropHint.as_ptr(),
+                0,
+                i18n::tr_cstr(TrKey::NativeGridColorHint).as_ptr(),
+            )
+            .ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 2, 0.0).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 3, 0.5).ofx_ok()?;
+        }
+
         if let SettingKind::Group { children } = &desc.kind {
             let ds = d.strings.get(&desc.id).unwrap();
             let id_cstr = ds.0.as_c_str();
@@ -490,34 +594,6 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         }
     }
 
-    // --- Native Double2D: Position ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(
-            param_set,
-            kOfxParamTypeDouble2D.as_ptr(),
-            POS_PARAM.as_ptr(),
-            &mut pp,
-        )
-        .ofx_ok()?;
-        ps(
-            pp,
-            kOfxPropLabel.as_ptr(),
-            0,
-            i18n::tr_cstr(TrKey::NativeAsciiPosition).as_ptr(),
-        )
-        .ofx_ok()?;
-        ps(
-            pp,
-            kOfxParamPropHint.as_ptr(),
-            0,
-            i18n::tr_cstr(TrKey::NativeAsciiPositionHint).as_ptr(),
-        )
-        .ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.5).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.5).ofx_ok()?;
-    }
-
     // --- Native RGBA: Background Color ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
@@ -570,6 +646,7 @@ unsafe fn action_instance_changed(
     let d = data()?;
     let su = &d.suites;
     let pgs = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?;
+    let psi = su.property_suite.propSetInt.ok_or(OfxStat::kOfxStatFailed)?;
     let gps = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
     let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
@@ -619,6 +696,45 @@ unsafe fn action_instance_changed(
         .ofx_ok()?;
         if let Ok(name_cstr) = CString::new(&*font_name) {
             psv(sp, name_cstr.as_ptr() as *const c_void).ofx_ok()?;
+        }
+    }
+
+    // Enable/disable Font Color based on Color Mode
+    if c"color_mode" == CStr::from_ptr(target_name) {
+        let mut param_set: OfxParamSetHandle = ptr::null_mut();
+        gps(effect, &mut param_set).ofx_ok()?;
+
+        // Read color_mode value
+        let mut cp: OfxParamHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            c"color_mode".as_ptr(),
+            &mut cp,
+            ptr::null_mut(),
+        )
+        .ofx_ok()?;
+        let mut mode_val: c_int = 0;
+        pgv(cp, 0.0, &mut mode_val).ofx_ok()?;
+        let is_solid = mode_val == 2 || mode_val == 3; // Solid or SolidMapGrayscale
+
+        // Toggle Font Color enabled state
+        let mut fp: OfxParamHandle = ptr::null_mut();
+        let mut fp_props: OfxPropertySetHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            FONT_COLOR_PARAM.as_ptr(),
+            &mut fp,
+            &mut fp_props,
+        )
+        .ofx_ok()?;
+        if !fp_props.is_null() {
+            psi(
+                fp_props,
+                kOfxParamPropEnabled.as_ptr(),
+                0,
+                if is_solid { 1 } else { 0 },
+            )
+            .ofx_ok()?;
         }
     }
 
@@ -759,6 +875,48 @@ unsafe fn apply_params(
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
         dst.pos_x = x as f32;
         dst.pos_y = y as f32;
+    }
+
+    // --- Native RGBA: Font Color ---
+    {
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            FONT_COLOR_PARAM.as_ptr(),
+            &mut p,
+            ptr::null_mut(),
+        )
+        .ofx_ok()?;
+        let mut r: f64 = 0.0;
+        let mut g: f64 = 0.0;
+        let mut b: f64 = 0.0;
+        let mut a: f64 = 0.0;
+        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
+        dst.font_color_r = r as f32;
+        dst.font_color_g = g as f32;
+        dst.font_color_b = b as f32;
+        dst.font_color_a = a as f32;
+    }
+
+    // --- Native RGBA: Grid Color ---
+    {
+        let mut p: OfxParamHandle = ptr::null_mut();
+        pgh(
+            param_set,
+            GRID_COLOR_PARAM.as_ptr(),
+            &mut p,
+            ptr::null_mut(),
+        )
+        .ofx_ok()?;
+        let mut r: f64 = 0.0;
+        let mut g: f64 = 0.0;
+        let mut b: f64 = 0.0;
+        let mut a: f64 = 0.0;
+        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
+        dst.grid_color_r = r as f32;
+        dst.grid_color_g = g as f32;
+        dst.grid_color_b = b as f32;
+        dst.grid_color_a = a as f32;
     }
 
     // --- Native RGBA: Background Color ---

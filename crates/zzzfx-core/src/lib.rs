@@ -23,6 +23,7 @@ pub use settings::ass_subtitle::{
 pub use settings::pixel_art::{
     Dithering as PixelDithering, ZzzPixelArt, ZzzPixelArtFullSettings,
 };
+pub use settings::ascii_art::setting_id as ascii_art_setting_id;
 pub use settings::pixel_art::setting_id as pixel_art_setting_id;
 pub use settings::repeater::{
     LayerOrder, ZzzRepeater, ZzzRepeaterFullSettings,

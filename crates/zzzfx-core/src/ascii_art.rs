@@ -357,10 +357,6 @@ impl ZzzAsciiArt {
 
         // ── CPU path ───────────────────────────────────────────────
 
-        let bg_r = self.bg_color_r.clamp(0.0, 1.0);
-        let bg_g = self.bg_color_g.clamp(0.0, 1.0);
-        let bg_b = self.bg_color_b.clamp(0.0, 1.0);
-        let bg_a = self.bg_color_a.clamp(0.0, 1.0);
         let brightness = self.brightness.clamp(0.0, 1.0) as f64;
         let contrast = self.contrast.clamp(0.0, 1.0) as f64;
         let invert = self.invert_luma;
@@ -472,15 +468,7 @@ impl ZzzAsciiArt {
                 let row_f = iy as f32;
                 let grid_row = ((row_f - oy) / cell_size).floor() as isize;
                 if grid_row < 0 || grid_row as usize >= rows {
-                    // outside grid → fill with background
-                    for ix in 0..width {
-                        let o = ix * 4;
-                        row[o] = (bg_r * 255.0).round() as u8;
-                        row[o + 1] = (bg_g * 255.0).round() as u8;
-                        row[o + 2] = (bg_b * 255.0).round() as u8;
-                        row[o + 3] = (bg_a * 255.0).round() as u8;
-                    }
-                    return;
+                    return; // outside grid — background compositing pass handles this
                 }
                 let r = grid_row as usize;
                 let row_cells = &all_cells[r];
@@ -494,9 +482,16 @@ impl ZzzAsciiArt {
                     if bm_w == 0 || bm_h == 0 { continue; }
 
                     let (fg_r, fg_g, fg_b): (f32, f32, f32) = match color_mode {
-                        ColorMode::Grayscale => (1.0, 1.0, 1.0),
+                        ColorMode::Grayscale => {
+                            let gray = 0.2126 * cell.avg_r + 0.7152 * cell.avg_g + 0.0722 * cell.avg_b;
+                            (gray, gray, gray)
+                        }
                         ColorMode::Colored => (cell.avg_r, cell.avg_g, cell.avg_b),
-                        ColorMode::GreenTerminal => (0.0, 1.0, 0.0),
+                        ColorMode::Solid | ColorMode::SolidMapGrayscale => (
+                            self.font_color_r.clamp(0.0, 1.0),
+                            self.font_color_g.clamp(0.0, 1.0),
+                            self.font_color_b.clamp(0.0, 1.0),
+                        ),
                     };
 
                     let ix0 = (cell_x0.floor() as isize).max(0) as usize;
@@ -518,14 +513,91 @@ impl ZzzAsciiArt {
                         if bm_x >= bm_w { continue; }
                         let glyph_alpha = bitmap.data[bm_y as usize * bm_w as usize + bm_x as usize] as f32 / 255.0;
 
-                        let fa = glyph_alpha;
+                        let mut fa = glyph_alpha;
+                        if color_mode == ColorMode::Solid {
+                            fa *= self.font_color_a.clamp(0.0, 1.0);
+                        }
+                        if color_mode == ColorMode::SolidMapGrayscale {
+                            let gray = 0.2126 * cell.avg_r + 0.7152 * cell.avg_g + 0.0722 * cell.avg_b;
+                            fa *= gray;
+                        }
                         let o = ix * 4;
-                        row[o] = (fg_r * fa + bg_r * (1.0 - fa)).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                        row[o + 1] = (fg_g * fa + bg_g * (1.0 - fa)).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                        row[o + 2] = (fg_b * fa + bg_b * (1.0 - fa)).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
-                        row[o + 3] = (fa + (1.0 - fa) * bg_a).clamp(0.0, 1.0).mul_add(255.0, 0.5) as u8;
+                        row[o] = (fg_r * fa * 255.0).round() as u8;
+                        row[o + 1] = (fg_g * fa * 255.0).round() as u8;
+                        row[o + 2] = (fg_b * fa * 255.0).round() as u8;
+                        row[o + 3] = (fa * 255.0).round() as u8;
                     }
                 }
             });
+
+        // ── Grid overlay pass ────────────────────────────
+        if self.grid_thickness > 0.0 && self.grid_color_a > 0.0 {
+            let grid_px = (self.grid_thickness * cell_size).round().max(1.0);
+            let half_gp = grid_px * 0.5;
+            let grid_r = self.grid_color_r.clamp(0.0, 1.0);
+            let grid_g = self.grid_color_g.clamp(0.0, 1.0);
+            let grid_b = self.grid_color_b.clamp(0.0, 1.0);
+            let grid_a = self.grid_color_a.clamp(0.0, 1.0);
+
+            dst.par_chunks_mut(row_bytes)
+                .enumerate()
+                .for_each(|(iy, row)| {
+                    let row_f = iy as f32;
+                    for ix in 0..width {
+                        let col_f = ix as f32;
+                        // Pixel offset from cell top-left corner
+                        let local_x = (col_f + 0.5 - ox) % cell_size;
+                        let local_x = if local_x < 0.0 { local_x + cell_size } else { local_x };
+                        let local_y = (row_f + 0.5 - oy) % cell_size;
+                        let local_y = if local_y < 0.0 { local_y + cell_size } else { local_y };
+                        // Grid at all four edges, centered on cell boundaries
+                        let is_grid = local_x < half_gp || local_x > cell_size - half_gp
+                                   || local_y < half_gp || local_y > cell_size - half_gp;
+                        if is_grid {
+                            let o = ix * 4;
+                            let sa = src[iy * row_bytes + o + 3] as f32 / 255.0;
+                            let ga = grid_a * sa;
+                            let inv = 1.0 - ga;
+                            row[o] =
+                                (row[o] as f32 * inv + grid_r * ga * 255.0).round() as u8;
+                            row[o + 1] =
+                                (row[o + 1] as f32 * inv + grid_g * ga * 255.0).round() as u8;
+                            row[o + 2] =
+                                (row[o + 2] as f32 * inv + grid_b * ga * 255.0).round() as u8;
+                        }
+                    }
+                });
+        }
+
+        // ── Background compositing pass ──────────────────
+        // Composite bg_color behind rendered content (standard OVER)
+        {
+            let bg_r = self.bg_color_r.clamp(0.0, 1.0);
+            let bg_g = self.bg_color_g.clamp(0.0, 1.0);
+            let bg_b = self.bg_color_b.clamp(0.0, 1.0);
+            let bg_a = self.bg_color_a.clamp(0.0, 1.0);
+
+            dst.par_chunks_mut(row_bytes)
+                .enumerate()
+                .for_each(|(_iy, row)| {
+                    for ix in 0..width {
+                        let o = ix * 4;
+                        let fa = row[o + 3] as f32 / 255.0;
+                        let inv = 1.0 - fa;
+                        row[o] = (row[o] as f32 + bg_r * bg_a * inv * 255.0)
+                            .round()
+                            .min(255.0) as u8;
+                        row[o + 1] = (row[o + 1] as f32 + bg_g * bg_a * inv * 255.0)
+                            .round()
+                            .min(255.0) as u8;
+                        row[o + 2] = (row[o + 2] as f32 + bg_b * bg_a * inv * 255.0)
+                            .round()
+                            .min(255.0) as u8;
+                        row[o + 3] = (fa + bg_a * inv)
+                            .clamp(0.0, 1.0)
+                            .mul_add(255.0, 0.5) as u8;
+                    }
+                });
+        }
     }
 }

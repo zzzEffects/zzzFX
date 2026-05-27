@@ -28,9 +28,10 @@ const CHARS_KOREAN: &str =
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 pub enum ColorMode {
-    Grayscale = 0,
-    Colored,
-    GreenTerminal,
+    Colored = 0,
+    Grayscale,
+    Solid,
+    SolidMapGrayscale,
 }
 impl SettingsEnum for ColorMode {}
 
@@ -58,10 +59,19 @@ pub struct ZzzAsciiArt {
     pub font_scale_x: f32,
     pub font_scale_y: f32,
     pub font_rotation: f32,
+    pub color_mode: ColorMode,
+    pub font_color_r: f32,
+    pub font_color_g: f32,
+    pub font_color_b: f32,
+    pub font_color_a: f32,
+    pub grid_thickness: f32,
+    pub grid_color_r: f32,
+    pub grid_color_g: f32,
+    pub grid_color_b: f32,
+    pub grid_color_a: f32,
     pub brightness: f32,
     pub contrast: f32,
     pub invert_luma: bool,
-    pub color_mode: ColorMode,
     pub bg_color_r: f32,
     pub bg_color_g: f32,
     pub bg_color_b: f32,
@@ -127,10 +137,19 @@ impl Default for ZzzAsciiArt {
             font_scale_x: 1.0,
             font_scale_y: 1.0,
             font_rotation: 0.0,
+            color_mode: ColorMode::Colored,
+            font_color_r: 0.0,
+            font_color_g: 1.0,
+            font_color_b: 0.0,
+            font_color_a: 1.0,
+            grid_thickness: 0.0,
+            grid_color_r: 0.0,
+            grid_color_g: 0.0,
+            grid_color_b: 0.0,
+            grid_color_a: 0.5,
             brightness: 0.5,
             contrast: 0.5,
             invert_luma: false,
-            color_mode: ColorMode::Colored,
             bg_color_r: 0.0,
             bg_color_g: 0.0,
             bg_color_b: 0.0,
@@ -164,10 +183,19 @@ pub struct ZzzAsciiArtFullSettings {
     pub font_scale_x: f32,
     pub font_scale_y: f32,
     pub font_rotation: f32,
+    pub color_mode: ColorMode,
+    pub font_color_r: f32,
+    pub font_color_g: f32,
+    pub font_color_b: f32,
+    pub font_color_a: f32,
+    pub grid_thickness: f32,
+    pub grid_color_r: f32,
+    pub grid_color_g: f32,
+    pub grid_color_b: f32,
+    pub grid_color_a: f32,
     pub brightness: f32,
     pub contrast: f32,
     pub invert_luma: bool,
-    pub color_mode: ColorMode,
     pub bg_color_r: f32,
     pub bg_color_g: f32,
     pub bg_color_b: f32,
@@ -202,10 +230,19 @@ impl From<&ZzzAsciiArt> for ZzzAsciiArtFullSettings {
             font_scale_x: value.font_scale_x,
             font_scale_y: value.font_scale_y,
             font_rotation: value.font_rotation,
+            color_mode: value.color_mode,
+            font_color_r: value.font_color_r,
+            font_color_g: value.font_color_g,
+            font_color_b: value.font_color_b,
+            font_color_a: value.font_color_a,
+            grid_thickness: value.grid_thickness,
+            grid_color_r: value.grid_color_r,
+            grid_color_g: value.grid_color_g,
+            grid_color_b: value.grid_color_b,
+            grid_color_a: value.grid_color_a,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
-            color_mode: value.color_mode,
             bg_color_r: value.bg_color_r,
             bg_color_g: value.bg_color_g,
             bg_color_b: value.bg_color_b,
@@ -236,10 +273,19 @@ impl From<ZzzAsciiArt> for ZzzAsciiArtFullSettings {
             font_scale_x: value.font_scale_x,
             font_scale_y: value.font_scale_y,
             font_rotation: value.font_rotation,
+            color_mode: value.color_mode,
+            font_color_r: value.font_color_r,
+            font_color_g: value.font_color_g,
+            font_color_b: value.font_color_b,
+            font_color_a: value.font_color_a,
+            grid_thickness: value.grid_thickness,
+            grid_color_r: value.grid_color_r,
+            grid_color_g: value.grid_color_g,
+            grid_color_b: value.grid_color_b,
+            grid_color_a: value.grid_color_a,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
-            color_mode: value.color_mode,
             bg_color_r: value.bg_color_r,
             bg_color_g: value.bg_color_g,
             bg_color_b: value.bg_color_b,
@@ -270,10 +316,19 @@ impl From<&ZzzAsciiArtFullSettings> for ZzzAsciiArt {
             font_scale_x: value.font_scale_x,
             font_scale_y: value.font_scale_y,
             font_rotation: value.font_rotation,
+            color_mode: value.color_mode,
+            font_color_r: value.font_color_r,
+            font_color_g: value.font_color_g,
+            font_color_b: value.font_color_b,
+            font_color_a: value.font_color_a,
+            grid_thickness: value.grid_thickness,
+            grid_color_r: value.grid_color_r,
+            grid_color_g: value.grid_color_g,
+            grid_color_b: value.grid_color_b,
+            grid_color_a: value.grid_color_a,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
-            color_mode: value.color_mode,
             bg_color_r: value.bg_color_r,
             bg_color_g: value.bg_color_g,
             bg_color_b: value.bg_color_b,
@@ -304,10 +359,19 @@ impl From<ZzzAsciiArtFullSettings> for ZzzAsciiArt {
             font_scale_x: value.font_scale_x,
             font_scale_y: value.font_scale_y,
             font_rotation: value.font_rotation,
+            color_mode: value.color_mode,
+            font_color_r: value.font_color_r,
+            font_color_g: value.font_color_g,
+            font_color_b: value.font_color_b,
+            font_color_a: value.font_color_a,
+            grid_thickness: value.grid_thickness,
+            grid_color_r: value.grid_color_r,
+            grid_color_g: value.grid_color_g,
+            grid_color_b: value.grid_color_b,
+            grid_color_a: value.grid_color_a,
             brightness: value.brightness,
             contrast: value.contrast,
             invert_luma: value.invert_luma,
-            color_mode: value.color_mode,
             bg_color_r: value.bg_color_r,
             bg_color_g: value.bg_color_g,
             bg_color_b: value.bg_color_b,
@@ -344,10 +408,19 @@ pub mod setting_id {
     pub const FONT_SCALE_X:     SID = setting_id!("font_scale_x", font_scale_x);
     pub const FONT_SCALE_Y:     SID = setting_id!("font_scale_y", font_scale_y);
     pub const FONT_ROTATION:    SID = setting_id!("font_rotation", font_rotation);
+    pub const COLOR_MODE:       SID = setting_id!("color_mode", color_mode);
+    pub const FONT_COLOR_R:     SID = setting_id!("font_color_r", font_color_r);
+    pub const FONT_COLOR_G:     SID = setting_id!("font_color_g", font_color_g);
+    pub const FONT_COLOR_B:     SID = setting_id!("font_color_b", font_color_b);
+    pub const FONT_COLOR_A:     SID = setting_id!("font_color_a", font_color_a);
+    pub const GRID_THICKNESS:   SID = setting_id!("grid_thickness", grid_thickness);
+    pub const GRID_COLOR_R:     SID = setting_id!("grid_color_r", grid_color_r);
+    pub const GRID_COLOR_G:     SID = setting_id!("grid_color_g", grid_color_g);
+    pub const GRID_COLOR_B:     SID = setting_id!("grid_color_b", grid_color_b);
+    pub const GRID_COLOR_A:     SID = setting_id!("grid_color_a", grid_color_a);
     pub const BRIGHTNESS:       SID = setting_id!("brightness", brightness);
     pub const CONTRAST:         SID = setting_id!("contrast", contrast);
     pub const INVERT_LUMA:      SID = setting_id!("invert_luma", invert_luma);
-    pub const COLOR_MODE:       SID = setting_id!("color_mode", color_mode);
     pub const BG_COLOR_R: SID = setting_id!("bg_color_r", bg_color_r);
     pub const BG_COLOR_G: SID = setting_id!("bg_color_g", bg_color_g);
     pub const BG_COLOR_B: SID = setting_id!("bg_color_b", bg_color_b);
@@ -396,6 +469,18 @@ impl Settings for ZzzAsciiArtFullSettings {
                 id: setting_id::CHAR_SET_ENABLED,
             },
             SettingDescriptor {
+                label_key: TrKey::ParamAsciiPositionX,
+                description_key: Some(TrKey::ParamAsciiPositionXDesc),
+                kind: SettingKind::FloatRange { range: 0.0..=1.0, logarithmic: false },
+                id: setting_id::POS_X,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamAsciiPositionY,
+                description_key: Some(TrKey::ParamAsciiPositionYDesc),
+                kind: SettingKind::FloatRange { range: 0.0..=1.0, logarithmic: false },
+                id: setting_id::POS_Y,
+            },
+            SettingDescriptor {
                 label_key: TrKey::ParamAsciiFontSize,
                 description_key: Some(TrKey::ParamAsciiFontSizeDesc),
                 kind: SettingKind::FloatRange { range: 0.0..=100.0, logarithmic: false },
@@ -426,6 +511,89 @@ impl Settings for ZzzAsciiArtFullSettings {
                 id: setting_id::FONT_ROTATION,
             },
             SettingDescriptor {
+                label_key: TrKey::ParamAsciiColorMode,
+                description_key: Some(TrKey::ParamAsciiColorModeDesc),
+                kind: SettingKind::Enumeration {
+                    options: vec![
+                        MenuItem {
+                            label_key: TrKey::MenuAsciiColored,
+                            description_key: Some(TrKey::MenuAsciiColoredDesc),
+                            index: ColorMode::Colored as u32,
+                        },
+                        MenuItem {
+                            label_key: TrKey::MenuAsciiGrayscale,
+                            description_key: Some(TrKey::MenuAsciiGrayscaleDesc),
+                            index: ColorMode::Grayscale as u32,
+                        },
+                        MenuItem {
+                            label_key: TrKey::MenuAsciiSolid,
+                            description_key: Some(TrKey::MenuAsciiSolidDesc),
+                            index: ColorMode::Solid as u32,
+                        },
+                        MenuItem {
+                            label_key: TrKey::MenuAsciiSolidMapGrayscale,
+                            description_key: Some(TrKey::MenuAsciiSolidMapGrayscaleDesc),
+                            index: ColorMode::SolidMapGrayscale as u32,
+                        },
+                    ],
+                },
+                id: setting_id::COLOR_MODE,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorRed,
+                description_key: Some(TrKey::ParamGridColorRedDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::FONT_COLOR_R,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorGreen,
+                description_key: Some(TrKey::ParamGridColorGreenDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::FONT_COLOR_G,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorBlue,
+                description_key: Some(TrKey::ParamGridColorBlueDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::FONT_COLOR_B,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorAlpha,
+                description_key: Some(TrKey::ParamGridColorAlphaDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::FONT_COLOR_A,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridThickness,
+                description_key: Some(TrKey::ParamGridThicknessDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_THICKNESS,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorRed,
+                description_key: Some(TrKey::ParamGridColorRedDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_R,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorGreen,
+                description_key: Some(TrKey::ParamGridColorGreenDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_G,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorBlue,
+                description_key: Some(TrKey::ParamGridColorBlueDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_B,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamGridColorAlpha,
+                description_key: Some(TrKey::ParamGridColorAlphaDesc),
+                kind: SettingKind::Percentage { logarithmic: false },
+                id: setting_id::GRID_COLOR_A,
+            },
+            SettingDescriptor {
                 label_key: TrKey::ParamAsciiBrightness,
                 description_key: Some(TrKey::ParamAsciiBrightnessDesc),
                 kind: SettingKind::Percentage { logarithmic: false },
@@ -442,30 +610,6 @@ impl Settings for ZzzAsciiArtFullSettings {
                 description_key: Some(TrKey::ParamAsciiInvertLumaDesc),
                 kind: SettingKind::Boolean,
                 id: setting_id::INVERT_LUMA,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamAsciiColorMode,
-                description_key: Some(TrKey::ParamAsciiColorModeDesc),
-                kind: SettingKind::Enumeration {
-                    options: vec![
-                        MenuItem {
-                            label_key: TrKey::MenuAsciiGrayscale,
-                            description_key: Some(TrKey::MenuAsciiGrayscaleDesc),
-                            index: ColorMode::Grayscale as u32,
-                        },
-                        MenuItem {
-                            label_key: TrKey::MenuAsciiColored,
-                            description_key: Some(TrKey::MenuAsciiColoredDesc),
-                            index: ColorMode::Colored as u32,
-                        },
-                        MenuItem {
-                            label_key: TrKey::MenuAsciiGreenTerminal,
-                            description_key: Some(TrKey::MenuAsciiGreenTerminalDesc),
-                            index: ColorMode::GreenTerminal as u32,
-                        },
-                    ],
-                },
-                id: setting_id::COLOR_MODE,
             },
         ]
         .into_boxed_slice()

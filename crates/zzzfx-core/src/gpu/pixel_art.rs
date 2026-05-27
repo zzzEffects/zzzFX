@@ -65,12 +65,13 @@ struct Uniforms {
     color_levels: u32,
     dithering: u32,
     dither_amount: f32,
-    show_grid: u32,
     grid_thickness: f32,
     grid_color_r: f32,
     grid_color_g: f32,
     grid_color_b: f32,
     grid_color_a: f32,
+    grid_offset_x: u32,
+    grid_offset_y: u32,
     contrast: f32,
     saturation: f32,
     _pad: u32,
@@ -112,6 +113,19 @@ pub(crate) fn try_render(
     width: usize,
     height: usize,
 ) -> Result<bool, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        try_render_inner(settings, src, dst, width, height)
+    }))
+    .unwrap_or(Err("GPU render panicked".into()))
+}
+
+fn try_render_inner(
+    settings: &ZzzPixelArt,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    height: usize,
+) -> Result<bool, String> {
     if !GPU_AVAILABLE.load(Ordering::Relaxed) {
         return Ok(false);
     }
@@ -132,8 +146,15 @@ pub(crate) fn try_render(
         ((h as f32 * (settings.pixel_size_v.clamp(0.0, 100.0) / 100.0)).round() as u32).clamp(1, h)
     };
 
-    let cols = w.div_ceil(pixel_size_w);
-    let rows = h.div_ceil(pixel_size_h);
+    let px = settings.grid_position_x.clamp(0.0, 1.0);
+    let py = settings.grid_position_y.clamp(0.0, 1.0);
+    let ox = px * w as f32 - (px * w as f32 / pixel_size_w as f32).round() * pixel_size_w as f32;
+    let oy = py * h as f32 - (py * h as f32 / pixel_size_h as f32).round() * pixel_size_h as f32;
+    let off_x = ox.rem_euclid(pixel_size_w as f32).round() as u32 % pixel_size_w;
+    let off_y = oy.rem_euclid(pixel_size_h as f32).round() as u32 % pixel_size_h;
+
+    let cols = if off_x > 0 { (w - off_x).div_ceil(pixel_size_w) + 1 } else { w.div_ceil(pixel_size_w) };
+    let rows = if off_y > 0 { (h - off_y).div_ceil(pixel_size_h) + 1 } else { h.div_ceil(pixel_size_h) };
 
     // Fall back to CPU when cell count is too low for efficient GPU occupancy.
     // With < 4 workgroups, occupancy is so low the optimized CPU path is faster.
@@ -168,12 +189,13 @@ pub(crate) fn try_render(
         color_levels: (settings.color_levels.clamp(2.0, 256.0).floor() as u32).max(2),
         dithering: settings.dithering as u32,
         dither_amount: settings.dithering_amount.clamp(0.0, 1.0),
-        show_grid: if settings.show_grid { 1 } else { 0 },
         grid_thickness: settings.grid_thickness.clamp(0.0, 1.0),
         grid_color_r: settings.grid_color_r.clamp(0.0, 1.0),
         grid_color_g: settings.grid_color_g.clamp(0.0, 1.0),
         grid_color_b: settings.grid_color_b.clamp(0.0, 1.0),
         grid_color_a: settings.grid_color_a.clamp(0.0, 1.0),
+        grid_offset_x: off_x,
+        grid_offset_y: off_y,
         contrast: settings.contrast.clamp(0.0, 1.0),
         saturation: settings.saturation.clamp(0.0, 1.0),
         _pad: 0,
@@ -393,7 +415,10 @@ fn get_or_init_ctx() -> Result<&'static Mutex<GpuCtx>, String> {
     }
 
     let (device, _queue) = super::get_or_init_shared_device()?;
-    let (pipeline_cell, pipeline_fill) = create_pipelines(device)?;
+    let (pipeline_cell, pipeline_fill) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        create_pipelines(device)
+    }))
+    .map_err(|_| "GPU pipeline creation panicked".to_string())??;
     let bufs = create_buffers(device, 256, 256);
 
     let _ = GPU_CTX.set(Mutex::new(GpuCtx {
