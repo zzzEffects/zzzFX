@@ -501,5 +501,29 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamShadowAlphaThresholdDesc => c"Alpha 值低于此值的源像素不产生阴影。",
         TrKey::ParamShadowSourceOpacity => c"源不透明度",
         TrKey::ParamShadowSourceOpacityDesc => c"源图像的不透明度。0 = 仅显示阴影，1 = 完全不透明。",
+
+        // ── Ambient Light Fusion: effect labels ─────
+        TrKey::EffectAmbientLightName => c"zzzFX 环境光融合",
+        TrKey::EffectAmbientLightDesc => c"从背景提取环境光并应用到前景，创建光包裹和颜色协调效果，实现无缝合成。",
+
+        // ── Ambient Light Fusion: generic param labels ─
+        TrKey::ParamAmbientLightIntensity => c"强度",
+        TrKey::ParamAmbientLightIntensityDesc => c"环境光融合效果的整体强度。0 = 关闭，1 = 完全。",
+        TrKey::ParamAmbientLightEdgeWidth => c"边缘宽度",
+        TrKey::ParamAmbientLightEdgeWidthDesc => c"环境光从前景边缘向内部延伸的距离。0 = 无光，1 = 整个前景被照亮。",
+        TrKey::ParamAmbientLightLightWrap => c"光包裹",
+        TrKey::ParamAmbientLightLightWrapDesc => c"背景环境光渗入前景边缘的程度。",
+        TrKey::ParamAmbientLightAmbientTint => c"环境色调",
+        TrKey::ParamAmbientLightAmbientTintDesc => c"前景内部颜色与环境色温协调的程度。",
+        TrKey::ParamAmbientLightBlurRadius => c"模糊半径",
+        TrKey::ParamAmbientLightBlurRadiusDesc => c"用于提取环境光图的背景模糊半径（像素）。值越大，环境光越均匀。",
+        TrKey::ParamAmbientLightBrightness => c"亮度",
+        TrKey::ParamAmbientLightBrightnessDesc => c"混合前应用于环境光的亮度乘数。1.0 = 中性，2.0 = 两倍亮度。",
+        TrKey::ParamAmbientLightFgOpacity => c"前景不透明度",
+        TrKey::ParamAmbientLightFgOpacityDesc => c"前景图层的不透明度。0 = 完全透明，1 = 完全不透明。",
+        TrKey::ParamAmbientLightBgOpacity => c"背景不透明度",
+        TrKey::ParamAmbientLightBgOpacityDesc => c"背景图层的不透明度。0 = 完全透明，1 = 完全不透明。",
+        TrKey::ParamAmbientLightSwapFgBg => c"交换前景和背景",
+        TrKey::ParamAmbientLightSwapFgBgDesc => c"启用后，交换前景和背景输入剪辑。",
     }
 }

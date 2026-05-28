@@ -553,6 +553,30 @@ i18n_keys! {
         ParamShadowAlphaThresholdDesc = "Source pixels with alpha below this value do not cast shadows.";
         ParamShadowSourceOpacity = "Source Opacity";
         ParamShadowSourceOpacityDesc = "Opacity of the source image. 0 = shadow only, 1 = fully opaque.";
+
+        // ── Ambient Light Fusion: effect labels ─────
+        EffectAmbientLightName = "zzzFX Ambient Light Fusion";
+        EffectAmbientLightDesc = "Extracts ambient light from the background and applies it to the foreground, creating a light wrap and color harmonization effect for seamless compositing.";
+
+        // ── Ambient Light Fusion: generic param labels ─
+        ParamAmbientLightIntensity = "Intensity";
+        ParamAmbientLightIntensityDesc = "Overall strength of the ambient light fusion effect. 0 = off, 1 = full.";
+        ParamAmbientLightEdgeWidth = "Edge Width";
+        ParamAmbientLightEdgeWidthDesc = "How far the ambient light reaches inward from the foreground edges. 0 = no light, 1 = entire foreground illuminated.";
+        ParamAmbientLightLightWrap = "Light Wrap";
+        ParamAmbientLightLightWrapDesc = "How much background ambient light bleeds into the foreground edges.";
+        ParamAmbientLightAmbientTint = "Ambient Tint";
+        ParamAmbientLightAmbientTintDesc = "How much the interior foreground colors are harmonized with the ambient color temperature.";
+        ParamAmbientLightBlurRadius = "Blur Radius";
+        ParamAmbientLightBlurRadiusDesc = "Radius in pixels for the background blur that extracts the ambient light map. Larger values create broader, more uniform ambient light.";
+        ParamAmbientLightBrightness = "Brightness";
+        ParamAmbientLightBrightnessDesc = "Brightness multiplier applied to the ambient light before blending. 1.0 = neutral, 2.0 = twice as bright.";
+        ParamAmbientLightFgOpacity = "Foreground Opacity";
+        ParamAmbientLightFgOpacityDesc = "Opacity of the foreground layer. 0 = fully transparent, 1 = fully opaque.";
+        ParamAmbientLightBgOpacity = "Background Opacity";
+        ParamAmbientLightBgOpacityDesc = "Opacity of the background layer. 0 = fully transparent, 1 = fully opaque.";
+        ParamAmbientLightSwapFgBg = "Swap Foreground and Background";
+        ParamAmbientLightSwapFgBgDesc = "When enabled, swap the foreground and background input clips.";
     }
 }
 

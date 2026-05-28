@@ -5,6 +5,7 @@ pub mod settings;
 
 pub use effect_settings::setting_id;
 
+mod ambient_light;
 mod ascii_art;
 mod long_shadow;
 mod stroke;
@@ -15,6 +16,7 @@ mod pixel_art;
 
 pub use repeater::CompositorLayer;
 
+pub use settings::ambient_light::{ZzzAmbientLight, ZzzAmbientLightFullSettings};
 pub use settings::ascii_art::{
     ColorMode as AsciiColorMode, ZzzAsciiArt, ZzzAsciiArtFullSettings,
 };

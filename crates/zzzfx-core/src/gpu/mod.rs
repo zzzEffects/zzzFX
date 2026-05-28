@@ -1,3 +1,4 @@
+pub mod ambient_light;
 pub mod ascii_art;
 pub mod ass_glyph;
 pub mod ass_subtitle;
