@@ -594,6 +594,102 @@ pub unsafe fn action_get_clip_preferences_common(
     Ok(())
 }
 
+pub unsafe fn action_get_region_of_definition_common(
+    suites: &SuiteCache,
+    _effect: OfxImageEffectHandle,
+    out_args: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    // Return an infinite RoD so hosts (particularly VEGAS Pro) do not
+    // constrain output images to the input clip's bounds. A finite RoD,
+    // even one matching the project extent, is clamped by VEGAS to the
+    // Pan/Crop sub-region when the effect is post-crop.
+    let psn = suites
+        .property_suite
+        .propSetDoubleN
+        .ok_or(OfxStat::kOfxStatFailed)?;
+
+    let rod = OfxRectD {
+        x1: f64::NEG_INFINITY,
+        y1: f64::NEG_INFINITY,
+        x2: f64::INFINITY,
+        y2: f64::INFINITY,
+    };
+
+    psn(
+        out_args,
+        kOfxImageEffectPropRegionOfDefinition.as_ptr(),
+        4,
+        ptr::addr_of!(rod) as *mut _,
+    )
+    .ofx_ok()?;
+    Ok(())
+}
+
+pub unsafe fn get_project_canonical_region(
+    suites: &SuiteCache,
+    effect: OfxImageEffectHandle,
+) -> Option<OfxRectD> {
+    let pg = suites.property_suite.propGetDouble?;
+    let gps = suites.image_effect_suite.getPropertySet?;
+
+    let mut effect_props: OfxPropertySetHandle = ptr::null_mut();
+    gps(effect, &mut effect_props).ofx_ok().ok()?;
+
+    let mut x: f64 = 0.0;
+    let mut y: f64 = 0.0;
+
+    // Try ProjectSize first, fall back to ProjectExtent
+    if pg(
+        effect_props,
+        kOfxImageEffectPropProjectSize.as_ptr(),
+        0,
+        &mut x,
+    )
+    .ofx_ok()
+    .is_ok()
+        && pg(
+            effect_props,
+            kOfxImageEffectPropProjectSize.as_ptr(),
+            1,
+            &mut y,
+        )
+        .ofx_ok()
+        .is_ok()
+    {
+        Some(OfxRectD {
+            x1: 0.0,
+            y1: 0.0,
+            x2: x,
+            y2: y,
+        })
+    } else if pg(
+        effect_props,
+        kOfxImageEffectPropProjectExtent.as_ptr(),
+        0,
+        &mut x,
+    )
+    .ofx_ok()
+    .is_ok()
+        && pg(
+            effect_props,
+            kOfxImageEffectPropProjectExtent.as_ptr(),
+            1,
+            &mut y,
+        )
+        .ofx_ok()
+        .is_ok()
+    {
+        Some(OfxRectD {
+            x1: 0.0,
+            y1: 0.0,
+            x2: x,
+            y2: y,
+        })
+    } else {
+        None
+    }
+}
+
 pub unsafe fn action_get_regions_of_interest_common(
     suites: &SuiteCache,
     effect: OfxImageEffectHandle,

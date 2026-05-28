@@ -231,6 +231,8 @@ unsafe extern "C" fn main_entry(
         action_describe(effect)
     } else if action == kOfxImageEffectActionDescribeInContext {
         action_describe_in_context(effect)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        action_get_region_of_definition(effect, outArgs)
     } else if action == kOfxImageEffectActionGetRegionsOfInterest {
         action_get_regions_of_interest(effect, inArgs, outArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
@@ -354,7 +356,8 @@ unsafe fn action_describe(descriptor: OfxImageEffectHandle) -> OfxResult<()> {
         0,
     )
     .ofx_ok()?;
-    propSetInt(effectProps, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 0).ofx_ok()?;
+    propSetInt(effectProps, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 1).ofx_ok()?;
+    propSetInt(effectProps, kOfxImageEffectPropSupportsMultiResolution.as_ptr(), 0, 1).ofx_ok()?;
 
     Ok(())
 }
@@ -461,6 +464,36 @@ unsafe fn action_describe_in_context(descriptor: OfxImageEffectHandle) -> OfxRes
     propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 3, c"Overlay".as_ptr()).ofx_ok()?;
     propSetInt(modeProps, kOfxParamPropDefault.as_ptr(), 0, default_mode as c_int).ofx_ok()?;
     propSetString(modeProps, kOfxParamPropHint.as_ptr(), 0, c"How the solid color is blended with the image.".as_ptr()).ofx_ok()?;
+
+    Ok(())
+}
+
+unsafe fn action_get_region_of_definition(
+    _effect: OfxImageEffectHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    // Return an infinite RoD so hosts (particularly VEGAS Pro) do not
+    // constrain output images to the input clip's bounds.
+    let data = shared();
+    let propSetDoubleN = data
+        .property_suite
+        .propSetDoubleN
+        .ok_or(OfxStat::kOfxStatFailed)?;
+
+    let rod = [
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::INFINITY,
+    ];
+
+    propSetDoubleN(
+        outArgs,
+        kOfxImageEffectPropRegionOfDefinition.as_ptr(),
+        4,
+        rod.as_ptr() as *mut _,
+    )
+    .ofx_ok()?;
 
     Ok(())
 }
@@ -618,11 +651,29 @@ unsafe fn action_render(
     let mut dstClip: OfxImageClipHandle = ptr::null_mut();
     clipGetHandle(effect, c"Output".as_ptr(), &mut dstClip, ptr::null_mut()).ofx_ok()?;
 
-    // Get images
+    // Get images — request output at project extent
     let mut srcImg: OfxPropertySetHandle = ptr::null_mut();
     clipGetImage(srcClip, time, ptr::null(), &mut srcImg).ofx_ok()?;
     let mut dstImg: OfxPropertySetHandle = ptr::null_mut();
-    clipGetImage(dstClip, time, ptr::null(), &mut dstImg).ofx_ok()?;
+    let mut out_region: Option<bindings::OfxRectD> = None;
+    {
+        let getPropertySet = data.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?;
+        let propGetDouble = data.property_suite.propGetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+        let mut effect_props: OfxPropertySetHandle = ptr::null_mut();
+        getPropertySet(effect, &mut effect_props).ofx_ok()?;
+        let mut x: f64 = 0.0;
+        let mut y: f64 = 0.0;
+        if propGetDouble(effect_props, kOfxImageEffectPropProjectSize.as_ptr(), 0, &mut x).ofx_ok().is_ok()
+            && propGetDouble(effect_props, kOfxImageEffectPropProjectSize.as_ptr(), 1, &mut y).ofx_ok().is_ok()
+        {
+            out_region = Some(bindings::OfxRectD { x1: 0.0, y1: 0.0, x2: x, y2: y });
+        }
+    }
+    let out_region_ptr: *const bindings::OfxRectD = match &out_region {
+        Some(r) => r,
+        None => ptr::null(),
+    };
+    clipGetImage(dstClip, time, out_region_ptr, &mut dstImg).ofx_ok()?;
 
     // Get image data pointers
     let mut srcPtr: *mut c_void = ptr::null_mut();
@@ -635,15 +686,17 @@ unsafe fn action_render(
     propGetInt(srcImg, kOfxImagePropRowBytes.as_ptr(), 0, &mut srcRowBytes).ofx_ok()?;
     propGetInt(dstImg, kOfxImagePropRowBytes.as_ptr(), 0, &mut dstRowBytes).ofx_ok()?;
 
-    let mut left: c_int = 0; let mut bottom: c_int = 0;
-    let mut right: c_int = 0; let mut top: c_int = 0;
-    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 0, &mut left).ofx_ok()?;
-    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 1, &mut bottom).ofx_ok()?;
-    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 2, &mut right).ofx_ok()?;
-    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 3, &mut top).ofx_ok()?;
+    // ── Use DESTINATION bounds for working region ──────────────
+    let mut dst_l: c_int = 0; let mut dst_b: c_int = 0;
+    let mut dst_r: c_int = 0; let mut dst_t: c_int = 0;
+    propGetInt(dstImg, kOfxImagePropBounds.as_ptr(), 0, &mut dst_l).ofx_ok()?;
+    propGetInt(dstImg, kOfxImagePropBounds.as_ptr(), 1, &mut dst_b).ofx_ok()?;
+    propGetInt(dstImg, kOfxImagePropBounds.as_ptr(), 2, &mut dst_r).ofx_ok()?;
+    propGetInt(dstImg, kOfxImagePropBounds.as_ptr(), 3, &mut dst_t).ofx_ok()?;
 
-    let width = (right - left) as usize;
-    let height = (top - bottom) as usize;
+    let bounds_w = (dst_r - dst_l).max(0) as usize;
+    let bounds_h = (dst_t - dst_b).max(0) as usize;
+
     let src_stride = srcRowBytes.max(0) as usize;
     let dst_stride = dstRowBytes.max(0) as usize;
 
@@ -660,54 +713,120 @@ unsafe fn action_render(
         .ok()?;
         let s = CStr::from_ptr(depth_ptr);
         if s == kOfxBitDepthFloat {
-            Some(16usize) // 4 bytes/component × 4 components
+            Some(16usize)
         } else if s == kOfxBitDepthShort {
-            Some(8usize) // 2 bytes/component × 4 components
+            Some(8usize)
         } else if s == kOfxBitDepthByte {
-            Some(4usize) // 1 byte/component × 4 components
+            Some(4usize)
         } else {
             None
         }
     })()
-    .unwrap_or(4); // default to Byte on unrecognized depth
+    .unwrap_or(4);
+
+    // VEGAS allocates full project-width buffers but restricts
+    // pixel bounds to the crop region. Use stride for actual
+    // buffer width so the effect isn't clipped.
+    let stride_w = (dst_stride / depth).min(16384);
+    let width = bounds_w.max(stride_w);
+    let height = bounds_h;
+
+    // Source bounds for offset within the destination region
+    let mut src_l: c_int = 0; let mut src_b: c_int = 0;
+    let mut src_r: c_int = 0; let mut src_t: c_int = 0;
+    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 0, &mut src_l).ofx_ok()?;
+    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 1, &mut src_b).ofx_ok()?;
+    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 2, &mut src_r).ofx_ok()?;
+    propGetInt(srcImg, kOfxImagePropBounds.as_ptr(), 3, &mut src_t).ofx_ok()?;
+
+    let src_w = (src_r - src_l).max(0) as usize;
+    let src_h = (src_t - src_b).max(0) as usize;
+    let off_x = ((src_l - dst_l).max(0)) as usize;
+    let off_y = ((src_b - dst_b).max(0)) as usize;
+    let same_region = src_l == dst_l && src_b == dst_b && src_r == dst_r && src_t == dst_t;
 
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
     let mut src_buf = vec![0u8; total_u8];
     let mut dst_buf = vec![0u8; total_u8];
 
-    match depth {
-        4 => {
-            // Byte: direct copy — fast path
-            for y in 0..height {
-                ptr::copy_nonoverlapping(
-                    (srcPtr as *const u8).add(y * src_stride),
-                    src_buf.as_mut_ptr().add(y * row_bytes_u8),
-                    row_bytes_u8,
-                );
+    if same_region {
+        match depth {
+            4 => {
+                for y in 0..height {
+                    ptr::copy_nonoverlapping(
+                        (srcPtr as *const u8).add(y * src_stride),
+                        src_buf.as_mut_ptr().add(y * row_bytes_u8),
+                        row_bytes_u8,
+                    );
+                }
             }
-        }
-        8 => {
-            // Short (u16): convert to u8 via (v * 255 + 32767) / 65535
-            for y in 0..height {
-                let host_row = (srcPtr as *const u8).add(y * src_stride) as *const u16;
-                let u8_row = src_buf.as_mut_ptr().add(y * row_bytes_u8);
-                for x in 0..(width * 4) {
-                    let v = *host_row.add(x) as u32;
-                    *u8_row.add(x) = ((v * 255 + 32767) / 65535) as u8;
+            8 => {
+                for y in 0..height {
+                    let host_row = (srcPtr as *const u8).add(y * src_stride) as *const u16;
+                    let u8_row = src_buf.as_mut_ptr().add(y * row_bytes_u8);
+                    for x in 0..(width * 4) {
+                        let v = *host_row.add(x) as u32;
+                        *u8_row.add(x) = ((v * 255 + 32767) / 65535) as u8;
+                    }
+                }
+            }
+            _ => {
+                for y in 0..height {
+                    let host_row = (srcPtr as *const u8).add(y * src_stride) as *const f32;
+                    let u8_row = src_buf.as_mut_ptr().add(y * row_bytes_u8);
+                    for x in 0..(width * 4) {
+                        let v = *host_row.add(x);
+                        *u8_row.add(x) = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    }
                 }
             }
         }
-        _ => {
-            // Float (f32): convert to u8 via clamp(0,1) * 255 + round
-            for y in 0..height {
-                let host_row = (srcPtr as *const u8).add(y * src_stride) as *const f32;
-                let u8_row = src_buf.as_mut_ptr().add(y * row_bytes_u8);
-                for x in 0..(width * 4) {
-                    let v = *host_row.add(x);
-                    *u8_row.add(x) = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    } else {
+        // Copy source into sub-rectangle of full destination buffer
+        src_buf.fill(0);
+        let src_row_u8 = src_w * 4;
+        let mut tmp = vec![0u8; src_row_u8 * src_h];
+        match depth {
+            4 => {
+                for y in 0..src_h {
+                    ptr::copy_nonoverlapping(
+                        (srcPtr as *const u8).add(y * src_stride),
+                        tmp.as_mut_ptr().add(y * src_row_u8),
+                        src_row_u8,
+                    );
                 }
             }
+            8 => {
+                for y in 0..src_h {
+                    let host_row = (srcPtr as *const u8).add(y * src_stride) as *const u16;
+                    let u8_row = tmp.as_mut_ptr().add(y * src_row_u8);
+                    for x in 0..(src_w * 4) {
+                        let v = *host_row.add(x) as u32;
+                        *u8_row.add(x) = ((v * 255 + 32767) / 65535) as u8;
+                    }
+                }
+            }
+            _ => {
+                for y in 0..src_h {
+                    let host_row = (srcPtr as *const u8).add(y * src_stride) as *const f32;
+                    let u8_row = tmp.as_mut_ptr().add(y * src_row_u8);
+                    for x in 0..(src_w * 4) {
+                        let v = *host_row.add(x);
+                        *u8_row.add(x) = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    }
+                }
+            }
+        }
+        let copy_w = src_row_u8.min(row_bytes_u8.saturating_sub(off_x * 4));
+        for row in 0..src_h.min(height.saturating_sub(off_y)) {
+            let tmp_row = row * src_row_u8;
+            let dst_row = (off_y + row) * row_bytes_u8 + off_x * 4;
+            ptr::copy_nonoverlapping(
+                tmp.as_ptr().add(tmp_row),
+                src_buf.as_mut_ptr().add(dst_row),
+                copy_w,
+            );
         }
     }
 

@@ -17,7 +17,8 @@ use crate::shared::{
     build_string_cache, define_single_param, read_generic_param,
     copy_u8_to_output, detect_pixel_depth,
     action_load_common, action_get_clip_preferences_common,
-    action_get_regions_of_interest_common,
+    action_get_regions_of_interest_common, action_get_region_of_definition_common,
+    get_project_canonical_region,
 };
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,8 @@ unsafe fn main_entry_inner(
         action_describe(effect)
     } else if action == kOfxImageEffectActionDescribeInContext {
         action_describe_in_context(effect)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        action_get_region_of_definition(effect, outArgs)
     } else if action == kOfxImageEffectActionGetRegionsOfInterest {
         action_get_regions_of_interest(effect, inArgs, outArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
@@ -173,7 +176,8 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
     ps(ep, kOfxImageEffectPropSupportedPixelDepths.as_ptr(), 2, kOfxBitDepthByte.as_ptr()).ofx_ok()?;
     ps(ep, kOfxImageEffectPluginRenderThreadSafety.as_ptr(), 0, kOfxImageEffectRenderFullySafe.as_ptr()).ofx_ok()?;
     pi(ep, kOfxImageEffectPluginPropHostFrameThreading.as_ptr(), 0, 0).ofx_ok()?;
-    pi(ep, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 0).ofx_ok()?;
+    pi(ep, kOfxImageEffectPropSupportsTiles.as_ptr(), 0, 1).ofx_ok()?;
+    pi(ep, kOfxImageEffectPropSupportsMultiResolution.as_ptr(), 0, 1).ofx_ok()?;
     pi(ep, kOfxImageEffectPropTemporalClipAccess.as_ptr(), 0, 1).ofx_ok()?;
     Ok(())
 }
@@ -230,6 +234,13 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     }
 
     Ok(())
+}
+
+unsafe fn action_get_region_of_definition(
+    effect: OfxImageEffectHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    action_get_region_of_definition_common(&data()?.suites, effect, outArgs)
 }
 
 unsafe fn action_get_regions_of_interest(
@@ -425,25 +436,61 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
         layers.drain(0..skip);
     }
 
-    // --- Fetch source images ---
+    // --- Fetch dest image early to get project-size bounds ---
+    let mut di: OfxPropertySetHandle = ptr::null_mut();
+    let out_region = get_project_canonical_region(su, effect);
+    let out_region_ptr: *const OfxRectD = match &out_region {
+        Some(r) => r,
+        None => ptr::null(),
+    };
+    cgi(dc, time, out_region_ptr, &mut di).ofx_ok()?;
+
+    // ── Use DESTINATION bounds for working region ──────────────
+    let mut dst_l: c_int = 0; let mut dst_b: c_int = 0;
+    let mut dst_r: c_int = 0; let mut dst_t: c_int = 0;
+    pgi(di, kOfxImagePropBounds.as_ptr(), 0, &mut dst_l).ofx_ok()?;
+    pgi(di, kOfxImagePropBounds.as_ptr(), 1, &mut dst_b).ofx_ok()?;
+    pgi(di, kOfxImagePropBounds.as_ptr(), 2, &mut dst_r).ofx_ok()?;
+    pgi(di, kOfxImagePropBounds.as_ptr(), 3, &mut dst_t).ofx_ok()?;
+
+    let bounds_w = (dst_r - dst_l).max(0) as usize;
+    let bounds_h = (dst_t - dst_b).max(0) as usize;
+
+    // Read dest stride to get actual buffer width
+    let mut drb: c_int = 0;
+    pgi(di, kOfxImagePropRowBytes.as_ptr(), 0, &mut drb).ofx_ok()?;
+    let d_stride = drb.max(0) as usize;
+
+    // --- Fetch first source image for depth detection ---
     let mut si0: OfxPropertySetHandle = ptr::null_mut();
     cgi(sc, layers[0].source_time, ptr::null(), &mut si0).ofx_ok()?;
 
-    let mut l: c_int = 0; let mut b: c_int = 0;
-    let mut r: c_int = 0; let mut t: c_int = 0;
-    pgi(si0, kOfxImagePropBounds.as_ptr(), 0, &mut l).ofx_ok()?;
-    pgi(si0, kOfxImagePropBounds.as_ptr(), 1, &mut b).ofx_ok()?;
-    pgi(si0, kOfxImagePropBounds.as_ptr(), 2, &mut r).ofx_ok()?;
-    pgi(si0, kOfxImagePropBounds.as_ptr(), 3, &mut t).ofx_ok()?;
+    let depth = detect_pixel_depth(su, si0).ok_or(OfxStat::kOfxStatErrFormat)?;
 
-    let width = (r - l).max(0) as usize;
-    let height = (t - b).max(0) as usize;
+    // VEGAS allocates full project-width buffers but restricts
+    // pixel bounds to the crop region. Use stride for actual
+    // buffer width so the effect isn't clipped.
+    let stride_w = (d_stride / depth).min(16384);
+    let width = bounds_w.max(stride_w);
+    let height = bounds_h;
     if width == 0 || height == 0 { return Err(OfxStat::kOfxStatFailed); }
     if width > 16384 || height > 16384 { return Err(OfxStat::kOfxStatErrFormat); }
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
-    let depth = detect_pixel_depth(su, si0).ok_or(OfxStat::kOfxStatErrFormat)?;
+    // Source bounds for offset within the destination region
+    let mut src_l: c_int = 0; let mut src_b: c_int = 0;
+    let mut src_r: c_int = 0; let mut src_t: c_int = 0;
+    pgi(si0, kOfxImagePropBounds.as_ptr(), 0, &mut src_l).ofx_ok()?;
+    pgi(si0, kOfxImagePropBounds.as_ptr(), 1, &mut src_b).ofx_ok()?;
+    pgi(si0, kOfxImagePropBounds.as_ptr(), 2, &mut src_r).ofx_ok()?;
+    pgi(si0, kOfxImagePropBounds.as_ptr(), 3, &mut src_t).ofx_ok()?;
+
+    let src_w = (src_r - src_l).max(0) as usize;
+    let src_h = (src_t - src_b).max(0) as usize;
+    let off_x = ((src_l - dst_l).max(0)) as usize;
+    let off_y = ((src_b - dst_b).max(0)) as usize;
+    let same_region = src_l == dst_l && src_b == dst_b && src_r == dst_r && src_t == dst_t;
 
     let mut srb0: c_int = 0;
     pgi(si0, kOfxImagePropRowBytes.as_ptr(), 0, &mut srb0).ofx_ok()?;
@@ -454,7 +501,23 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
         let _ = pgp(si, kOfxImagePropData.as_ptr(), 0, &mut sp);
         if sp.is_null() { return vec![0u8; total_u8]; }
         let mut buf = vec![0u8; total_u8];
-        self::shared::copy_source_to_u8(sp, s_stride, &mut buf, width, height, row_bytes_u8, depth);
+        if same_region {
+            self::shared::copy_source_to_u8(sp, s_stride, &mut buf, width, height, row_bytes_u8, depth);
+        } else {
+            // Copy source into sub-rectangle at offset
+            let mut tmp = vec![0u8; src_w * src_h * 4];
+            self::shared::copy_source_to_u8(sp, s_stride, &mut tmp, src_w, src_h, src_w * 4, depth);
+            let copy_w = (src_w * 4).min(row_bytes_u8.saturating_sub(off_x * 4));
+            for row in 0..src_h.min(height.saturating_sub(off_y)) {
+                let tmp_row = row * src_w * 4;
+                let dst_row = (off_y + row) * row_bytes_u8 + off_x * 4;
+                ptr::copy_nonoverlapping(
+                    tmp.as_ptr().add(tmp_row),
+                    buf.as_mut_ptr().add(dst_row),
+                    copy_w,
+                );
+            }
+        }
         buf
     };
 
@@ -486,8 +549,6 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     repeater.composite_layers(&compositor_layers, &mut dst_buf, width, height);
 
     // --- Write output ---
-    let mut di: OfxPropertySetHandle = ptr::null_mut();
-    cgi(dc, time, ptr::null(), &mut di).ofx_ok()?;
     let mut dp: *mut c_void = ptr::null_mut();
     pgp(di, kOfxImagePropData.as_ptr(), 0, &mut dp).ofx_ok()?;
     let mut drb: c_int = 0;

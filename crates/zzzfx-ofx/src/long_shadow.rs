@@ -16,7 +16,8 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache, build_string_cache,
     define_single_param, read_generic_param, copy_source_to_u8, copy_u8_to_output,
     detect_pixel_depth, action_load_common, action_get_clip_preferences_common,
-    action_get_regions_of_interest_common,
+    action_get_regions_of_interest_common, action_get_region_of_definition_common,
+    get_project_canonical_region,
 };
 
 // ---------------------------------------------------------------------------
@@ -159,6 +160,8 @@ unsafe fn main_entry_inner(
         action_describe(effect)
     } else if action == kOfxImageEffectActionDescribeInContext {
         action_describe_in_context(effect)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        action_get_region_of_definition(effect, outArgs)
     } else if action == kOfxImageEffectActionGetRegionsOfInterest {
         action_get_regions_of_interest(effect, inArgs, outArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
@@ -271,7 +274,14 @@ unsafe fn action_describe(desc: OfxImageEffectHandle) -> OfxResult<()> {
         ep,
         kOfxImageEffectPropSupportsTiles.as_ptr(),
         0,
+        1,
+    )
+    .ofx_ok()?;
+    pi(
+        ep,
+        kOfxImageEffectPropSupportsMultiResolution.as_ptr(),
         0,
+        1,
     )
     .ofx_ok()?;
     Ok(())
@@ -407,6 +417,13 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     Ok(())
 }
 
+unsafe fn action_get_region_of_definition(
+    effect: OfxImageEffectHandle,
+    outArgs: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    action_get_region_of_definition_common(&data()?.suites, effect, outArgs)
+}
+
 unsafe fn action_get_regions_of_interest(
     effect: OfxImageEffectHandle,
     inArgs: OfxPropertySetHandle,
@@ -512,7 +529,12 @@ unsafe fn action_render(
     cgi(sc, time, ptr::null(), &mut si).ofx_ok()?;
     let _si_guard = ClipImageGuard { img: si, release_fn: cri };
     let mut di: OfxPropertySetHandle = ptr::null_mut();
-    cgi(dc, time, ptr::null(), &mut di).ofx_ok()?;
+    let out_region = get_project_canonical_region(su, effect);
+    let out_region_ptr: *const OfxRectD = match &out_region {
+        Some(r) => r,
+        None => ptr::null(),
+    };
+    cgi(dc, time, out_region_ptr, &mut di).ofx_ok()?;
     let _di_guard = ClipImageGuard { img: di, release_fn: cri };
 
     let mut sp: *mut c_void = ptr::null_mut();
@@ -535,8 +557,20 @@ unsafe fn action_render(
     pgi(di, kOfxImagePropBounds.as_ptr(), 2, &mut dst_r).ofx_ok()?;
     pgi(di, kOfxImagePropBounds.as_ptr(), 3, &mut dst_t).ofx_ok()?;
 
-    let width = (dst_r - dst_l).max(0) as usize;
-    let height = (dst_t - dst_b).max(0) as usize;
+    let bounds_w = (dst_r - dst_l).max(0) as usize;
+    let bounds_h = (dst_t - dst_b).max(0) as usize;
+
+    let s_stride = srb.max(0) as usize;
+    let d_stride = drb.max(0) as usize;
+
+    let depth = detect_pixel_depth(su, si).ok_or(OfxStat::kOfxStatErrFormat)?;
+
+    // VEGAS allocates full project-width buffers but restricts
+    // pixel bounds to the crop region. Use stride for actual
+    // buffer width so shadows aren't clipped.
+    let stride_w = (d_stride / depth).min(16384);
+    let width = bounds_w.max(stride_w);
+    let height = bounds_h;
     if width == 0 || height == 0 {
         return Err(OfxStat::kOfxStatFailed);
     }
@@ -557,10 +591,6 @@ unsafe fn action_render(
     let off_x = ((src_l - dst_l).max(0)) as usize;
     let off_y = ((src_b - dst_b).max(0)) as usize;
 
-    let s_stride = srb.max(0) as usize;
-    let d_stride = drb.max(0) as usize;
-
-    let depth = detect_pixel_depth(su, si).ok_or(OfxStat::kOfxStatErrFormat)?;
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
