@@ -15,6 +15,7 @@ mod ascii_art;
 mod long_shadow;
 mod midi_display;
 mod pixel_art;
+mod svg_display;
 
 use std::{ffi::c_int, ptr};
 
@@ -26,7 +27,7 @@ use crate::bindings::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    9
+    10
 }
 
 #[unsafe(no_mangle)]
@@ -41,6 +42,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         6 => long_shadow::get_plugin(),
         7 => ambient_light::get_plugin(),
         8 => midi_display::get_plugin(),
+        9 => svg_display::get_plugin(),
         _ => ptr::null(),
     }
 }

@@ -649,5 +649,35 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuMidiAllTracksDesc => c"显示所有轨道的音符。",
         TrKey::MenuMidiSpecificTrack => c"特定轨道",
         TrKey::MenuMidiSpecificTrackDesc => c"仅显示单个轨道的音符。",
+
+        // ── SVG Display: effect labels ──────────────────
+        TrKey::EffectSvgDisplayName => c"zzzFX SVG 显示",
+        TrKey::EffectSvgDisplayDesc => c"将 SVG 文件渲染到输出画面，支持缩放、定位、旋转和混合控制。",
+
+        // ── SVG Display: native param labels & hints ─────
+        TrKey::NativeSelectSvgFile => c"选择 SVG 文件...",
+        TrKey::NativeSelectSvgFileHint => c"选择要渲染的 .svg 文件。",
+        TrKey::NativeSvgBackgroundColor => c"背景颜色",
+        TrKey::NativeSvgBackgroundColorHint => c"SVG 后方背景的颜色。",
+        TrKey::NativeSvgPosition => c"位置",
+        TrKey::NativeSvgPositionHint => c"SVG 的归一化位置（0-1）。0.5 = 居中。",
+
+        // ── SVG Display: generic param labels ────────────
+        TrKey::ParamSvgScale => c"缩放",
+        TrKey::ParamSvgScaleDesc => c"应用于 SVG 的缩放倍率（1.0 = 原始大小）。",
+        TrKey::ParamSvgFitToOutput => c"适应输出",
+        TrKey::ParamSvgFitToOutputDesc => c"自动缩放 SVG 以适配输出画面范围。",
+        TrKey::ParamSvgPositionX => c"位置 X",
+        TrKey::ParamSvgPositionXDesc => c"SVG 的水平位置（0 = 左，0.5 = 居中，1 = 右）。",
+        TrKey::ParamSvgPositionY => c"位置 Y",
+        TrKey::ParamSvgPositionYDesc => c"SVG 的垂直位置（0 = 上，0.5 = 居中，1 = 下）。",
+        TrKey::ParamSvgRotation => c"旋转",
+        TrKey::ParamSvgRotationDesc => c"绕 SVG 中心的旋转角度（度）。",
+        TrKey::ParamSvgOpacity => c"不透明度",
+        TrKey::ParamSvgOpacityDesc => c"渲染后 SVG 的整体不透明度。0 = 完全透明，1 = 完全不透明。",
+        TrKey::ParamSvgPreserveAspectRatio => c"保持宽高比",
+        TrKey::ParamSvgPreserveAspectRatioDesc => c"启用后，缩放时保持 SVG 的原始宽高比。",
+        TrKey::ParamSvgDpi => c"DPI",
+        TrKey::ParamSvgDpiDesc => c"用于解释 SVG 物理单位（pt、cm 等）的每英寸点数。",
     }
 }

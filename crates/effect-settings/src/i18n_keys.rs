@@ -701,6 +701,36 @@ i18n_keys! {
         MenuMidiAllTracksDesc = "Display notes from all tracks.";
         MenuMidiSpecificTrack = "Specific Track";
         MenuMidiSpecificTrackDesc = "Display notes from a single track only.";
+
+        // ── SVG Display: effect labels ──────────────────
+        EffectSvgDisplayName = "zzzFX SVG Display";
+        EffectSvgDisplayDesc = "Renders SVG files onto the output frame with scaling, positioning, rotation, and blending controls.";
+
+        // ── SVG Display: native param labels & hints ─────
+        NativeSelectSvgFile = "Select SVG File...";
+        NativeSelectSvgFileHint = "Choose an .svg file to render.";
+        NativeSvgBackgroundColor = "Background Color";
+        NativeSvgBackgroundColorHint = "Color of the background behind the SVG.";
+        NativeSvgPosition = "Position";
+        NativeSvgPositionHint = "Normalized position of the SVG (0-1). 0.5 = center.";
+
+        // ── SVG Display: generic param labels ────────────
+        ParamSvgScale = "Scale";
+        ParamSvgScaleDesc = "Scale multiplier applied to the SVG (1.0 = native size).";
+        ParamSvgFitToOutput = "Fit to Output";
+        ParamSvgFitToOutputDesc = "Automatically scale the SVG to fit within the output frame bounds.";
+        ParamSvgPositionX = "Position X";
+        ParamSvgPositionXDesc = "Horizontal position of the SVG (0 = left, 0.5 = center, 1 = right).";
+        ParamSvgPositionY = "Position Y";
+        ParamSvgPositionYDesc = "Vertical position of the SVG (0 = top, 0.5 = center, 1 = bottom).";
+        ParamSvgRotation = "Rotation";
+        ParamSvgRotationDesc = "Rotation angle in degrees around the SVG center.";
+        ParamSvgOpacity = "Opacity";
+        ParamSvgOpacityDesc = "Overall opacity of the rendered SVG. 0 = fully transparent, 1 = fully opaque.";
+        ParamSvgPreserveAspectRatio = "Preserve Aspect Ratio";
+        ParamSvgPreserveAspectRatioDesc = "When enabled, the SVG aspect ratio is preserved when fitting to output.";
+        ParamSvgDpi = "DPI";
+        ParamSvgDpiDesc = "Dots per inch for interpreting SVG physical units (pt, cm, etc.).";
     }
 }
 

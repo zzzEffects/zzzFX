@@ -14,6 +14,7 @@ mod repeater;
 mod sprite_sheet;
 pub mod ass_subtitle;
 mod pixel_art;
+pub mod svg_display;
 
 pub use repeater::CompositorLayer;
 
@@ -45,3 +46,4 @@ pub use settings::stroke::{
     BlendMode as ZzzStrokeBlendMode, FillMode, GradientSettings, StrokePosition, ZzzStroke,
     ZzzStrokeFullSettings,
 };
+pub use settings::svg_display::{ZzzSvgDisplay, ZzzSvgDisplayFullSettings};
