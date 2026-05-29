@@ -577,6 +577,130 @@ i18n_keys! {
         ParamAmbientLightBgOpacityDesc = "Opacity of the background layer. 0 = fully transparent, 1 = fully opaque.";
         ParamAmbientLightSwapFgBg = "Swap Foreground and Background";
         ParamAmbientLightSwapFgBgDesc = "When enabled, swap the foreground and background input clips.";
+
+        // ── MIDI Display: effect labels ──────────────────
+        EffectMidiDisplayName = "zzzFX MIDI Display";
+        EffectMidiDisplayDesc = "Renders a piano-roll visualization from MIDI files with configurable note appearance and playback.";
+
+        // ── MIDI Display: native param labels & hints ─────
+        NativeSelectMidiFile = "Select MIDI File...";
+        NativeSelectMidiFileHint = "Choose a .mid or .midi file to visualize.";
+        NativeNoteColor = "Note Color";
+        NativeNoteColorHint = "Color of notes when Color Mode is set to Solid.";
+        NativeNoteBorderColor = "Note Border Color";
+        NativeNoteBorderColorHint = "Color of the note border.";
+        NativeBackgroundColor = "Background Color";
+        NativeBackgroundColorHint = "Color of the background behind the piano roll.";
+
+        // ── MIDI Display: Timing params ──────────────────
+        ParamMidiTimeOffsetS = "Time Offset (s)";
+        ParamMidiTimeOffsetSDesc = "Offset applied to the timeline playback position, in seconds.";
+        ParamMidiBpmSource = "BPM Source";
+        ParamMidiBpmSourceDesc = "Whether to use the tempo from the MIDI file or a user-specified BPM.";
+        ParamMidiUserBpm = "User BPM";
+        ParamMidiUserBpmDesc = "Beats per minute used for playback timing, when BPM Source is set to User Specified.";
+        ParamMidiSpeed = "Speed";
+        ParamMidiSpeedDesc = "Playback speed multiplier. 1.0 = original speed.";
+
+        // ── MIDI Display: Layout params ──────────────────
+        ParamMidiOrientation = "Orientation";
+        ParamMidiOrientationDesc = "Layout direction: Horizontal (time left-to-right, pitch bottom-to-top) or Vertical (time top-to-bottom, pitch left-to-right).";
+        ParamMidiNoteHeightMin = "Note Height Min";
+        ParamMidiNoteHeightMinDesc = "Minimum pixel height for each note row (semitone).";
+        ParamMidiKeyRangeMin = "Key Range Min";
+        ParamMidiKeyRangeMinDesc = "Lowest MIDI key to display (0 = C-1).";
+        ParamMidiKeyRangeMax = "Key Range Max";
+        ParamMidiKeyRangeMaxDesc = "Highest MIDI key to display (127 = G9).";
+        ParamMidiShowKeyboard = "Show Keyboard";
+        ParamMidiShowKeyboardDesc = "Display a piano keyboard on the side of the piano roll.";
+        ParamMidiKeyboardWidth = "Keyboard Width";
+        ParamMidiKeyboardWidthDesc = "Width of the keyboard as a fraction of the output dimension.";
+
+        // ── MIDI Display: Note Appearance params ─────────
+        ParamMidiNoteColorMode = "Note Color Mode";
+        ParamMidiNoteColorModeDesc = "How note colors are determined.";
+        ParamMidiNoteColorR = "Note Color Red";
+        ParamMidiNoteColorRDesc = "Red component of the note fill color (Solid mode).";
+        ParamMidiNoteColorG = "Note Color Green";
+        ParamMidiNoteColorGDesc = "Green component of the note fill color (Solid mode).";
+        ParamMidiNoteColorB = "Note Color Blue";
+        ParamMidiNoteColorBDesc = "Blue component of the note fill color (Solid mode).";
+        ParamMidiNoteColorA = "Note Color Alpha";
+        ParamMidiNoteColorADesc = "Alpha component of the note fill color.";
+        ParamMidiNoteOpacity = "Note Opacity";
+        ParamMidiNoteOpacityDesc = "Overall opacity multiplier for notes.";
+        ParamMidiNoteBorderThickness = "Note Border Thickness";
+        ParamMidiNoteBorderThicknessDesc = "Thickness of the note border in pixels.";
+        ParamMidiNoteBorderColorR = "Note Border Color Red";
+        ParamMidiNoteBorderColorRDesc = "Red component of the note border color.";
+        ParamMidiNoteBorderColorG = "Note Border Color Green";
+        ParamMidiNoteBorderColorGDesc = "Green component of the note border color.";
+        ParamMidiNoteBorderColorB = "Note Border Color Blue";
+        ParamMidiNoteBorderColorBDesc = "Blue component of the note border color.";
+        ParamMidiNoteBorderColorA = "Note Border Color Alpha";
+        ParamMidiNoteBorderColorADesc = "Alpha component of the note border color.";
+        ParamMidiNoteBorderOpacity = "Note Border Opacity";
+        ParamMidiNoteBorderOpacityDesc = "Overall opacity multiplier for note borders.";
+        ParamMidiNoteCornerRadius = "Note Corner Radius";
+        ParamMidiNoteCornerRadiusDesc = "Corner radius of note rectangles in pixels.";
+
+        // ── MIDI Display: Velocity params ────────────────
+        ParamMidiVelocityAffectsOpacity = "Velocity Affects Opacity";
+        ParamMidiVelocityAffectsOpacityDesc = "Map note velocity to opacity (higher velocity = more opaque).";
+        ParamMidiVelocityAffectsBrightness = "Velocity Affects Brightness";
+        ParamMidiVelocityAffectsBrightnessDesc = "Map note velocity to brightness (higher velocity = brighter).";
+        ParamMidiMinimumVelocity = "Minimum Velocity";
+        ParamMidiMinimumVelocityDesc = "Notes with velocity below this threshold are not displayed.";
+
+        // ── MIDI Display: Background params ──────────────
+        ParamMidiBackgroundColorR = "Background Color Red";
+        ParamMidiBackgroundColorRDesc = "Red component of the background color.";
+        ParamMidiBackgroundColorG = "Background Color Green";
+        ParamMidiBackgroundColorGDesc = "Green component of the background color.";
+        ParamMidiBackgroundColorB = "Background Color Blue";
+        ParamMidiBackgroundColorBDesc = "Blue component of the background color.";
+        ParamMidiBackgroundColorA = "Background Color Alpha";
+        ParamMidiBackgroundColorADesc = "Alpha component of the background color.";
+        ParamMidiBackgroundOpacity = "Background Opacity";
+        ParamMidiBackgroundOpacityDesc = "Opacity multiplier for the background.";
+
+        // ── MIDI Display: Track Selection params ─────────
+        ParamMidiTrackFilterMode = "Track Filter Mode";
+        ParamMidiTrackFilterModeDesc = "Show notes from all tracks or a specific track number.";
+        ParamMidiTrackNumber = "Track Number";
+        ParamMidiTrackNumberDesc = "Track index to display when Track Filter Mode is set to Specific Track (0-based).";
+
+        // ── MIDI Display: Playback params ────────────────
+        ParamMidiLoop = "Loop";
+        ParamMidiLoopDesc = "Loop playback when time exceeds the MIDI file duration.";
+        ParamMidiQuantizeDisplay = "Quantize Display";
+        ParamMidiQuantizeDisplayDesc = "Snap note start and end positions to the nearest beat grid.";
+        ParamMidiShowVelocityAsHeight = "Show Velocity As Height";
+        ParamMidiShowVelocityAsHeightDesc = "Make note height proportional to velocity. When disabled, all notes have uniform height.";
+
+        // ── MIDI Display: menu item labels ───────────────
+        MenuMidiFromMidi = "From MIDI";
+        MenuMidiFromMidiDesc = "Use the tempo embedded in the MIDI file.";
+        MenuMidiUserSpecified = "User Specified";
+        MenuMidiUserSpecifiedDesc = "Use a manually specified BPM value.";
+        MenuMidiHorizontal = "Horizontal";
+        MenuMidiHorizontalDesc = "Time runs left to right, pitch runs bottom to top.";
+        MenuMidiVertical = "Vertical";
+        MenuMidiVerticalDesc = "Time runs top to bottom, pitch runs left to right.";
+        MenuMidiSolid = "Solid";
+        MenuMidiSolidDesc = "All notes use a single uniform color.";
+        MenuMidiVelocity = "Velocity";
+        MenuMidiVelocityDesc = "Note color varies by MIDI velocity (blue → green → red).";
+        MenuMidiChannel = "Channel";
+        MenuMidiChannelDesc = "Note color varies by MIDI channel (16 distinct colors).";
+        MenuMidiTrack = "Track";
+        MenuMidiTrackDesc = "Note color varies by MIDI track.";
+        MenuMidiPitch = "Pitch";
+        MenuMidiPitchDesc = "Note color varies by pitch (rainbow gradient).";
+        MenuMidiAllTracks = "All Tracks";
+        MenuMidiAllTracksDesc = "Display notes from all tracks.";
+        MenuMidiSpecificTrack = "Specific Track";
+        MenuMidiSpecificTrackDesc = "Display notes from a single track only.";
     }
 }
 

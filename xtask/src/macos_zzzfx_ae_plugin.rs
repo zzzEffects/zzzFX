@@ -126,8 +126,8 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
         let x86_64_target = MACOS_X86_64;
         let aarch64_target = MACOS_AARCH64;
 
-        let (x86_64_lib_path, x86_64_rsrc_path) = build_plugin_for_target(x86_64_target, release_mode, effect)?;
-        let (aarch64_lib_path, _) = build_plugin_for_target(aarch64_target, release_mode, effect)?;
+        let (x86_64_lib_path, x86_64_rsrc_path) = build_plugin_for_target(x86_64_target, release_mode)?;
+        let (aarch64_lib_path, _) = build_plugin_for_target(aarch64_target, release_mode)?;
 
         let dst_path = std::env::temp_dir().plus(format!(
             "zzzfx-ae-{}",
