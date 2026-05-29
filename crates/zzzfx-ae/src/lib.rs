@@ -3,390 +3,318 @@
 mod handle;
 mod shared;
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use after_effects::{self as ae, Error, Layer};
-use zzzfx_core::{i18n, settings::{Settings, TrKey}};
-use shared::{ParamID, IDExt, apply_settings_list, global_setup_common, pre_render_common, map_params, update_controls_disabled, copy_layer_to_contiguous, copy_contiguous_to_layer};
+use zzzfx_core::{
+    i18n,
+    settings::{Settings, TrKey},
+    CompositorLayer,
+    ZzzAmbientLight, ZzzAmbientLightFullSettings,
+    ZzzAsciiArt, ZzzAsciiArtFullSettings,
+    ZzzLongShadow, ZzzLongShadowFullSettings,
+    ZzzPixelArt, ZzzPixelArtFullSettings,
+    ZzzRepeater, ZzzRepeaterFullSettings,
+    ZzzSpriteSheetFullSettings,
+    ZzzStroke, ZzzStrokeFullSettings,
+    ascii_art_setting_id, AsciiColorMode,
+    pixel_art_setting_id,
+};
+use shared::{
+    IDExt, ParamID,
+    apply_settings_list,
+    copy_contiguous_to_layer, copy_layer_to_contiguous,
+    global_setup_common, pre_render_common,
+    map_params, update_controls_disabled,
+};
 
 // ---------------------------------------------------------------------------
-// Effect-specific types selected by cargo feature
+// Effect type dispatch
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "effect-stroke")]
-use zzzfx_core::{ZzzStroke, ZzzStrokeFullSettings, settings::SettingsList as StrokeSettingsList};
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum EffectType {
+    Stroke = 0,
+    Repeater = 1,
+    SpriteSheet = 2,
+    AsciiArt = 3,
+    PixelArt = 4,
+    AmbientLight = 5,
+    LongShadow = 6,
+}
 
-#[cfg(feature = "effect-repeater")]
-use zzzfx_core::{CompositorLayer, ZzzRepeater, ZzzRepeaterFullSettings, settings::SettingsList as RepeaterSettingsList};
+static ACTIVE_EFFECT: AtomicU8 = AtomicU8::new(EffectType::Stroke as u8);
 
-#[cfg(feature = "effect-sprite-sheet")]
-use zzzfx_core::{ZzzSpriteSheet, ZzzSpriteSheetFullSettings, settings::SettingsList as SpriteSheetSettingsList};
+fn active_effect() -> EffectType {
+    match ACTIVE_EFFECT.load(Ordering::Acquire) {
+        1 => EffectType::Repeater,
+        2 => EffectType::SpriteSheet,
+        3 => EffectType::AsciiArt,
+        4 => EffectType::PixelArt,
+        5 => EffectType::AmbientLight,
+        6 => EffectType::LongShadow,
+        _ => EffectType::Stroke,
+    }
+}
 
-#[cfg(feature = "effect-ascii-art")]
-use zzzfx_core::{ZzzAsciiArt, ZzzAsciiArtFullSettings, settings::SettingsList as AsciiArtSettingsList};
-#[cfg(feature = "effect-ascii-art")]
-use zzzfx_core::{ascii_art_setting_id, AsciiColorMode};
-#[cfg(feature = "effect-pixel-art")]
-use zzzfx_core::{ZzzPixelArt, ZzzPixelArtFullSettings, settings::SettingsList as PixelArtSettingsList};
-#[cfg(feature = "effect-pixel-art")]
-use zzzfx_core::pixel_art_setting_id;
+// ── Helper: standard single-input apply_effect pattern ───────────────────
+macro_rules! render_filter {
+    ($stype:ty, $etype:ty, $desc:expr, $in:expr, $out:expr, $w:expr, $h:expr, $total:expr, $params:expr) => {{
+        let mut s = <$stype>::default();
+        apply_settings_list($desc, $params, &mut s)?;
+        let e: $etype = (&s).into();
+        let mut src = vec![0u8; $total];
+        let mut dst = vec![0u8; $total];
+        copy_layer_to_contiguous($in, &mut src, $w, $h);
+        e.apply_effect(&src, &mut dst, $w, $h);
+        copy_contiguous_to_layer(&dst, $out, $w, $h);
+    }};
+}
 
 // ---------------------------------------------------------------------------
 // Plugin struct
 // ---------------------------------------------------------------------------
 
 struct Plugin {
-    #[cfg(feature = "effect-stroke")]
-    settings: StrokeSettingsList<ZzzStrokeFullSettings>,
-    #[cfg(feature = "effect-repeater")]
-    settings: RepeaterSettingsList<ZzzRepeaterFullSettings>,
-    #[cfg(feature = "effect-sprite-sheet")]
-    settings: SpriteSheetSettingsList<ZzzSpriteSheetFullSettings>,
-    #[cfg(feature = "effect-ascii-art")]
-    settings: AsciiArtSettingsList<ZzzAsciiArtFullSettings>,
-    #[cfg(feature = "effect-pixel-art")]
-    settings: PixelArtSettingsList<ZzzPixelArtFullSettings>,
+    stroke: zzzfx_core::settings::SettingsList<ZzzStrokeFullSettings>,
+    repeater: zzzfx_core::settings::SettingsList<ZzzRepeaterFullSettings>,
+    sprite_sheet: zzzfx_core::settings::SettingsList<ZzzSpriteSheetFullSettings>,
+    ascii_art: zzzfx_core::settings::SettingsList<ZzzAsciiArtFullSettings>,
+    pixel_art: zzzfx_core::settings::SettingsList<ZzzPixelArtFullSettings>,
+    ambient_light: zzzfx_core::settings::SettingsList<ZzzAmbientLightFullSettings>,
+    long_shadow: zzzfx_core::settings::SettingsList<ZzzLongShadowFullSettings>,
 }
 
 impl Default for Plugin {
     fn default() -> Self {
         Self {
-            #[cfg(feature = "effect-stroke")]
-            settings: StrokeSettingsList::<ZzzStrokeFullSettings>::new(),
-            #[cfg(feature = "effect-repeater")]
-            settings: RepeaterSettingsList::<ZzzRepeaterFullSettings>::new(),
-            #[cfg(feature = "effect-sprite-sheet")]
-            settings: SpriteSheetSettingsList::<ZzzSpriteSheetFullSettings>::new(),
-            #[cfg(feature = "effect-ascii-art")]
-            settings: AsciiArtSettingsList::<ZzzAsciiArtFullSettings>::new(),
-            #[cfg(feature = "effect-pixel-art")]
-            settings: PixelArtSettingsList::<ZzzPixelArtFullSettings>::new(),
+            stroke: zzzfx_core::settings::SettingsList::<ZzzStrokeFullSettings>::new(),
+            repeater: zzzfx_core::settings::SettingsList::<ZzzRepeaterFullSettings>::new(),
+            sprite_sheet: zzzfx_core::settings::SettingsList::<ZzzSpriteSheetFullSettings>::new(),
+            ascii_art: zzzfx_core::settings::SettingsList::<ZzzAsciiArtFullSettings>::new(),
+            pixel_art: zzzfx_core::settings::SettingsList::<ZzzPixelArtFullSettings>::new(),
+            ambient_light: zzzfx_core::settings::SettingsList::<ZzzAmbientLightFullSettings>::new(),
+            long_shadow: zzzfx_core::settings::SettingsList::<ZzzLongShadowFullSettings>::new(),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Effect entry point
+// Entry points
 // ---------------------------------------------------------------------------
 
 ae::define_effect!(Plugin, (), ParamID);
 
+macro_rules! effect_entry {
+    ($fn:ident, $eff:expr) => {
+        #[unsafe(no_mangle)]
+        #[allow(non_snake_case)]
+        pub unsafe extern "C" fn $fn(
+            cmd: ae::sys::PF_Cmd,
+            in_data_ptr: *mut ae::sys::PF_InData,
+            out_data_ptr: *mut ae::sys::PF_OutData,
+            params: *mut *mut ae::sys::PF_ParamDef,
+            output: *mut ae::sys::PF_LayerDef,
+            extra: *mut std::ffi::c_void,
+        ) -> ae::sys::PF_Err {
+            ACTIVE_EFFECT.store($eff as u8, Ordering::Release);
+            unsafe { EffectMain(cmd, in_data_ptr, out_data_ptr, params, output, extra) }
+        }
+    };
+}
+
+effect_entry!(EffectMainRepeater,      EffectType::Repeater);
+effect_entry!(EffectMainSpriteSheet,   EffectType::SpriteSheet);
+effect_entry!(EffectMainAsciiArt,      EffectType::AsciiArt);
+effect_entry!(EffectMainPixelArt,      EffectType::PixelArt);
+effect_entry!(EffectMainAmbientLight,  EffectType::AmbientLight);
+effect_entry!(EffectMainLongShadow,    EffectType::LongShadow);
+
 // ---------------------------------------------------------------------------
-// AdobePluginGlobal trait implementation
+// AdobePluginGlobal
 // ---------------------------------------------------------------------------
 
 impl AdobePluginGlobal for Plugin {
-    fn params_setup(
-        &self,
-        params: &mut Parameters<ParamID>,
-        _in_data: InData,
-        _out_data: OutData,
-    ) -> Result<(), Error> {
-        #[cfg(feature = "effect-stroke")]
-        {
-            let defaults = ZzzStrokeFullSettings::default();
-            let legacy = ZzzStrokeFullSettings::legacy_value();
-            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
+    fn params_setup(&self, params: &mut Parameters<ParamID>, _in: InData, _out: OutData) -> Result<(), Error> {
+        match active_effect() {
+            EffectType::Stroke => {
+                let d = ZzzStrokeFullSettings::default();
+                let l = ZzzStrokeFullSettings::legacy_value();
+                map_params(params, &self.stroke.setting_descriptors, &d, &l)
+            }
+            EffectType::Repeater => {
+                let d = ZzzRepeaterFullSettings::default();
+                let l = ZzzRepeaterFullSettings::legacy_value();
+                map_params(params, &self.repeater.setting_descriptors, &d, &l)
+            }
+            EffectType::SpriteSheet => {
+                let d = ZzzSpriteSheetFullSettings::default();
+                let l = ZzzSpriteSheetFullSettings::legacy_value();
+                map_params(params, &self.sprite_sheet.setting_descriptors, &d, &l)
+            }
+            EffectType::AsciiArt => {
+                let d = ZzzAsciiArtFullSettings::default();
+                let l = ZzzAsciiArtFullSettings::legacy_value();
+                map_params(params, &self.ascii_art.setting_descriptors, &d, &l)
+            }
+            EffectType::PixelArt => {
+                let d = ZzzPixelArtFullSettings::default();
+                let l = ZzzPixelArtFullSettings::legacy_value();
+                map_params(params, &self.pixel_art.setting_descriptors, &d, &l)
+            }
+            EffectType::AmbientLight => {
+                let d = ZzzAmbientLightFullSettings::default();
+                let l = ZzzAmbientLightFullSettings::legacy_value();
+                map_params(params, &self.ambient_light.setting_descriptors, &d, &l)
+            }
+            EffectType::LongShadow => {
+                let d = ZzzLongShadowFullSettings::default();
+                let l = ZzzLongShadowFullSettings::legacy_value();
+                map_params(params, &self.long_shadow.setting_descriptors, &d, &l)
+            }
         }
-        #[cfg(feature = "effect-repeater")]
-        {
-            let defaults = ZzzRepeaterFullSettings::default();
-            let legacy = ZzzRepeaterFullSettings::legacy_value();
-            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
-        }
-        #[cfg(feature = "effect-sprite-sheet")]
-        {
-            let defaults = ZzzSpriteSheetFullSettings::default();
-            let legacy = ZzzSpriteSheetFullSettings::legacy_value();
-            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
-        }
-        #[cfg(feature = "effect-ascii-art")]
-        {
-            let defaults = ZzzAsciiArtFullSettings::default();
-            let legacy = ZzzAsciiArtFullSettings::legacy_value();
-            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
-        }
-        #[cfg(feature = "effect-pixel-art")]
-        {
-            let defaults = ZzzPixelArtFullSettings::default();
-            let legacy = ZzzPixelArtFullSettings::legacy_value();
-            map_params(params, &self.settings.setting_descriptors, &defaults, &legacy)?;
-        }
-        Ok(())
     }
 
     fn handle_command(
-        &mut self,
-        command: Command,
-        in_data: InData,
-        out_data: OutData,
-        params: &mut Parameters<ParamID>,
+        &mut self, command: Command, in_data: InData, out_data: OutData, params: &mut Parameters<ParamID>,
     ) -> Result<(), Error> {
         match command {
-            Command::GlobalSetup => self.global_setup(in_data, out_data, params)?,
-            Command::About => self.about(in_data, out_data)?,
+            Command::GlobalSetup => self.global_setup(in_data),
+            Command::About => self.about(out_data),
             Command::Render { in_layer, out_layer } => {
-                self.legacy_render(in_data, out_data, in_layer, out_layer, params)?
-            }
-            Command::SmartPreRender { extra } => self.pre_render(in_data, out_data, extra)?,
-            Command::SmartRender { extra } => self.smart_render(in_data, out_data, extra, params)?,
-            Command::UpdateParamsUi => {
-                #[cfg(feature = "effect-stroke")]
-                update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
-                #[cfg(feature = "effect-repeater")]
-                update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
-                #[cfg(feature = "effect-sprite-sheet")]
-                update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
-                #[cfg(feature = "effect-ascii-art")]
-                {
-                    update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
-                    let color_mode_val: u32 = params
-                        .get(ParamID::Param(ascii_art_setting_id::COLOR_MODE.ae_id()))?
-                        .as_enum()?
-                        .value();
-                    let is_solid = color_mode_val == AsciiColorMode::Solid as u32
-                        || color_mode_val == AsciiColorMode::SolidMapGrayscale as u32;
-                    for sid in [
-                        ascii_art_setting_id::FONT_COLOR_R,
-                        ascii_art_setting_id::FONT_COLOR_G,
-                        ascii_art_setting_id::FONT_COLOR_B,
-                        ascii_art_setting_id::FONT_COLOR_A,
-                    ] {
-                        if let Ok(p) = params.get(ParamID::Param(sid.ae_id())) {
-                            let was_disabled = p.ui_flags().contains(ae::ParamUIFlags::DISABLED);
-                            if was_disabled == is_solid {
-                                let mut p = p.clone();
-                                p.set_ui_flag(ae::ParamUIFlags::DISABLED, !is_solid);
-                                p.update_param_ui()?;
-                            }
-                        }
-                    }
+                if !in_data.is_premiere() { return Err(Error::BadCallbackParameter); }
+                if in_layer.width() != out_layer.width() || in_layer.height() != out_layer.height() {
+                    return Err(Error::BadCallbackParameter);
                 }
-                #[cfg(feature = "effect-pixel-art")]
-                {
-                    let square = params
-                        .get(ParamID::Param(pixel_art_setting_id::SQUARE.ae_id()))?
-                        .as_checkbox()?
-                        .value();
-                    update_controls_disabled(params, &self.settings.setting_descriptors, true)?;
-                    if square {
-                        if let Ok(p) = params.get(ParamID::Param(pixel_art_setting_id::PIXEL_SIZE_V.ae_id())) {
-                            let mut p = p.clone();
-                            p.set_ui_flag(ae::ParamUIFlags::DISABLED, true);
-                            p.update_param_ui()?;
-                        }
-                    }
-                }
+                self.do_render(in_layer, out_layer, params)
             }
-            Command::GetFlattenedSequenceData => {}
-            _ => {}
+            Command::SmartPreRender { extra } => pre_render_common(in_data, extra),
+            Command::SmartRender { extra } => {
+                let Some(input) = extra.callbacks().checkout_layer_pixels(0)? else { return Ok(()); };
+                let Some(output) = extra.callbacks().checkout_output()? else { return Ok(()); };
+                self.do_render(input, output, params)
+            }
+            Command::UpdateParamsUi => self.update_params_ui(params),
+            Command::GetFlattenedSequenceData => Ok(()),
+            _ => Ok(()),
         }
-        Ok(())
     }
 }
 
 // ---------------------------------------------------------------------------
-// Plugin implementation — common methods
+// Plugin methods
 // ---------------------------------------------------------------------------
 
 impl Plugin {
-    fn global_setup(
-        &self,
-        in_data: InData,
-        _out_data: OutData,
-        _params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
+    fn global_setup(&self, in_data: InData) -> Result<(), Error> {
         i18n::set_lang(resolve_language());
         global_setup_common(in_data)
     }
 
-    fn about(&self, _in_data: InData, mut out_data: OutData) -> Result<(), Error> {
-        #[cfg(feature = "effect-stroke")]
-        let (name, desc) = (
-            i18n::tr(TrKey::EffectStrokeName),
-            i18n::tr(TrKey::EffectStrokeDesc),
-        );
-        #[cfg(feature = "effect-repeater")]
-        let (name, desc) = (
-            i18n::tr(TrKey::EffectRepeaterName),
-            i18n::tr(TrKey::EffectRepeaterDesc),
-        );
-        #[cfg(feature = "effect-sprite-sheet")]
-        let (name, desc) = (
-            i18n::tr(TrKey::EffectSpritesheetName),
-            i18n::tr(TrKey::EffectSpritesheetDesc),
-        );
-        #[cfg(feature = "effect-ascii-art")]
-        let (name, desc) = (
-            i18n::tr(TrKey::EffectAsciiArtName),
-            i18n::tr(TrKey::EffectAsciiArtDesc),
-        );
-        #[cfg(feature = "effect-pixel-art")]
-        let (name, desc) = (
-            i18n::tr(TrKey::EffectPixelArtName),
-            i18n::tr(TrKey::EffectPixelArtDesc),
-        );
-
-        out_data.set_return_msg(
-            format!(
-                "{} {}.{}.{}\r\r{}",
-                name,
-                env!("EFFECT_VERSION_MAJOR"),
-                env!("EFFECT_VERSION_MINOR"),
-                env!("EFFECT_VERSION_PATCH"),
-                desc,
-            )
-            .as_str(),
-        );
+    fn about(&self, mut out: OutData) -> Result<(), Error> {
+        let (name, desc) = match active_effect() {
+            EffectType::Stroke => (TrKey::EffectStrokeName, TrKey::EffectStrokeDesc),
+            EffectType::Repeater => (TrKey::EffectRepeaterName, TrKey::EffectRepeaterDesc),
+            EffectType::SpriteSheet => (TrKey::EffectSpritesheetName, TrKey::EffectSpritesheetDesc),
+            EffectType::AsciiArt => (TrKey::EffectAsciiArtName, TrKey::EffectAsciiArtDesc),
+            EffectType::PixelArt => (TrKey::EffectPixelArtName, TrKey::EffectPixelArtDesc),
+            EffectType::AmbientLight => (TrKey::EffectAmbientLightName, TrKey::EffectAmbientLightDesc),
+            EffectType::LongShadow => (TrKey::EffectLongShadowName, TrKey::EffectLongShadowDesc),
+        };
+        out.set_return_msg(&format!(
+            "{} {}.{}.{}\r\r{}",
+            i18n::tr(name),
+            env!("EFFECT_VERSION_MAJOR"), env!("EFFECT_VERSION_MINOR"), env!("EFFECT_VERSION_PATCH"),
+            i18n::tr(desc),
+        ));
         Ok(())
     }
 
-    fn pre_render(
-        &self,
-        in_data: InData,
-        _out_data: OutData,
-        extra: PreRenderExtra,
-    ) -> Result<(), Error> {
-        pre_render_common(in_data, extra)
-    }
+    fn do_render(&self, in_layer: Layer, mut out_layer: Layer, params: &mut Parameters<ParamID>) -> Result<(), Error> {
+        let w = in_layer.width().min(out_layer.width()) as usize;
+        let h = in_layer.height().min(out_layer.height()) as usize;
+        let total = w * h * 4;
 
-    fn legacy_render(
-        &self,
-        in_data: InData,
-        _out_data: OutData,
-        in_layer: Layer,
-        out_layer: Layer,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        if !in_data.is_premiere() { return Err(Error::BadCallbackParameter); }
-        if in_layer.width() != out_layer.width() || in_layer.height() != out_layer.height() {
-            return Err(Error::BadCallbackParameter);
+        match active_effect() {
+            EffectType::Stroke => {
+                render_filter!(ZzzStrokeFullSettings, ZzzStroke, &self.stroke.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
+            }
+            EffectType::Repeater => {
+                let mut s = ZzzRepeaterFullSettings::default();
+                apply_settings_list(&self.repeater.setting_descriptors, params, &mut s)?;
+                let mut src = vec![0u8; total];
+                copy_layer_to_contiguous(&in_layer, &mut src, w, h);
+                let layers = [CompositorLayer { rgba: &src, position_x: s.position_x, position_y: s.position_y, rotation_deg: s.rotation, blend_mode: s.blend_mode }];
+                let mut dst = vec![0u8; total];
+                let r: ZzzRepeater = (&s).into();
+                r.composite_layers(&layers, &mut dst, w, h);
+                copy_contiguous_to_layer(&dst, &mut out_layer, w, h);
+            }
+            EffectType::SpriteSheet => return Err(Error::BadCallbackParameter),
+            EffectType::AsciiArt => {
+                render_filter!(ZzzAsciiArtFullSettings, ZzzAsciiArt, &self.ascii_art.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
+            }
+            EffectType::PixelArt => {
+                render_filter!(ZzzPixelArtFullSettings, ZzzPixelArt, &self.pixel_art.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
+            }
+            EffectType::AmbientLight => {
+                let mut s = ZzzAmbientLightFullSettings::default();
+                apply_settings_list(&self.ambient_light.setting_descriptors, params, &mut s)?;
+                let e: ZzzAmbientLight = (&s).into();
+                let mut fg = vec![0u8; total];
+                let mut bg = vec![0u8; total];
+                let mut dst = vec![0u8; total];
+                copy_layer_to_contiguous(&in_layer, &mut fg, w, h);
+                bg.copy_from_slice(&fg);
+                e.apply_effect(&fg, &bg, &mut dst, w, h);
+                copy_contiguous_to_layer(&dst, &mut out_layer, w, h);
+            }
+            EffectType::LongShadow => {
+                render_filter!(ZzzLongShadowFullSettings, ZzzLongShadow, &self.long_shadow.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
+            }
         }
-        self.do_render(in_layer, out_layer, params)
-    }
-
-    fn smart_render(
-        &self,
-        _in_data: InData,
-        _out_data: OutData,
-        extra: SmartRenderExtra,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        let Some(input_world) = extra.callbacks().checkout_layer_pixels(0)? else { return Ok(()); };
-        let Some(output_world) = extra.callbacks().checkout_output()? else { return Ok(()); };
-        self.do_render(input_world, output_world, params)
-    }
-
-    #[cfg(feature = "effect-stroke")]
-    fn do_render(
-        &self,
-        in_layer: Layer,
-        mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        let mut full_settings = ZzzStrokeFullSettings::default();
-        apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
-        let effect: ZzzStroke = (&full_settings).into();
-
-        let width = in_layer.width().min(out_layer.width()) as usize;
-        let height = in_layer.height().min(out_layer.height()) as usize;
-        let total = width * height * 4;
-
-        let mut src_buf = vec![0u8; total];
-        let mut dst_buf = vec![0u8; total];
-
-        copy_layer_to_contiguous(&in_layer, &mut src_buf, width, height);
-        effect.apply_effect(&src_buf, &mut dst_buf, width, height);
-        copy_contiguous_to_layer(&dst_buf, &mut out_layer, width, height);
         Ok(())
     }
 
-    #[cfg(feature = "effect-repeater")]
-    fn do_render(
-        &self,
-        in_layer: Layer,
-        mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        let mut full_settings = ZzzRepeaterFullSettings::default();
-        apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
-        let repeater: ZzzRepeater = (&full_settings).into();
-
-        let width = in_layer.width().min(out_layer.width()) as usize;
-        let height = in_layer.height().min(out_layer.height()) as usize;
-        let total = width * height * 4;
-
-        let mut src_buf = vec![0u8; total];
-        copy_layer_to_contiguous(&in_layer, &mut src_buf, width, height);
-
-        let layers = [CompositorLayer {
-            rgba: &src_buf,
-            position_x: full_settings.position_x,
-            position_y: full_settings.position_y,
-            rotation_deg: full_settings.rotation,
-            blend_mode: full_settings.blend_mode,
-        }];
-
-        let mut dst_buf = vec![0u8; total];
-        repeater.composite_layers(&layers, &mut dst_buf, width, height);
-        copy_contiguous_to_layer(&dst_buf, &mut out_layer, width, height);
-        Ok(())
-    }
-
-    #[cfg(feature = "effect-sprite-sheet")]
-    fn do_render(
-        &self,
-        _in_layer: Layer,
-        mut _out_layer: Layer,
-        _params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        Err(Error::BadCallbackParameter)
-    }
-
-    #[cfg(feature = "effect-ascii-art")]
-    fn do_render(
-        &self,
-        in_layer: Layer,
-        mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        let mut full_settings = ZzzAsciiArtFullSettings::default();
-        apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
-        let effect: ZzzAsciiArt = (&full_settings).into();
-
-        let width = in_layer.width().min(out_layer.width()) as usize;
-        let height = in_layer.height().min(out_layer.height()) as usize;
-        let total = width * height * 4;
-
-        let mut src_buf = vec![0u8; total];
-        let mut dst_buf = vec![0u8; total];
-
-        copy_layer_to_contiguous(&in_layer, &mut src_buf, width, height);
-        effect.apply_effect(&src_buf, &mut dst_buf, width, height);
-        copy_contiguous_to_layer(&dst_buf, &mut out_layer, width, height);
-        Ok(())
-    }
-
-    #[cfg(feature = "effect-pixel-art")]
-    fn do_render(
-        &self,
-        in_layer: Layer,
-        mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        let mut full_settings = ZzzPixelArtFullSettings::default();
-        apply_settings_list(&self.settings.setting_descriptors, params, &mut full_settings)?;
-        let effect: ZzzPixelArt = (&full_settings).into();
-
-        let width = in_layer.width().min(out_layer.width()) as usize;
-        let height = in_layer.height().min(out_layer.height()) as usize;
-        let total = width * height * 4;
-
-        let mut src_buf = vec![0u8; total];
-        let mut dst_buf = vec![0u8; total];
-
-        copy_layer_to_contiguous(&in_layer, &mut src_buf, width, height);
-        effect.apply_effect(&src_buf, &mut dst_buf, width, height);
-        copy_contiguous_to_layer(&dst_buf, &mut out_layer, width, height);
-        Ok(())
+    fn update_params_ui(&self, params: &mut Parameters<ParamID>) -> Result<(), Error> {
+        match active_effect() {
+            EffectType::Stroke => update_controls_disabled(params, &self.stroke.setting_descriptors, true),
+            EffectType::Repeater => update_controls_disabled(params, &self.repeater.setting_descriptors, true),
+            EffectType::SpriteSheet => update_controls_disabled(params, &self.sprite_sheet.setting_descriptors, true),
+            EffectType::AsciiArt => {
+                update_controls_disabled(params, &self.ascii_art.setting_descriptors, true)?;
+                let mut tmp = ZzzAsciiArtFullSettings::default();
+                apply_settings_list(&self.ascii_art.setting_descriptors, params, &mut tmp)?;
+                let cm = tmp.color_mode as u32;
+                let is_solid = cm == AsciiColorMode::Solid as u32 || cm == AsciiColorMode::SolidMapGrayscale as u32;
+                for sid in [ascii_art_setting_id::FONT_COLOR_R, ascii_art_setting_id::FONT_COLOR_G, ascii_art_setting_id::FONT_COLOR_B, ascii_art_setting_id::FONT_COLOR_A] {
+                    if let Ok(p) = params.get(ParamID::Param(sid.ae_id())) {
+                        let was = p.ui_flags().contains(ae::ParamUIFlags::DISABLED);
+                        if was == is_solid {
+                            let mut p = p.clone();
+                            p.set_ui_flag(ae::ParamUIFlags::DISABLED, !is_solid);
+                            p.update_param_ui()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            EffectType::PixelArt => {
+                let square = params.get(ParamID::Param(pixel_art_setting_id::SQUARE.ae_id()))?.as_checkbox()?.value();
+                update_controls_disabled(params, &self.pixel_art.setting_descriptors, true)?;
+                if square {
+                    if let Ok(p) = params.get(ParamID::Param(pixel_art_setting_id::PIXEL_SIZE_V.ae_id())) {
+                        let mut p = p.clone();
+                        p.set_ui_flag(ae::ParamUIFlags::DISABLED, true);
+                        p.update_param_ui()?;
+                    }
+                }
+                Ok(())
+            }
+            EffectType::AmbientLight => update_controls_disabled(params, &self.ambient_light.setting_descriptors, true),
+            EffectType::LongShadow => update_controls_disabled(params, &self.long_shadow.setting_descriptors, true),
+        }
     }
 }
 

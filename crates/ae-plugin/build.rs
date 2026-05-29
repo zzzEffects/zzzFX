@@ -16,11 +16,11 @@ fn main() {
             Property::Category("Example"),
 
             #[cfg(target_os = "windows")]
-            Property::CodeWin64X86("ExampleEffectMain"),
+            Property::CodeWin64X86("EffectMain"),
             #[cfg(target_os = "macos")]
-            Property::CodeMacIntel64("ExampleEffectMain"),
+            Property::CodeMacIntel64("EffectMain"),
             #[cfg(target_os = "macos")]
-            Property::CodeMacARM64("ExampleEffectMain"),
+            Property::CodeMacARM64("EffectMain"),
 
             Property::AE_PiPL_Version { major: 2, minor: 0 },
             Property::AE_Effect_Spec_Version { major: PF_PLUG_IN_VERSION, minor: PF_PLUG_IN_SUBVERS },
@@ -35,7 +35,8 @@ fn main() {
             Property::AE_Effect_Global_OutFlags(
                 OutFlags::NonParamVary |
                 OutFlags::DeepColorAware |
-                OutFlags::SendUpdateParamsUI
+                OutFlags::SendUpdateParamsUI |
+                OutFlags::PiplOverridesOutdataOutflags
             ),
             Property::AE_Effect_Global_OutFlags_2(
                 OutFlags2::ParamGroupStartCollapsedFlag |

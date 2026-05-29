@@ -957,12 +957,17 @@ dependencies = [
 name = "example-effect"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "effect-settings",
  "example-effect-macros",
  "hifijson",
  "num_enum",
+ "pollster",
+ "rayon",
  "sval",
  "sval_json",
+ "wgpu",
+ "zzzfx-core",
 ]
 
 [[package]]
@@ -4311,6 +4316,7 @@ dependencies = [
  "after-effects",
  "pipl",
  "premiere",
+ "winres",
  "zzzfx-core",
 ]
 

@@ -48,6 +48,21 @@ pub fn tr_cstr(key: ExTrKey) -> &'static CStr {
     }
 }
 
+/// Map a host-provided locale tag (e.g., `"zh_CN"`, `"en_US"`) to [`Lang`].
+///
+/// Returns `None` for unsupported languages — callers should default to
+/// [`Lang::En`] rather than falling back to OS-level detection, so the host
+/// application's language choice is respected even when we don't have
+/// translations for that specific language.
+pub fn lang_from_locale_tag(tag: &str) -> Option<Lang> {
+    let s = tag.to_lowercase();
+    if s.starts_with("zh") || s.contains("chinese") {
+        Some(Lang::ZhCn)
+    } else {
+        None
+    }
+}
+
 /// Detect system language from environment variables.
 pub fn detect_system_lang() -> Lang {
     let check = |s: &str| -> Option<Lang> {

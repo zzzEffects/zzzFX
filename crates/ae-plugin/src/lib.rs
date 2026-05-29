@@ -4,6 +4,7 @@ mod handle;
 
 use after_effects::{self as ae};
 use example_effect::{
+    i18n,
     ExampleEffect, ExampleEffectFullSettings,
     settings::{
         EnumValue, SettingDescriptor, SettingKind, SettingID, Settings, SettingsList,
@@ -145,6 +146,7 @@ impl Plugin {
         mut _out_data: OutData,
         _params: &mut Parameters<ParamID>,
     ) -> Result<(), Error> {
+        i18n::set_lang(i18n::detect_system_lang());
         let is_premiere = in_data.is_premiere();
         if is_premiere {
             let pf = suites::PixelFormat::new()?;
@@ -257,11 +259,11 @@ impl Plugin {
         params: &mut Parameters<ParamID>,
     ) -> Result<(), Error> {
         // Apply settings from params (demonstrates the parameter system)
-        let _effect: ExampleEffect = self.apply_settings(params)?.into();
+        let effect: ExampleEffect = self.apply_settings(params)?.into();
 
         // Extract dimensions before mutable borrow
         let src_row_bytes = in_layer.row_bytes();
-        let dst_row_bytes = out_layer.row_bytes();
+        let _dst_row_bytes = out_layer.row_bytes();
         let height = in_layer.height().min(out_layer.height()) as usize;
         let width = in_layer.width().min(out_layer.width()) as usize;
         let pixel_size = 4; // Assume BGRA 8-bit
@@ -271,24 +273,39 @@ impl Plugin {
         } else {
             -src_row_bytes as usize
         };
-        let dst_stride = if dst_row_bytes > 0 {
-            dst_row_bytes as usize
-        } else {
-            -dst_row_bytes as usize
-        };
 
         let row_bytes = (width as usize) * pixel_size;
+        let total = width * height * 4;
 
         let src_buf = in_layer.buffer();
         let dst_buf = out_layer.buffer_mut();
 
+        // Copy source rows into contiguous buffer
+        let mut src_contig = vec![0u8; total];
         for y in 0..height {
             let src_offset = y * src_stride;
-            let dst_offset = y * dst_stride;
+            let dst_offset = y * row_bytes;
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     src_buf.as_ptr().add(src_offset),
-                    dst_buf.as_mut_ptr().add(dst_offset),
+                    src_contig.as_mut_ptr().add(dst_offset),
+                    row_bytes,
+                );
+            }
+        }
+
+        // Apply the actual effect
+        let mut dst_contig = vec![0u8; total];
+        effect.apply_effect(&src_contig, &mut dst_contig, width, height);
+
+        // Copy result back to output rows
+        for y in 0..height {
+            let src_offset = y * src_stride;
+            let dst_offset = y * row_bytes;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    dst_contig.as_ptr().add(dst_offset),
+                    dst_buf.as_mut_ptr().add(src_offset),
                     row_bytes,
                 );
             }
@@ -366,9 +383,9 @@ impl Plugin {
                     });
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label_key.en(),
+                        i18n::tr(descriptor.label_key),
                         ae::PopupDef::setup(|p| {
-                            p.set_options(&options.iter().map(|o| o.label_key.en()).collect::<Vec<_>>());
+                            p.set_options(&options.iter().map(|o| i18n::tr(o.label_key)).collect::<Vec<_>>());
                             p.set_default(default_idx);
                             p.set_value(legacy_default_idx);
                         }),
@@ -394,7 +411,7 @@ impl Plugin {
                     } * 100.0);
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label_key.en(),
+                        i18n::tr(descriptor.label_key),
                         ae::FloatSliderDef::setup(|f| {
                             f.set_slider_min(0.0);
                             f.set_valid_min(0.0);
@@ -418,7 +435,7 @@ impl Plugin {
                         get_defaults::<i32>(default_settings, legacy_default_settings, descriptor)?;
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label_key.en(),
+                        i18n::tr(descriptor.label_key),
                         ae::FloatSliderDef::setup(|f| {
                             f.set_slider_min(*range.start() as f32);
                             f.set_valid_min(*range.start() as f32);
@@ -450,7 +467,7 @@ impl Plugin {
                             });
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label_key.en(),
+                        i18n::tr(descriptor.label_key),
                         ae::FloatSliderDef::setup(|f| {
                             f.set_slider_min(*range.start());
                             f.set_valid_min(*range.start());
@@ -476,11 +493,11 @@ impl Plugin {
                     )?;
                     params.add_customized(
                         ParamID::Param(descriptor.id.ae_id()),
-                        descriptor.label_key.en(),
+                        i18n::tr(descriptor.label_key),
                         ae::CheckBoxDef::setup(|c| {
                             c.set_default(default_value);
                             c.set_value(legacy_default_value);
-                            c.set_label(descriptor.label_key.en());
+                            c.set_label(i18n::tr(descriptor.label_key));
                         }),
                         |p| {
                             p.set_id(descriptor.id.ae_id());
@@ -500,12 +517,12 @@ impl Plugin {
                     params.add_group(
                         ParamID::GroupStart(descriptor_id),
                         ParamID::GroupEnd(descriptor_id),
-                        descriptor.label_key.en(),
+                        i18n::tr(descriptor.label_key),
                         false,
                         |g| {
                             g.add_customized(
                                 ParamID::Param(descriptor_id),
-                                descriptor.label_key.en(),
+                                i18n::tr(descriptor.label_key),
                                 ae::CheckBoxDef::setup(|c| {
                                     c.set_default(default_value);
                                     c.set_value(legacy_default_value);

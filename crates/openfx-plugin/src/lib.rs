@@ -16,8 +16,9 @@ use std::{
 };
 
 use example_effect::{
+    i18n,
     settings::{
-        EnumValue, SettingDescriptor, SettingID, SettingKind, Settings, SettingsList,
+        EnumValue, ExTrKey, SettingDescriptor, SettingID, SettingKind, Settings, SettingsList,
     },
     SolidColorBlend, SolidColorBlendFullSettings,
 };
@@ -106,10 +107,10 @@ impl SharedData {
         for descriptor in settings_list.all_descriptors() {
             let id = &descriptor.id;
             let id_str = CString::new(descriptor.id.name).unwrap();
-            let label = CString::new(descriptor.label_key.en()).unwrap();
+            let label = CString::new(i18n::tr(descriptor.label_key)).unwrap();
             let description = descriptor
                 .description_key
-                .map(|k| CString::new(k.en()).unwrap());
+                .map(|k| CString::new(i18n::tr(k)).unwrap());
             let group_name = if let SettingKind::Group { .. } = descriptor.kind {
                 Some(CString::new(format!("{}_group", descriptor.id.name)).unwrap())
             } else {
@@ -119,14 +120,14 @@ impl SharedData {
 
             if let SettingKind::Enumeration { options } = &descriptor.kind {
                 for menu_item in options {
-                    let item_label = CString::new(menu_item.label_key.en()).unwrap();
+                    let item_label = CString::new(i18n::tr(menu_item.label_key)).unwrap();
                     menu_item_strings.insert(
                         (id.clone(), menu_item.index),
                         (
                             item_label,
                             menu_item
                                 .description_key
-                                .map(|k| CString::new(k.en()).unwrap()),
+                                .map(|k| CString::new(i18n::tr(k)).unwrap()),
                         ),
                     );
                 }
@@ -196,6 +197,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
 // ---------------------------------------------------------------------------
 
 unsafe fn set_host_info_inner(host: *mut OfxHost) -> OfxResult<()> {
+    example_effect::i18n::set_lang(example_effect::i18n::detect_system_lang());
     if let Some(host_struct) = host.as_ref() {
         let host = host_struct.host.as_ref().ok_or(OfxStat::kOfxStatFailed)?;
         let fetch_suite = host_struct.fetchSuite.ok_or(OfxStat::kOfxStatFailed)?;
@@ -293,7 +295,7 @@ unsafe fn action_describe(descriptor: OfxImageEffectHandle) -> OfxResult<()> {
         .propSetInt
         .ok_or(OfxStat::kOfxStatFailed)?;
 
-    propSetString(effectProps, kOfxPropLabel.as_ptr(), 0, c"Example Effect".as_ptr()).ofx_ok()?;
+    propSetString(effectProps, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(ExTrKey::ParamExampleEffectName).as_ptr()).ofx_ok()?;
 
     propSetString(
         effectProps,
@@ -435,7 +437,7 @@ unsafe fn action_describe_in_context(descriptor: OfxImageEffectHandle) -> OfxRes
         &mut rgbaProps,
     )
     .ofx_ok()?;
-    propSetString(rgbaProps, kOfxPropLabel.as_ptr(), 0, c"Color".as_ptr()).ofx_ok()?;
+    propSetString(rgbaProps, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(ExTrKey::ParamColor).as_ptr()).ofx_ok()?;
     // Default: black with no blend (passthrough)
     propSetDouble(rgbaProps, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?; // R
     propSetDouble(rgbaProps, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?; // G
@@ -454,13 +456,13 @@ unsafe fn action_describe_in_context(descriptor: OfxImageEffectHandle) -> OfxRes
         &mut modeProps,
     )
     .ofx_ok()?;
-    propSetString(modeProps, kOfxPropLabel.as_ptr(), 0, c"Blend Mode".as_ptr()).ofx_ok()?;
-    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 0, c"Normal".as_ptr()).ofx_ok()?;
-    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 1, c"Multiply".as_ptr()).ofx_ok()?;
-    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 2, c"Screen".as_ptr()).ofx_ok()?;
-    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 3, c"Overlay".as_ptr()).ofx_ok()?;
+    propSetString(modeProps, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(ExTrKey::ParamExampleBlendMode).as_ptr()).ofx_ok()?;
+    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 0, i18n::tr_cstr(ExTrKey::MenuNormal).as_ptr()).ofx_ok()?;
+    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 1, i18n::tr_cstr(ExTrKey::MenuMultiply).as_ptr()).ofx_ok()?;
+    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 2, i18n::tr_cstr(ExTrKey::MenuScreen).as_ptr()).ofx_ok()?;
+    propSetString(modeProps, kOfxParamPropChoiceOption.as_ptr(), 3, i18n::tr_cstr(ExTrKey::MenuOverlay).as_ptr()).ofx_ok()?;
     propSetInt(modeProps, kOfxParamPropDefault.as_ptr(), 0, default_mode as c_int).ofx_ok()?;
-    propSetString(modeProps, kOfxParamPropHint.as_ptr(), 0, c"How the solid color is blended with the image.".as_ptr()).ofx_ok()?;
+    propSetString(modeProps, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(ExTrKey::ParamExampleBlendModeDesc).as_ptr()).ofx_ok()?;
 
     Ok(())
 }

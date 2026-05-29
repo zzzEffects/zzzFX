@@ -1,32 +1,27 @@
 use example_effect::ExampleEffect;
 
 #[test]
-fn passthrough_preserves_pixels() {
+fn default_parameters_are_identity() {
     let effect = ExampleEffect::default();
 
     let width = 4;
     let height = 2;
     let len = width * height * 4;
 
-    // Create source buffer with known pattern
     let src: Vec<u8> = (0..len).map(|i| i as u8).collect();
     let mut dst = vec![0u8; len];
 
     effect.apply_effect(&src, &mut dst, width, height);
 
-    assert_eq!(src, dst, "passthrough should preserve all pixels");
+    assert_eq!(src, dst, "default parameters should produce identity (no-op)");
 }
 
 #[test]
-fn passthrough_with_parameters_does_nothing() {
+fn effect_actually_transforms_pixels() {
     let mut effect = ExampleEffect::default();
     effect.brightness = 0.5;
     effect.invert_colors = true;
     effect.color_preset = example_effect::settings::standard::ColorPreset::Sepia;
-    effect.advanced = Some(example_effect::settings::standard::AdvancedSettings {
-        contrast: 2.0,
-        saturation: 0.5,
-    });
 
     let width = 2;
     let height = 2;
@@ -37,8 +32,8 @@ fn passthrough_with_parameters_does_nothing() {
 
     effect.apply_effect(&src, &mut dst, width, height);
 
-    // Even with non-default parameters, the passthrough should not modify pixels
-    assert_eq!(src, dst, "passthrough should not modify pixels regardless of parameters");
+    // With non-identity parameters, the output should differ from the input
+    assert_ne!(src, dst, "non-default parameters should modify pixels");
 }
 
 #[test]
@@ -50,6 +45,6 @@ fn different_dimensions() {
         let src: Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
         let mut dst = vec![0u8; len];
         effect.apply_effect(&src, &mut dst, w, h);
-        assert_eq!(src, dst, "passthrough failed for {w}x{h}");
+        assert_eq!(src, dst, "default identity failed for {w}x{h}");
     }
 }

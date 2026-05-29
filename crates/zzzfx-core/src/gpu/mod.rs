@@ -19,7 +19,7 @@ use crate::settings::stroke::ZzzStroke;
 // ---------------------------------------------------------------------------
 
 /// Load a WGSL shader by prepending the shared function definitions.
-pub(crate) fn load_shader(specific: &'static str) -> wgpu::ShaderSource<'static> {
+pub fn load_shader(specific: &'static str) -> wgpu::ShaderSource<'static> {
     let shared = include_str!("../shaders/shared.wgsl");
     wgpu::ShaderSource::Wgsl(Cow::Owned(format!("{shared}\n{specific}")))
 }
@@ -28,7 +28,7 @@ static SHARED_GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 static SHARED_DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
 static SHARED_QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
 
-pub(crate) fn get_or_init_shared_device() -> Result<(&'static wgpu::Device, &'static wgpu::Queue), String> {
+pub fn get_or_init_shared_device() -> Result<(&'static wgpu::Device, &'static wgpu::Queue), String> {
     if let (Some(d), Some(q)) = (SHARED_DEVICE.get(), SHARED_QUEUE.get()) {
         return Ok((d, q));
     }

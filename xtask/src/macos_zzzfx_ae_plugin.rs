@@ -61,21 +61,12 @@ pub fn command() -> clap::Command {
 fn build_plugin_for_target(
     target: &Target,
     release_mode: bool,
-    effect: &str,
 ) -> std::io::Result<(PathBuf, PathBuf)> {
-    let feature = match effect {
-        "repeater" => "effect-repeater",
-        "sprite-sheet" => "effect-sprite-sheet",
-        _ => "effect-stroke",
-    };
-
-    println!("Building zzzFX AE plugin ({effect}) for target {}", target.target_triple);
+    println!("Building zzzFX AE plugin for target {}", target.target_triple);
 
     let mut cargo_args: Vec<_> = vec![
         String::from("build"),
         String::from("--package=zzzfx-ae-plugin"),
-        String::from("--features"),
-        String::from(feature),
         String::from("--target"),
         target.target_triple.to_string(),
     ];
@@ -105,13 +96,9 @@ fn build_plugin_for_target(
 
 pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
     let release_mode = args.get_flag("release");
-    let effect = args.get_one::<String>("effect").unwrap().as_str();
 
-    let (plugin_name, binary_name) = match effect {
-        "repeater" => ("zzzFXRepeater.plugin", "zzzFXRepeater"),
-        "sprite-sheet" => ("zzzFXSpriteSheet.plugin", "zzzFXSpriteSheet"),
-        _ => ("zzzFXStroke.plugin", "zzzFXStroke"),
-    };
+    let plugin_name = "zzzFX.plugin";
+    let binary_name = "zzzFX";
 
     let build_dir_path = args.get_one::<PathBuf>("destdir").unwrap();
     let plugin_dir_path = build_dir_path.plus(plugin_name);
@@ -129,14 +116,8 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
 
     fs::write(contents_dir_path.plus("PkgInfo"), "eFKTFXTC")?;
 
-    let identifier = match effect {
-        "repeater" => "com.example.zzzfx.repeater",
-        "sprite-sheet" => "com.example.zzzfx.spritesheet",
-        _ => "com.example.zzzfx.stroke",
-    };
-
     let mut info_plist_contents = plist::dictionary::Dictionary::new();
-    info_plist_contents.insert("CFBundleIdentifier".to_string(), plist::Value::from(identifier));
+    info_plist_contents.insert("CFBundleIdentifier".to_string(), plist::Value::from("com.example.zzzfx"));
     info_plist_contents.insert("CFBundlePackageType".to_string(), plist::Value::from("eFKT"));
     info_plist_contents.insert("CFBundleSignature".to_string(), plist::Value::from("FXTC"));
     plist::Value::Dictionary(info_plist_contents).to_file_xml(contents_dir_path.plus("Info.plist"))?;
@@ -174,7 +155,7 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
             .iter()
             .find(|candidate_target| candidate_target.target_triple == target_triple)
             .unwrap_or_else(|| panic!("Your target \"{}\" is not supported", target_triple));
-        build_plugin_for_target(target, release_mode, effect)?
+        build_plugin_for_target(target, release_mode)?
     };
 
     fs::copy(built_library_path, macos_dir_path.plus(binary_name))?;
