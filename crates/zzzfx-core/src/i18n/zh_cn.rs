@@ -681,5 +681,35 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamSvgPreserveAspectRatioDesc => c"启用后，缩放时保持 SVG 的原始宽高比。",
         TrKey::ParamSvgDpi => c"DPI",
         TrKey::ParamSvgDpiDesc => c"用于解释 SVG 物理单位（pt、cm 等）的每英寸点数。",
+
+        // ── Chroma Key: effect labels ────────────────────
+        TrKey::EffectChromaKeyName => c"zzzFX 色度键",
+        TrKey::EffectChromaKeyDesc => c"从前景中抠除用户可选的颜色，支持边缘柔化与溢色抑制，并将前景合成到背景上。",
+
+        // ── Chroma Key: native param labels & hints ────────
+        TrKey::NativeKeyColor => c"键控颜色",
+        TrKey::NativeKeyColorHint => c"要从前景中抠除的颜色（默认：绿色）。",
+
+        // ── Chroma Key: generic param labels ───────────────
+        TrKey::ParamChromaKeyColorRed => c"键控颜色 - 红",
+        TrKey::ParamChromaKeyColorRedDesc => c"键控颜色的红色分量。",
+        TrKey::ParamChromaKeyColorGreen => c"键控颜色 - 绿",
+        TrKey::ParamChromaKeyColorGreenDesc => c"键控颜色的绿色分量。",
+        TrKey::ParamChromaKeyColorBlue => c"键控颜色 - 蓝",
+        TrKey::ParamChromaKeyColorBlueDesc => c"键控颜色的蓝色分量。",
+        TrKey::ParamChromaKeyColorAlpha => c"键控颜色 - 透明度",
+        TrKey::ParamChromaKeyColorAlphaDesc => c"键控颜色的透明度分量。",
+        TrKey::ParamChromaKeyThreshold => c"阈值",
+        TrKey::ParamChromaKeyThresholdDesc => c"像素与键控颜色的接近程度阈值，低于此值即被抠除。值越低抠除越少。",
+        TrKey::ParamChromaKeyEdgeSoftness => c"边缘柔化",
+        TrKey::ParamChromaKeyEdgeSoftnessDesc => c"键控边缘的过渡宽度，使边缘过渡更平滑。",
+        TrKey::ParamChromaKeySpillSuppression => c"溢色抑制",
+        TrKey::ParamChromaKeySpillSuppressionDesc => c"减少前景边缘上的键控颜色溢色，通过向灰色去饱和实现。",
+        TrKey::ParamChromaKeyShowMatte => c"显示遮罩",
+        TrKey::ParamChromaKeyShowMatteDesc => c"以灰度方式显示 Alpha 遮罩，用于调试。",
+        TrKey::ParamChromaKeyInvert => c"反转",
+        TrKey::ParamChromaKeyInvertDesc => c"反转 Alpha 遮罩。抠除区域变为不透明，非抠除区域变为透明。",
+        TrKey::ParamChromaKeyEdgeBlur => c"边缘模糊",
+        TrKey::ParamChromaKeyEdgeBlurDesc => c"应用于 Alpha 遮罩的空间模糊半径（像素），使边缘更柔和。",
     }
 }

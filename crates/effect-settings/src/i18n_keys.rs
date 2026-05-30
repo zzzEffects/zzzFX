@@ -733,6 +733,36 @@ i18n_keys! {
         ParamSvgPreserveAspectRatioDesc = "When enabled, the SVG aspect ratio is preserved when fitting to output.";
         ParamSvgDpi = "DPI";
         ParamSvgDpiDesc = "Dots per inch for interpreting SVG physical units (pt, cm, etc.).";
+
+        // ── Chroma Key: effect labels ────────────────────
+        EffectChromaKeyName = "zzzFX Chroma Key";
+        EffectChromaKeyDesc = "Keys out a user-selectable color from the foreground, with edge softness and spill suppression, compositing over the background.";
+
+        // ── Chroma Key: native param labels & hints ────────
+        NativeKeyColor = "Key Color";
+        NativeKeyColorHint = "Color to key out from the foreground (default: green).";
+
+        // ── Chroma Key: generic param labels ───────────────
+        ParamChromaKeyColorRed = "Key Color Red";
+        ParamChromaKeyColorRedDesc = "Red component of the key color.";
+        ParamChromaKeyColorGreen = "Key Color Green";
+        ParamChromaKeyColorGreenDesc = "Green component of the key color.";
+        ParamChromaKeyColorBlue = "Key Color Blue";
+        ParamChromaKeyColorBlueDesc = "Blue component of the key color.";
+        ParamChromaKeyColorAlpha = "Key Color Alpha";
+        ParamChromaKeyColorAlphaDesc = "Alpha component of the key color.";
+        ParamChromaKeyThreshold = "Threshold";
+        ParamChromaKeyThresholdDesc = "How close pixels must be to the key color to be removed. Lower values remove fewer pixels.";
+        ParamChromaKeyEdgeSoftness = "Edge Softness";
+        ParamChromaKeyEdgeSoftnessDesc = "Blend width at the key edge for smooth transitions.";
+        ParamChromaKeySpillSuppression = "Spill Suppression";
+        ParamChromaKeySpillSuppressionDesc = "Reduces key color spill on foreground edges by desaturating toward gray.";
+        ParamChromaKeyShowMatte = "Show Matte";
+        ParamChromaKeyShowMatteDesc = "Display the alpha matte as grayscale for debugging purposes.";
+        ParamChromaKeyInvert = "Invert";
+        ParamChromaKeyInvertDesc = "Invert the alpha matte. Keyed areas become opaque and non-keyed areas become transparent.";
+        ParamChromaKeyEdgeBlur = "Edge Blur";
+        ParamChromaKeyEdgeBlurDesc = "Spatial blur radius in pixels applied to the alpha matte for softer edges.";
     }
 }
 
