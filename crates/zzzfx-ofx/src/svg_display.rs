@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString, c_char, c_int, c_void},
+    ffi::{CStr, c_char, c_int, c_void},
     ptr,
     sync::OnceLock,
 };
@@ -12,6 +12,7 @@ use zzzfx_core::{
 };
 
 use crate::bindings::*;
+use crate::file_param;
 use crate::i18n;
 use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
@@ -228,6 +229,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
+    // --- Reload File button (hidden by default) ---
+    file_param::define_reload_button(su, param_set, PAGE_NAME)?;
+
     // --- Native RGBA: backgroundColor (default transparent) ---
     {
         let mut pp: OfxPropertySetHandle = ptr::null_mut();
@@ -270,6 +274,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropDefault.as_ptr(), 0, c"".as_ptr()).ofx_ok()?;
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
+
+    // --- Custom param (hidden): fileData (persisted binary) ---
+    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
 
     Ok(())
 }
@@ -371,8 +378,6 @@ unsafe fn action_instance_changed(
     let propGetString = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?;
     let getParamSet = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
     let propGetPointer = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
-    let paramGetHandle = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
-    let paramSetValue = su.parameter_suite.paramSetValue.ok_or(OfxStat::kOfxStatFailed)?;
 
     let mut target_type: *mut c_char = ptr::null_mut();
     if propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok().is_err() {
@@ -402,21 +407,44 @@ unsafe fn action_instance_changed(
             // Build initial cache at default DPI (96.0)
             let cached = zzzfx_core::svg_display::build_cache(&svg_bytes, 96.0);
 
+            // Persist file data and path to OFX params (before moving svg_bytes)
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &svg_bytes)?;
+            file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
+            file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
+
             let mut ep: OfxPropertySetHandle = ptr::null_mut();
             (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
             let mut data_ptr: *mut c_void = ptr::null_mut();
             propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
             if !data_ptr.is_null() {
                 let idata = &mut *(data_ptr as *mut InstanceData);
-                idata.file_path = path_str.clone();
+                idata.file_path = path_str;
                 idata.svg_bytes = svg_bytes;
                 idata.cached_svg = cached;
             }
 
-            let mut p: OfxParamHandle = ptr::null_mut();
-            paramGetHandle(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-            let path_cstr = CString::new(path_str).unwrap();
-            paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            return Ok(());
+        }
+
+        if file_param::RELOAD_FILE_PARAM == CStr::from_ptr(target_name) {
+            let path_str = file_param::read_string_param(su, param_set, FILE_PATH_PARAM)?;
+            if path_str.is_empty() { return Ok(()); }
+
+            let svg_bytes = std::fs::read(&path_str).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let cached = zzzfx_core::svg_display::build_cache(&svg_bytes, 96.0);
+
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &svg_bytes)?;
+
+            let mut ep: OfxPropertySetHandle = ptr::null_mut();
+            (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
+            let mut data_ptr: *mut c_void = ptr::null_mut();
+            propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+            if !data_ptr.is_null() {
+                let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.file_path = path_str;
+                idata.svg_bytes = svg_bytes;
+                idata.cached_svg = cached;
+            }
 
             return Ok(());
         }
@@ -499,6 +527,14 @@ unsafe fn action_render(
     let bg = [bg_r, bg_g, bg_b, bg_a];
 
     if let Some(idata) = idata {
+        // Recover file data from Custom param on project reload
+        if idata.svg_bytes.is_empty() {
+            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
+                if !bytes.is_empty() {
+                    idata.svg_bytes = bytes;
+                }
+            }
+        }
         if !idata.svg_bytes.is_empty() {
             let new_cache = zzzfx_core::svg_display::render_svg(
                 &idata.svg_bytes,

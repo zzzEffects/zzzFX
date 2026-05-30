@@ -11,6 +11,7 @@ use zzzfx_core::{
 };
 
 use crate::bindings::*;
+use crate::file_param;
 use crate::i18n;
 use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
@@ -288,6 +289,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
+    // --- Reload File button (hidden by default) ---
+    file_param::define_reload_button(su, param_set, PAGE_NAME)?;
+
     // --- Block A: Generic params before Position (time_offset_s, scale) ---
     for desc in d.settings_list.setting_descriptors.iter() {
         if desc.id.name == "position_x" { break; }
@@ -342,6 +346,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropDefault.as_ptr(), 0, c"".as_ptr()).ofx_ok()?;
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
+
+    // --- Custom param (hidden): fileData (persisted binary) ---
+    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
 
     // --- Native Choice: font_override_choice ---
     {
@@ -471,8 +478,6 @@ unsafe fn action_instance_changed(
             else { return Ok(()); };
 
             let path_str = path.to_string_lossy().to_string();
-
-            // Read file bytes (handle UTF-8 / UTF-8 BOM / UTF-16 LE)
             let file_bytes = std::fs::read(&path).map_err(|_| OfxStat::kOfxStatFailed)?;
             let content = decode_ass_file(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?;
             let ass_script = parse_ass_file(&content).map_err(|_| OfxStat::kOfxStatFailed)?;
@@ -489,10 +494,33 @@ unsafe fn action_instance_changed(
                 idata.file_path = path_str.clone();
             }
 
-            let mut p: OfxParamHandle = ptr::null_mut();
-            paramGetHandle(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-            if let Ok(path_cstr) = CString::new(path_str) {
-                paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+            file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
+            file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
+
+            return Ok(());
+        }
+
+        if file_param::RELOAD_FILE_PARAM == CStr::from_ptr(target_name) {
+            let path_str = file_param::read_string_param(su, param_set, FILE_PATH_PARAM)?;
+            if path_str.is_empty() { return Ok(()); }
+
+            let file_bytes = std::fs::read(&path_str).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let content = decode_ass_file(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let ass_script = parse_ass_file(&content).map_err(|_| OfxStat::kOfxStatFailed)?;
+
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+
+            let mut ep: OfxPropertySetHandle = ptr::null_mut();
+            (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
+            let mut data_ptr: *mut c_void = ptr::null_mut();
+            propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+            if !data_ptr.is_null() {
+                let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.render_cache.invalidate_script_cache();
+                idata.font_cache.invalidate();
+                idata.ass_script = Some(ass_script);
+                idata.file_path = path_str;
             }
 
             return Ok(());
@@ -581,8 +609,22 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
+    // Recover ASS data from Custom param on project reload
+    if let Some(ref mut idata_inner) = idata {
+        if idata_inner.ass_script.is_none() {
+            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
+                if !bytes.is_empty() {
+                    if let Ok(content) = decode_ass_file(&bytes) {
+                        if let Ok(script) = parse_ass_file(&content) {
+                            idata_inner.ass_script = Some(script);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // If instance data is missing or no ASS file loaded, render empty frame.
-    // File recovery must happen in InstanceChanged, not during render.
     // Font override recovery from hidden string param is safe (no file I/O).
     if let Some(ref mut idata_inner) = idata {
         if idata_inner.font_override.is_none() {

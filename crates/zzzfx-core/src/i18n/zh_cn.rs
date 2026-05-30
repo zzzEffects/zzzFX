@@ -661,6 +661,8 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::NativeSvgBackgroundColorHint => c"SVG 后方背景的颜色。",
         TrKey::NativeSvgPosition => c"位置",
         TrKey::NativeSvgPositionHint => c"SVG 的归一化位置（0-1）。0.5 = 居中。",
+        TrKey::NativeReloadFile => c"重新加载文件",
+        TrKey::NativeReloadFileHint => c"从磁盘重新加载文件。",
 
         // ── SVG Display: generic param labels ────────────
         TrKey::ParamSvgScale => c"缩放",

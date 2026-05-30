@@ -713,6 +713,8 @@ i18n_keys! {
         NativeSvgBackgroundColorHint = "Color of the background behind the SVG.";
         NativeSvgPosition = "Position";
         NativeSvgPositionHint = "Normalized position of the SVG (0-1). 0.5 = center.";
+        NativeReloadFile = "Reload File";
+        NativeReloadFileHint = "Reload the file from disk.";
 
         // ── SVG Display: generic param labels ────────────
         ParamSvgScale = "Scale";

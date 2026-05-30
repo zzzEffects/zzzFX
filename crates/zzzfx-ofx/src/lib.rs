@@ -15,6 +15,7 @@ mod ascii_art;
 mod long_shadow;
 mod midi_display;
 mod pixel_art;
+mod file_param;
 mod svg_display;
 
 use std::{ffi::c_int, ptr};

@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString, c_char, c_int, c_void},
+    ffi::{CStr, c_char, c_int, c_void},
     ptr,
     sync::OnceLock,
 };
@@ -11,6 +11,7 @@ use zzzfx_core::{
 };
 
 use crate::bindings::*;
+use crate::file_param;
 use crate::i18n;
 use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
@@ -255,6 +256,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
+    // --- Reload File button (hidden by default) ---
+    file_param::define_reload_button(su, param_set, PAGE_NAME)?;
+
     // --- Single-pass param definition with interleaved native Int2Ds ---
     let mut defined_range = false;
     let mut defined_repeat = false;
@@ -303,6 +307,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropDefault.as_ptr(), 0, c"".as_ptr()).ofx_ok()?;
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
+
+    // --- Custom param (hidden): fileData (persisted binary) ---
+    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
 
     Ok(())
 }
@@ -382,8 +389,6 @@ unsafe fn action_instance_changed(
     let propGetString = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?;
     let getParamSet = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
     let propGetPointer = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
-    let paramGetHandle = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
-    let paramSetValue = su.parameter_suite.paramSetValue.ok_or(OfxStat::kOfxStatFailed)?;
 
     let mut target_type: *mut c_char = ptr::null_mut();
     if propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok().is_err() {
@@ -407,7 +412,8 @@ unsafe fn action_instance_changed(
                 .pick_file()
             else { return Ok(()); };
 
-            let img = image::open(&path).map_err(|_| OfxStat::kOfxStatFailed)?.to_rgba8();
+            let file_bytes = std::fs::read(&path).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let img = image::load_from_memory(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?.to_rgba8();
             let (w, h) = img.dimensions();
             let rgba = img.into_raw();
             let path_str = path.to_string_lossy().to_string();
@@ -424,10 +430,34 @@ unsafe fn action_instance_changed(
                 idata.sheet_height = h;
             }
 
-            let mut p: OfxParamHandle = ptr::null_mut();
-            paramGetHandle(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-            let path_cstr = CString::new(path_str).unwrap();
-            paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+            file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
+            file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
+
+            return Ok(());
+        }
+
+        if file_param::RELOAD_FILE_PARAM == CStr::from_ptr(target_name) {
+            let path_str = file_param::read_string_param(su, param_set, FILE_PATH_PARAM)?;
+            if path_str.is_empty() { return Ok(()); }
+
+            let file_bytes = std::fs::read(&path_str).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let img = image::load_from_memory(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?.to_rgba8();
+            let (w, h) = img.dimensions();
+
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+
+            let mut ep: OfxPropertySetHandle = ptr::null_mut();
+            (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
+            let mut data_ptr: *mut c_void = ptr::null_mut();
+            propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+            if !data_ptr.is_null() {
+                let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.file_path = path_str;
+                idata.decoded_rgba = img.into_raw();
+                idata.sheet_width = w;
+                idata.sheet_height = h;
+            }
 
             return Ok(());
         }
@@ -473,8 +503,23 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
+    // Recover image data from Custom param on project reload
+    if let Some(ref mut idata_inner) = idata {
+        if idata_inner.decoded_rgba.is_empty() {
+            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
+                if !bytes.is_empty() {
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let rgba_img = img.to_rgba8();
+                        idata_inner.sheet_width = rgba_img.width();
+                        idata_inner.sheet_height = rgba_img.height();
+                        idata_inner.decoded_rgba = rgba_img.into_raw();
+                    }
+                }
+            }
+        }
+    }
+
     // If instance data is missing or no image loaded, render empty frame.
-    // File recovery must happen in InstanceChanged, not during render.
     if matches!(&idata, None) || idata.as_deref().is_some_and(|i| i.decoded_rgba.is_empty()) {
         // Still need to get output clip for bounds, then fill transparent
     }

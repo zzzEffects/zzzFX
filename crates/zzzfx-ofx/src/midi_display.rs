@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString, c_char, c_int, c_void},
+    ffi::{CStr, c_char, c_int, c_void},
     ptr,
     sync::OnceLock,
 };
@@ -11,6 +11,7 @@ use zzzfx_core::{
 };
 
 use crate::bindings::*;
+use crate::file_param;
 use crate::i18n;
 use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
@@ -49,12 +50,10 @@ struct InstanceData {
     magic: u64,
     midi_data: Option<MidiData>,
     file_path: String,
-    midi_file_bytes: Vec<u8>,
     cached_dst: Vec<u8>,
     cache_valid: bool,
     cached_output_w: usize,
     cached_output_h: usize,
-    cached_file_path: String,
     cached_time: f64,
 }
 
@@ -239,6 +238,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
+    // --- Reload File button (hidden by default) ---
+    file_param::define_reload_button(su, param_set, PAGE_NAME)?;
+
     // --- Native RGBA params (interleaved before their component descriptors) ---
     let mut defined_note_color = false;
     let mut defined_note_border_color = false;
@@ -290,6 +292,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
+    // --- Custom param (hidden): fileData (persisted binary) ---
+    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
+
     Ok(())
 }
 
@@ -310,12 +315,10 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
         magic: INSTANCE_MAGIC,
         midi_data: None,
         file_path: String::new(),
-        midi_file_bytes: Vec::new(),
         cached_dst: Vec::new(),
         cache_valid: false,
         cached_output_w: 0,
         cached_output_h: 0,
-        cached_file_path: String::new(),
         cached_time: f64::NAN,
     });
     psp(ep, kOfxPropInstanceData.as_ptr(), 0, Box::into_raw(idata) as *mut c_void).ofx_ok()?;
@@ -364,8 +367,6 @@ unsafe fn action_instance_changed(
     let propGetString = su.property_suite.propGetString.ok_or(OfxStat::kOfxStatFailed)?;
     let getParamSet = su.image_effect_suite.getParamSet.ok_or(OfxStat::kOfxStatFailed)?;
     let propGetPointer = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
-    let paramGetHandle = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
-    let paramSetValue = su.parameter_suite.paramSetValue.ok_or(OfxStat::kOfxStatFailed)?;
 
     let mut target_type: *mut c_char = ptr::null_mut();
     if propGetString(inArgs, kOfxPropType.as_ptr(), 0, &mut target_type).ofx_ok().is_err() {
@@ -400,15 +401,36 @@ unsafe fn action_instance_changed(
             if !data_ptr.is_null() {
                 let idata = &mut *(data_ptr as *mut InstanceData);
                 idata.file_path = path_str.clone();
-                idata.midi_file_bytes = bytes;
                 idata.midi_data = Some(midi_data);
                 idata.cache_valid = false;
             }
 
-            let mut p: OfxParamHandle = ptr::null_mut();
-            paramGetHandle(param_set, FILE_PATH_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-            let path_cstr = CString::new(path_str).unwrap();
-            paramSetValue(p, path_cstr.as_ptr() as *const c_void).ofx_ok()?;
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &bytes)?;
+            file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
+            file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
+
+            return Ok(());
+        }
+
+        if file_param::RELOAD_FILE_PARAM == CStr::from_ptr(target_name) {
+            let path_str = file_param::read_string_param(su, param_set, FILE_PATH_PARAM)?;
+            if path_str.is_empty() { return Ok(()); }
+
+            let bytes = std::fs::read(&path_str).map_err(|_| OfxStat::kOfxStatFailed)?;
+            let midi_data = parse_midi_file(&bytes).map_err(|_| OfxStat::kOfxStatFailed)?;
+
+            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &bytes)?;
+
+            let mut ep: OfxPropertySetHandle = ptr::null_mut();
+            (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
+            let mut data_ptr: *mut c_void = ptr::null_mut();
+            propGetPointer(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
+            if !data_ptr.is_null() {
+                let idata = &mut *(data_ptr as *mut InstanceData);
+                idata.file_path = path_str;
+                idata.midi_data = Some(midi_data);
+                idata.cache_valid = false;
+            }
 
             return Ok(());
         }
@@ -495,11 +517,15 @@ unsafe fn action_render(
     let ss: ZzzMidiDisplay = (&settings).into();
     let mut dst_buf = vec![0u8; width * height * 4];
 
-    // Recover MIDI data from file path on project reload
+    // Recover MIDI data from Custom param on project reload
     if let Some(idata_inner) = &mut idata {
-        if idata_inner.midi_data.is_none() && !idata_inner.file_path.is_empty() && !idata_inner.midi_file_bytes.is_empty() {
-            if let Ok(md) = parse_midi_file(&idata_inner.midi_file_bytes) {
-                idata_inner.midi_data = Some(md);
+        if idata_inner.midi_data.is_none() {
+            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
+                if !bytes.is_empty() {
+                    if let Ok(md) = parse_midi_file(&bytes) {
+                        idata_inner.midi_data = Some(md);
+                    }
+                }
             }
         }
     }

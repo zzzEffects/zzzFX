@@ -109,7 +109,7 @@ pub fn render_svg(
     let transform = build_transform(
         cached.native_w, cached.native_h,
         scale.0, scale.1,
-        settings.rotation.to_radians(),
+        settings.rotation,
         pos_x, pos_y,
         output_w, output_h,
     );
@@ -170,7 +170,7 @@ fn build_transform(
     svg_h: f32,
     sx: f32,
     sy: f32,
-    angle_rad: f32,
+    angle_deg: f32,
     pos_x: f32,
     pos_y: f32,
     output_w: usize,
@@ -180,7 +180,8 @@ fn build_transform(
     let tgt_y = pos_y * output_h as f32;
 
     let mut t = tiny_skia::Transform::from_translate(tgt_x, tgt_y);
-    t = t.pre_concat(tiny_skia::Transform::from_rotate(angle_rad));
+    // from_rotate expects degrees, not radians
+    t = t.pre_concat(tiny_skia::Transform::from_rotate(angle_deg));
     t = t.pre_concat(tiny_skia::Transform::from_scale(sx, sy));
     t = t.pre_concat(tiny_skia::Transform::from_translate(-svg_w / 2.0, -svg_h / 2.0));
     t
