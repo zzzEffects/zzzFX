@@ -1,8 +1,8 @@
 [package]
-name = "example-ae-plugin"
+name = "zzzfx-ae-plugin"
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR ISC OR Apache-2.0"
+license = "GPL-3.0-only"
 
 [lib]
 crate-type = ["cdylib"]
@@ -10,10 +10,11 @@ crate-type = ["cdylib"]
 [target.'cfg(any(windows, target_os="macos"))'.dependencies]
 after-effects = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
 premiere = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
-example-effect = { path = "../example-effect" }
+zzzfx = { path = "../zzzfx" }
 
 [build-dependencies]
 pipl = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
+winres = "0.1"
 
 [lints]
 workspace = true

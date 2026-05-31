@@ -3,15 +3,13 @@
 
 use std::process;
 
-use xtask::{build_ofx_plugin, build_zzzfx_ofx_plugin, macos_ae_plugin, macos_zzzfx_ae_plugin};
+use xtask::{build_ofx_plugin, macos_ae_plugin};
 
 fn main() {
     let cmd = clap::Command::new("xtask")
         .subcommand_required(true)
         .subcommand(build_ofx_plugin::command())
-        .subcommand(build_zzzfx_ofx_plugin::command())
-        .subcommand(macos_ae_plugin::command())
-        .subcommand(macos_zzzfx_ae_plugin::command());
+        .subcommand(macos_ae_plugin::command());
 
     let matches = cmd.get_matches();
 
@@ -21,14 +19,8 @@ fn main() {
         "macos-ae-plugin" => {
             macos_ae_plugin::main(args).unwrap();
         }
-        "macos-zzzfx-ae-plugin" => {
-            macos_zzzfx_ae_plugin::main(args).unwrap();
-        }
         "build-ofx-plugin" => {
             build_ofx_plugin::main(args).unwrap();
-        }
-        "build-zzzfx-ofx-plugin" => {
-            build_zzzfx_ofx_plugin::main(args).unwrap();
         }
         _ => {
             println!("Invalid xtask: {task}");

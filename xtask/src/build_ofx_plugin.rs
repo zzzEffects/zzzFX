@@ -1,5 +1,4 @@
-//! Builds the OpenFX plugin and bundles it according to the OpenFX specification.
-//! For more information, see https://openfx.readthedocs.io/en/main/Reference/ofxPackaging.html.
+//! Builds the zzzFX OpenFX plugin (bundles zzzStroke, zzzRepeater, zzzSpriteSheet) and bundles it.
 
 use clap::builder::PathBufValueParser;
 
@@ -14,9 +13,7 @@ use std::process::Command;
 
 pub fn command() -> clap::Command {
     clap::Command::new("build-ofx-plugin")
-        .about(
-            "Builds and bundles the OpenFX plugin, which is then output to `crates/openfx-plugin/build`.",
-        )
+        .about("Builds and bundles the zzzFX OpenFX plugin (Stroke + Repeater + SpriteSheet).")
         .arg(
             clap::Arg::new("release")
                 .long("release")
@@ -58,50 +55,29 @@ pub fn command() -> clap::Command {
         )
 }
 
-/// Creates the contents of the Info.plist file for the bundle when building for macOS.
 fn get_info_plist() -> plist::Value {
     let cargo_toml_path = workspace_dir().plus_iter(["crates", "openfx-plugin", "Cargo.toml"]);
     let manifest = cargo_toml::Manifest::from_path(cargo_toml_path).unwrap();
     let version = manifest.package().version();
 
     let mut info_plist_contents = plist::dictionary::Dictionary::new();
-    info_plist_contents.insert(
-        "CFBundleInfoDictionaryVersion".to_string(),
-        plist::Value::from("6.0"),
-    );
-    info_plist_contents.insert(
-        "CFBundleDevelopmentRegion".to_string(),
-        plist::Value::from("en"),
-    );
-    info_plist_contents.insert(
-        "CFBundlePackageType".to_string(),
-        plist::Value::from("BNDL"),
-    );
-    info_plist_contents.insert(
-        "CFBundleIdentifier".to_string(),
-        plist::Value::from("com.example.openfx"),
-    );
+    info_plist_contents.insert("CFBundleInfoDictionaryVersion".to_string(), plist::Value::from("6.0"));
+    info_plist_contents.insert("CFBundleDevelopmentRegion".to_string(), plist::Value::from("en"));
+    info_plist_contents.insert("CFBundlePackageType".to_string(), plist::Value::from("BNDL"));
+    info_plist_contents.insert("CFBundleIdentifier".to_string(), plist::Value::from("com.example.zzzfx"));
     info_plist_contents.insert("CFBundleVersion".to_string(), plist::Value::from(version));
-    info_plist_contents.insert(
-        "CFBundleShortVersionString".to_string(),
-        plist::Value::from(version),
-    );
-    info_plist_contents.insert(
-        "NSHumanReadableCopyright".to_string(),
-        plist::Value::from("Example Plugin Skeleton"),
-    );
+    info_plist_contents.insert("CFBundleShortVersionString".to_string(), plist::Value::from(version));
+    info_plist_contents.insert("NSHumanReadableCopyright".to_string(), plist::Value::from("zzzFX Plugin"));
     info_plist_contents.insert("CFBundleSignature".to_string(), plist::Value::from("????"));
-
     plist::Value::Dictionary(info_plist_contents)
 }
 
-/// Build the plugin for a given target, in either debug or release mode.
 fn build_plugin_for_target(target: &Target, release_mode: bool) -> std::io::Result<PathBuf> {
-    println!("Building OpenFX plugin for target {}", target.target_triple);
+    println!("Building zzzFX OFX plugin for target {}", target.target_triple);
 
     let mut cargo_args: Vec<_> = vec![
         String::from("build"),
-        String::from("--package=example-openfx-plugin"),
+        String::from("--package=zzzfx-openfx-plugin"),
         String::from("--lib"),
         String::from("--target"),
         target.target_triple.to_string(),
@@ -117,15 +93,10 @@ fn build_plugin_for_target(target: &Target, release_mode: bool) -> std::io::Resu
     let target_dir_path = workspace_dir().to_path_buf().plus_iter([
         "target",
         target.target_triple,
-        if cargo_args.contains(&String::from("--release")) {
-            "release"
-        } else {
-            "debug"
-        },
+        if cargo_args.contains(&String::from("--release")) { "release" } else { "debug" },
     ]);
 
-    let mut built_library_path =
-        target_dir_path.plus(target.library_prefix.to_owned() + "example_openfx_plugin");
+    let mut built_library_path = target_dir_path.plus(target.library_prefix.to_owned() + "zzzfx_openfx_plugin");
     built_library_path.set_extension(target.library_extension);
 
     Ok(built_library_path)
@@ -141,7 +112,7 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
         let aarch64_path = build_plugin_for_target(aarch64_target, release_mode)?;
 
         let dst_path = std::env::temp_dir().plus(format!(
-            "example-ofx-{}",
+            "zzzfx-ofx-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -159,10 +130,7 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
             .status()
             .expect_success()?;
 
-        assert_eq!(
-            x86_64_target.ofx_architecture,
-            aarch64_target.ofx_architecture
-        );
+        assert_eq!(x86_64_target.ofx_architecture, aarch64_target.ofx_architecture);
         (dst_path, x86_64_target.ofx_architecture)
     } else {
         let target_triple = args.get_one::<String>("target").unwrap();
@@ -170,17 +138,13 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
             .iter()
             .find(|candidate_target| candidate_target.target_triple == target_triple)
             .unwrap_or_else(|| panic!("Your target \"{}\" is not supported", target_triple));
-
-        (
-            build_plugin_for_target(target, release_mode)?,
-            target.ofx_architecture,
-        )
+        (build_plugin_for_target(target, release_mode)?, target.ofx_architecture)
     };
 
     let output_dir = args.get_one::<PathBuf>("destdir").unwrap();
 
-    let plugin_bundle_path = output_dir.plus_iter(["ExampleEffect.ofx.bundle", "Contents"]);
-    let plugin_bin_path = plugin_bundle_path.plus_iter([ofx_architecture, "ExampleEffect.ofx"]);
+    let plugin_bundle_path = output_dir.plus_iter(["zzzFX.ofx.bundle", "Contents"]);
+    let plugin_bin_path = plugin_bundle_path.plus_iter([ofx_architecture, "zzzFX.ofx"]);
     let plugin_resources_path = plugin_bundle_path.plus_iter(["Resources"]);
 
     fs::create_dir_all(plugin_bin_path.parent().unwrap())?;

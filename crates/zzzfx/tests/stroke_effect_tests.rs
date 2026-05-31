@@ -1,0 +1,341 @@
+use zzzfx_core::{FillMode, StrokePosition, Stroke};
+
+fn make_square_with_alpha(width: usize, height: usize) -> Vec<u8> {
+    let len = width * height * 4;
+    let mut buf = vec![0u8; len];
+    let cx = width / 2;
+    let cy = height / 2;
+    let r = (width.min(height) / 4) as i32;
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as i32 - cx as i32;
+            let dy = y as i32 - cy as i32;
+            let inside = dx * dx + dy * dy <= r * r;
+            let idx = (y * width + x) * 4;
+            buf[idx] = 255;
+            buf[idx + 1] = 255;
+            buf[idx + 2] = 255;
+            buf[idx + 3] = if inside { 255 } else { 0 };
+        }
+    }
+    buf
+}
+
+#[test]
+fn zero_width_is_passthrough() {
+    let effect = Stroke {
+        stroke_width: 0.0,
+        ..Default::default()
+    };
+    let w = 16;
+    let h = 16;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+    assert_eq!(src, dst, "zero stroke width should be passthrough");
+}
+
+#[test]
+fn zero_alpha_stroke_is_passthrough() {
+    let effect = Stroke {
+        stroke_width: 0.1,
+        stroke_color_a: 0.0,
+        ..Default::default()
+    };
+    let w = 16;
+    let h = 16;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+    assert_eq!(src, dst, "zero stroke alpha should be passthrough");
+}
+
+#[test]
+fn outer_stroke_expands() {
+    let effect = Stroke {
+        stroke_position: StrokePosition::Outer,
+        stroke_width: 0.5,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        ..Default::default()
+    };
+    let w = 32;
+    let h = 32;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+
+    // Check that stroke was applied: some pixels should be modified outside the shape.
+    // GPU (JFA Euclidean) and CPU (4SSED) may produce slightly different stroke boundaries,
+    // so check for any red-tinted pixels rather than exact R-only values.
+    let mut stroke_pixels = 0;
+    for i in (0..dst.len()).step_by(4) {
+        let is_stroke = dst[i] > 200 && dst[i + 1] < dst[i] && dst[i + 2] < dst[i];
+        if is_stroke {
+            stroke_pixels += 1;
+        }
+    }
+    assert!(
+        stroke_pixels > 0,
+        "outer stroke should produce red-tinted pixels outside the shape"
+    );
+}
+
+#[test]
+fn inner_stroke_is_inside() {
+    let effect = Stroke {
+        stroke_position: StrokePosition::Inner,
+        stroke_width: 0.15,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        ..Default::default()
+    };
+    let w = 32;
+    let h = 32;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+
+    // The center pixel should still be white (inner stroke doesn't reach center)
+    let cx = w / 2;
+    let cy = h / 2;
+    let center_idx = (cy * w + cx) * 4;
+    assert_eq!(dst[center_idx], 255);
+    assert_eq!(dst[center_idx + 1], 255);
+    assert_eq!(dst[center_idx + 2], 255);
+}
+
+#[test]
+fn source_opacity_fades_source() {
+    let effect = Stroke {
+        source_opacity: 0.5,
+        stroke_width: 0.0, // no stroke, only source opacity
+        ..Default::default()
+    };
+    let w = 8;
+    let h = 8;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+
+    for i in (0..dst.len()).step_by(4) {
+        let expected_alpha = (src[i + 3] as f32 * 0.5).round() as u8;
+        assert_eq!(dst[i + 3], expected_alpha, "alpha should be halved");
+        // RGB channels should also be faded
+        if src[i + 3] > 0 {
+            assert_eq!(dst[i], (src[i] as f32 * 0.5).round() as u8, "R should be halved");
+            assert_eq!(dst[i + 1], (src[i + 1] as f32 * 0.5).round() as u8, "G should be halved");
+            assert_eq!(dst[i + 2], (src[i + 2] as f32 * 0.5).round() as u8, "B should be halved");
+        }
+    }
+}
+
+#[test]
+fn different_dimensions_work() {
+    for (w, h) in [(1, 1), (4, 4), (16, 9), (32, 8)] {
+        let len = w * h * 4;
+        let src: Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
+        let mut dst = vec![0u8; len];
+        let effect = Stroke {
+            stroke_width: 0.05,
+            stroke_color_a: 0.5,
+            ..Default::default()
+        };
+        effect.apply_effect(&src, &mut dst, w, h);
+    }
+}
+
+fn make_rect_with_alpha(width: usize, height: usize) -> Vec<u8> {
+    let len = width * height * 4;
+    let mut buf = vec![0u8; len];
+    let margin = width / 4;
+    for y in 0..height {
+        for x in 0..width {
+            let inside = x >= margin && x < width - margin && y >= margin && y < height - margin;
+            let idx = (y * width + x) * 4;
+            buf[idx] = 255;
+            buf[idx + 1] = 255;
+            buf[idx + 2] = 255;
+            buf[idx + 3] = if inside { 255 } else { 0 };
+        }
+    }
+    buf
+}
+
+#[test]
+fn sharp_corners_vs_rounded_produce_different_output() {
+    let w = 64;
+    let h = 64;
+    let src = make_rect_with_alpha(w, h);
+
+    // Use a wider stroke to make corner differences more visible
+    // (both GPU Euclidean JFA and CPU 4SSED)
+    let effect_rounded = Stroke {
+        stroke_position: StrokePosition::Outer,
+        stroke_width: 1.0,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        use_sharp_corners: false,
+        ..Default::default()
+    };
+    let effect_sharp = Stroke {
+        use_sharp_corners: true,
+        ..effect_rounded.clone()
+    };
+
+    let mut dst_rounded = vec![0u8; src.len()];
+    let mut dst_sharp = vec![0u8; src.len()];
+    effect_rounded.apply_effect(&src, &mut dst_rounded, w, h);
+    effect_sharp.apply_effect(&src, &mut dst_sharp, w, h);
+
+    // The two should differ when sharp corners are enabled
+    let diff = dst_rounded
+        .iter()
+        .zip(dst_sharp.iter())
+        .any(|(a, b)| a != b);
+    assert!(diff, "sharp vs rounded should produce different outputs");
+}
+
+#[test]
+fn solid_color_fill_is_uniform() {
+    let effect = Stroke {
+        stroke_position: StrokePosition::Outer,
+        fill_mode: FillMode::SolidColor,
+        stroke_width: 0.1,
+        stroke_color_r: 0.0,
+        stroke_color_g: 1.0,
+        stroke_color_b: 0.5,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        ..Default::default()
+    };
+    let w = 32;
+    let h = 32;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+
+    // All stroke pixels should have the same color
+    for i in (0..dst.len()).step_by(4) {
+        if dst[i + 3] > 0 && src[i + 3] == 0 {
+            assert_eq!(dst[i], 0);
+            assert_eq!(dst[i + 1], 255);
+            assert_eq!(dst[i + 2], 128);
+        }
+    }
+}
+
+#[test]
+fn default_settings_produce_output() {
+    let effect = Stroke::default();
+    let w = 16;
+    let h = 16;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+    // Should not panic and produce some output (may be mostly passthrough with tiny stroke)
+}
+
+#[test]
+fn edge_blend_zero_is_binary() {
+    // With edge_blend=0, should behave like original hard threshold
+    let effect = Stroke {
+        stroke_position: StrokePosition::Outer,
+        stroke_width: 0.5,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        edge_blend: 0.0,
+        ..Default::default()
+    };
+    let w = 32;
+    let h = 32;
+    let src = make_square_with_alpha(w, h);
+    let mut dst = vec![0u8; src.len()];
+    effect.apply_effect(&src, &mut dst, w, h);
+
+    let mut stroke_pixels = 0;
+    for i in (0..dst.len()).step_by(4) {
+        let is_stroke = dst[i] > 200 && dst[i + 1] < dst[i] && dst[i + 2] < dst[i];
+        if is_stroke {
+            stroke_pixels += 1;
+        }
+    }
+    assert!(stroke_pixels > 0, "edge_blend=0 should still produce stroke pixels");
+}
+
+fn make_gradient_alpha(width: usize, height: usize) -> Vec<u8> {
+    let len = width * height * 4;
+    let mut buf = vec![0u8; len];
+    // horizontal gradient: alpha 0 on left, 255 on right
+    for y in 0..height {
+        for x in 0..width {
+            let alpha = ((x as f32 / (width - 1) as f32) * 255.0).round() as u8;
+            let idx = (y * width + x) * 4;
+            buf[idx] = 255;
+            buf[idx + 1] = 255;
+            buf[idx + 2] = 255;
+            buf[idx + 3] = alpha;
+        }
+    }
+    buf
+}
+
+#[test]
+fn edge_blend_full_creates_softer_transitions() {
+    // edge_blend=1 should produce a wider blend zone than edge_blend=0
+    // Use a gradient image with intermediate alpha values where edge_blend matters
+    let effect_full = Stroke {
+        stroke_position: StrokePosition::Outer,
+        stroke_width: 0.5,
+        stroke_color_r: 1.0,
+        stroke_color_g: 0.0,
+        stroke_color_b: 0.0,
+        stroke_color_a: 1.0,
+        stroke_feathering: 0.0,
+        edge_blend: 1.0,
+        ..Default::default()
+    };
+    let effect_none = Stroke {
+        edge_blend: 0.0,
+        ..effect_full.clone()
+    };
+
+    let w = 32;
+    let h = 32;
+    let src = make_gradient_alpha(w, h);
+    let mut dst_full = vec![0u8; src.len()];
+    let mut dst_none = vec![0u8; src.len()];
+    effect_full.apply_effect(&src, &mut dst_full, w, h);
+    effect_none.apply_effect(&src, &mut dst_none, w, h);
+
+    // edge_blend=1 should produce different output from edge_blend=0
+    let diff = dst_full
+        .iter()
+        .zip(dst_none.iter())
+        .any(|(a, b)| a != b);
+    assert!(
+        diff,
+        "edge_blend=1 should produce different output from edge_blend=0"
+    );
+}
+
+#[test]
+fn edge_blend_default_is_one() {
+    let effect = Stroke::default();
+    assert!(
+        (effect.edge_blend - 1.0).abs() < f32::EPSILON,
+        "default edge_blend should be 1.0"
+    );
+}

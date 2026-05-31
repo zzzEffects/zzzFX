@@ -1,165 +1,154 @@
-# Rust Multi-Host Plugin Skeleton
+# zzzFX — Open-Source Video Effect Plugins
 
-A Rust workspace skeleton for building cross-host video effect plugins. Extracted from [ntsc-rs](https://github.com/valadaptive/ntsc-rs).
+zzzFX is an open-source and free series of video effect plugins for After Effects, Premiere and OpenFX hosts (such as VEGAS Pro, DaVinci Resolve, etc.).
+
+The plugin framework is based on [VideoFX-rs](https://github.com/zzzEffect/VideoFX-rs) (MIT licensed), with modifications and extensions for zzzFX's effect system.
+
+## License
+
+zzzFX is licensed under the [GNU General Public License v3.0 or later](https://www.gnu.org/licenses/gpl-3.0.html) (GPL-3.0-or-later).
+
+The upstream VideoFX-rs plugin framework is available under the MIT license.
 
 ## Structure
 
 ```
-plugin_example/
+zzzFX/
 ├── crates/
-│   ├── macros/              # Proc macro: `#[derive(FullSettings)]`
-│   ├── example-effect/      # Shared effect library (parameters + render)
-│   ├── ae-plugin/           # Adobe After Effects / Premiere Pro plugin (cdylib)
-│   └── openfx-plugin/       # OpenFX plugin (cdylib, DaVinci Resolve / Natron)
-└── xtask/                   # Build & bundle helper (cargo xtask)
+│   ├── zzzfx/                  # Shared effect library (core)
+│   ├── macros/                 # Proc macro: #[derive(FullSettings)]
+│   ├── ae-plugin/              # After Effects / Premiere plugin (cdylib)
+│   └── openfx-plugin/          # OpenFX plugin (cdylib)
+│       └── vendor/
+│           └── openfx/         # OpenFX SDK (git submodule)
+└── xtask/                      # Build & bundle helper (cargo xtask)
 ```
 
 ## Supported Hosts
 
 | Host | Crate | Build Command |
 |------|-------|---------------|
-| After Effects / Premiere Pro | `ae-plugin` | `cargo build -p example-ae-plugin` |
-| OpenFX (Resolve, Natron, etc.) | `openfx-plugin` | `cargo xtask build-ofx-plugin` |
+| After Effects / Premiere | `ae-plugin` | `cargo build -p zzzfx-ae-plugin --release` |
+| OpenFX (Resolve, Natron, VEGAS, etc.) | `openfx-plugin` | `cargo xtask build-ofx-plugin --release` |
 
-## Quick Start
+## Effects
 
-### 1. Check compilation
+All effects are implemented in `zzzfx` and bundled into both the AE and OFX plugins:
+
+| Effect | Description |
+|--------|-------------|
+| Ambient Light | Edge-based ambient light with separated local/global blur for depth-aware glow |
+| ASCII Art | Luminance-to-character-glyph mapping with configurable charset and color modes |
+| ASS Subtitle | ASS/SSA subtitle renderer with style parsing and overlay compositing |
+| Cast Shadow | Directional drop shadow with blur, scale, and color controls, GPU-accelerated |
+| Chroma Key | BT.601 YCbCr-based color keying with edge blur for clean matte extraction |
+| Long Shadow | Extended directional shadow with configurable length, angle, opacity, and color |
+| MIDI Display | MIDI file visualization as piano-roll note blocks with track filtering |
+| Pixel Art Style | Color quantization in pixel blocks with ordered/Floyd-Steinberg dithering + grid |
+| Repeater | Keyframe-driven time-offset layer compositor with blend modes |
+| Sprite Sheet | Grid-based sprite sheet reader with animation, scaling, and rotation |
+| Stroke | Alpha-channel stroke with distance transform, fill modes, and blend modes |
+| SVG Display | SVG file renderer with system font loading, scaling, and cache |
+
+## Building from Source
+
+### Install Rust
+
+The first step is to install the latest version of [Rust](https://www.rust-lang.org/). Even if you're using Linux and Rust is available in your package manager, the version may be too outdated to build zzzFX.
+
+To obtain the latest stable version of Rust, install [rustup](https://rustup.rs/) and then run:
 
 ```bash
-cargo check --workspace
+rustup install stable
 ```
 
-### 2. Run tests
+You may need to close and reopen your terminal after this.
+
+### Install rust-bindgen's requirements (OpenFX only)
+
+If you want to build the OpenFX plugin, you'll need to install some dependencies for the `rust-bindgen` tool to work. On Windows, this means having [LLVM/clang](https://releases.llvm.org/) installed. On Linux, install `libclang-dev` via your package manager.
+
+If you're not building the OpenFX plugin, you can ignore this part.
+
+### Clone the repository
+
+Make sure to include submodules when cloning the repository if you want the OpenFX plugin to build properly:
+
+```bash
+git clone --recurse-submodules https://github.com/zzzEffect/zzzFX.git
+cd zzzFX
+```
+
+If you've already cloned the repository without submodules, you can initialize them via:
+
+```bash
+git submodule update --init --recursive
+```
+
+### Platform-specific instructions
+
+After installing Rust and cloning the repository, the steps are platform-specific:
+
+#### Windows
+
+```bash
+# Build the OpenFX plugin (output in crates/openfx-plugin/build/)
+cargo xtask build-ofx-plugin --release
+
+# Build the After Effects / Premiere plugin (output: target/release/zzzfx_ae_plugin.dll)
+# Copy and rename to: C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\zzzfx-ae.aex
+cargo build -p zzzfx-ae-plugin --release
+```
+
+#### macOS
+
+```bash
+# Build the OpenFX plugin (output in crates/openfx-plugin/build/)
+cargo xtask build-ofx-plugin --macos-universal --release
+
+# Build and bundle the After Effects plugin (output in the build/ folder)
+cargo xtask macos-ae-plugin --macos-universal --release
+```
+
+#### Linux
+
+```bash
+# Build the OpenFX plugin (output in crates/openfx-plugin/build/)
+cargo xtask build-ofx-plugin --release
+```
+
+## Testing with Real Hosts
+
+### OpenFX
+
+Copy the built `.ofx.bundle/` from `crates/openfx-plugin/build/` to your OFX host's plugins directory:
+
+- **DaVinci Resolve**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\OFXPlugins\`
+- **Natron**: `C:\Program Files\Common Files\OFX\Plugins\`
+- **VEGAS Pro**: `C:\Program Files\VEGAS\VEGAS Pro\OFX Video Plug-Ins\`
+
+### After Effects / Premiere
+
+Copy the built `.aex` (Windows) or `.plugin` bundle (macOS) to:
+
+- **Windows**: `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\`
+- **macOS**: `/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/`
+
+## Running Tests
 
 ```bash
 cargo test --workspace
 ```
 
 This runs:
-- **Settings tests**: JSON round-trip, get/set fields, descriptor iteration
-- **Effect tests**: passthrough correctness with various dimensions
-- **Plugin compile tests**: verify cdylibs build successfully
+- Settings tests: JSON round-trip, get/set fields, descriptor iteration
+- Effect tests: passthrough correctness with various dimensions
+- Plugin compile tests: verify cdylibs build successfully
+- i18n tests: verify all translation keys have non-empty EN and zh_CN text
 
-### 3. Build the OpenFX plugin (Windows)
+## GPU Acceleration
 
-```bash
-# Initialize the OpenFX SDK submodule
-git submodule update --init
-
-# Build and bundle (output in crates/openfx-plugin/build/)
-cargo xtask build-ofx-plugin
-
-# For release mode:
-cargo xtask build-ofx-plugin --release
-```
-
-### 4. Build the AE plugin
-
-```bash
-# Windows: build the .aex DLL
-cargo build --package example-ae-plugin --lib
-
-# macOS: build and bundle into .plugin
-cargo xtask macos-ae-plugin
-```
-
-## How to Write a Plugin
-
-### 1. Define your effect parameters in `crates/example-effect/src/settings/standard.rs`
-
-```rust
-#[derive(FullSettings, Clone, Debug, PartialEq)]
-pub struct ExampleEffect {
-    pub brightness: f32,
-    pub invert_colors: bool,
-    // ...
-}
-```
-
-### 2. Implement `Settings` trait with `setting_descriptors()`
-
-This provides the introspectable parameter descriptions used by both plugin hosts.
-
-### 3. Write the effect render function in `crates/example-effect/src/effect.rs`
-
-```rust
-impl ExampleEffect {
-    pub fn apply_effect(&self, src: &[u8], dst: &mut [u8], width: usize, height: usize) {
-        // Your effect logic here
-    }
-}
-```
-
-### 4. The plugins automatically map parameters
-
-Both `ae-plugin` and `openfx-plugin` use the generic `SettingsList` to:
-- Generate host-specific UI controls (sliders, checkboxes, dropdowns)
-- Read parameter values back during render
-- Support preset load/save (JSON)
-
-## Testing with Real Hosts
-
-### OpenFX
-
-Copy `crates/openfx-plugin/build/ExampleEffect.ofx.bundle/` to your OFX host's plugins directory:
-- **DaVinci Resolve**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\OFXPlugins\`
-- **Natron**: `C:\Program Files\Common Files\OFX\Plugins\`
-
-### After Effects / Premiere Pro
-
-Copy the built `.aex` to:
-- `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\`
-
-The plugin appears as **"Example Effect"** under the **"Example"** category.
-
-## Writing Tests
-
-### Testing the effect library (pure Rust)
-
-```rust
-// tests/effect_tests.rs
-#[test]
-fn my_effect_works() {
-    let effect = ExampleEffect::default();
-    let src = create_test_image(1920, 1080);
-    let mut dst = vec![0u8; src.len()];
-    effect.apply_effect(&src, &mut dst, 1920, 1080);
-    // assert on expected output...
-}
-```
-
-### Testing plugin builds (compile-check)
-
-The `ae-plugin/tests/` and `openfx-plugin/tests/` verify that cdylibs compile.
-Full integration testing requires loading the plugin in the actual host application.
-
-## zzzFX Effects
-
-The `zzzfx-*` crates provide a family of custom video effects:
-
-| Effect | Crate | Description |
-|--------|-------|-------------|
-| zzzFX Stroke | `zzzfx-core` | Alpha-channel stroke with distance transform |
-| zzzFX Repeater | `zzzfx-core` | Keyframe-driven time-offset compositor |
-| zzzFX Sprite Sheet | `zzzfx-core` | Grid-based sprite sheet reader with animation |
-| zzzFX ASS Subtitle | `zzzfx-core` | ASS/SSA subtitle renderer |
-| zzzFX ASCII Art | `zzzfx-core` | Luminance-to-character-glyph mapping |
-| zzzFX Pixel Art Style | `zzzfx-core` | Color quantization in pixel blocks with dithering + grid |
-
-### Building zzzFX
-
-```bash
-# OpenFX plugin (all 6 effects in one .ofx bundle)
-cargo xtask build-zzzfx-ofx-plugin
-
-# AE plugin (build one effect at a time via feature flag)
-cargo build -p zzzfx-ae-plugin --features effect-pixel-art
-```
-
-### GPU Acceleration (Pixel Art Style)
-
-The Pixel Art Style effect supports GPU-accelerated rendering via wgpu compute shaders.
-GPU is used automatically when available; CPU fallback is transparent on failure.
+Several effects support GPU-accelerated rendering via wgpu compute shaders. GPU is used automatically when available; CPU fallback is transparent on failure.
 
 **Feature flags:**
 
@@ -170,7 +159,7 @@ GPU is used automatically when available; CPU fallback is transparent on failure
 **Disable GPU** (pure CPU build):
 
 ```bash
-cargo build -p zzzfx-ae-plugin --features effect-pixel-art --no-default-features
+cargo build -p zzzfx-ae-plugin --release --no-default-features
 ```
 
 **System requirements for GPU path:**
@@ -182,13 +171,3 @@ and falls back to CPU if:
 - Floyd-Steinberg dithering is selected (serial algorithm)
 - GPU adapter is unavailable
 - GPU device is lost at runtime
-
-## Dependencies
-
-- **AE Plugin**: Requires the `after-effects` and `pipl` crates (git dependency)
-- **OFX Plugin**: Requires `bindgen` + `libclang` for C header generation, and the OpenFX SDK (git submodule)
-- Both plugins depend on `example-effect` (shared parameter + render library)
-
-## License
-
-MIT OR ISC OR Apache-2.0

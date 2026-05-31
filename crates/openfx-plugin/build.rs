@@ -1,8 +1,7 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::Path;
 
 fn main() {
-    // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=wrapper.h");
 
     println!(
@@ -10,30 +9,22 @@ fn main() {
         std::env::var("TARGET").unwrap()
     );
 
-    // The bindgen::Builder is the main entry point
-    // to bindgen, and lets you build up options for
-    // the resulting bindings.
+    // --- bindgen: generate raw OFX C bindings ---
     let bindings = bindgen::Builder::default()
-        // The input header we would like to generate
-        // bindings for.
         .header("wrapper.h")
         .blocklist_function("OfxGetNumberOfPlugins")
         .blocklist_function("OfxGetPlugin")
-        // We wrap the OfxStatus enum in a newtype struct so we can annotate it with #[must_use].
         .blocklist_type("OfxStatus")
         .blocklist_var("kOfxStat.+")
-        // Tell cargo to invalidate the built crate whenever any of the
-        // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate_cstr(true)
-        // Finish the builder and generate the bindings.
         .generate()
-        // Unwrap the Result and panic on failure.
         .expect("Unable to generate bindings");
 
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_path = Path::new(&out_dir).join("bindings.rs");
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
+        .write_to_file(&out_path)
         .expect("Couldn't write bindings!");
+
 }

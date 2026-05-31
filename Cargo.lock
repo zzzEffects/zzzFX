@@ -885,16 +885,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "effect-settings"
-version = "0.1.0"
-dependencies = [
- "hifijson",
- "num_enum",
- "sval",
- "sval_json",
-]
-
-[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -971,51 +961,6 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
-]
-
-[[package]]
-name = "example-ae-plugin"
-version = "0.1.0"
-dependencies = [
- "after-effects",
- "example-effect",
- "pipl",
- "premiere",
-]
-
-[[package]]
-name = "example-effect"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "effect-settings",
- "example-effect-macros",
- "hifijson",
- "num_enum",
- "pollster",
- "rayon",
- "sval",
- "sval_json",
- "wgpu",
- "zzzfx-core",
-]
-
-[[package]]
-name = "example-effect-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "example-openfx-plugin"
-version = "0.1.0"
-dependencies = [
- "bindgen 0.71.1",
- "example-effect",
- "trybuild",
 ]
 
 [[package]]
@@ -1980,7 +1925,6 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -4612,25 +4556,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "zzzfx-ae-plugin"
-version = "0.1.0"
-dependencies = [
- "after-effects",
- "pipl",
- "premiere",
- "winres",
- "zzzfx-core",
-]
-
-[[package]]
-name = "zzzfx-core"
+name = "zzzfx"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "effect-settings",
- "example-effect-macros",
  "font-kit",
  "fontdue",
+ "hifijson",
  "image",
  "midly",
  "num_enum",
@@ -4639,17 +4571,40 @@ dependencies = [
  "rayon",
  "resvg",
  "rotsprite",
+ "sval",
+ "sval_json",
  "trybuild",
  "wgpu",
+ "zzzfx-macros",
 ]
 
 [[package]]
-name = "zzzfx-ofx-plugin"
+name = "zzzfx-ae-plugin"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "pipl",
+ "premiere",
+ "winres",
+ "zzzfx",
+]
+
+[[package]]
+name = "zzzfx-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "zzzfx-openfx-plugin"
 version = "0.1.0"
 dependencies = [
  "bindgen 0.71.1",
  "image",
  "rfd",
  "trybuild",
- "zzzfx-core",
+ "zzzfx",
 ]

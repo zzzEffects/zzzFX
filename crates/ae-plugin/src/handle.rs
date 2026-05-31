@@ -61,6 +61,12 @@ impl<T: Copy> SliceHandle<T> {
             }
         }
 
+        // SAFETY: `MaybeUninit<T>` is guaranteed by the compiler to have the
+        // same size and alignment as `T`.  All elements of the slice have been
+        // initialised via `i.write(value)` in the loop above, so the memory
+        // contents are valid representations of `T`.  `SliceHandle<T>` does not
+        // inspect `T`'s value — it only wraps the raw AE handle pointer and
+        // length, which are identical for both types.
         Ok(unsafe { transmute::<SliceHandle<MaybeUninit<T>>, SliceHandle<T>>(handle) })
     }
 }
