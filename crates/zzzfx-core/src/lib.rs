@@ -6,6 +6,7 @@ pub mod settings;
 pub use effect_settings::setting_id;
 
 mod ambient_light;
+mod cast_shadow;
 mod ascii_art;
 mod chroma_key;
 mod long_shadow;
@@ -20,6 +21,7 @@ pub mod svg_display;
 pub use repeater::CompositorLayer;
 
 pub use settings::ambient_light::{ZzzAmbientLight, ZzzAmbientLightFullSettings};
+pub use settings::cast_shadow::{ZzzCastShadow, ZzzCastShadowFullSettings};
 pub use settings::chroma_key::{ZzzChromaKey, ZzzChromaKeyFullSettings};
 pub use settings::ascii_art::{
     ColorMode as AsciiColorMode, ZzzAsciiArt, ZzzAsciiArtFullSettings,

@@ -711,5 +711,43 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::ParamChromaKeyInvertDesc => c"反转 Alpha 遮罩。抠除区域变为不透明，非抠除区域变为透明。",
         TrKey::ParamChromaKeyEdgeBlur => c"边缘模糊",
         TrKey::ParamChromaKeyEdgeBlurDesc => c"应用于 Alpha 遮罩的空间模糊半径（像素），使边缘更柔和。",
+
+        // ── Cast Shadow: effect labels ────────────────
+        TrKey::EffectCastShadowName => c"zzzFX 投影",
+        TrKey::EffectCastShadowDesc => c"从源 Alpha 通道基于变换投射阴影，支持缩放、透视和柔化控制。",
+
+        // ── Cast Shadow: native param labels & hints ───
+        TrKey::NativeCastShadowColor => c"阴影颜色",
+        TrKey::NativeCastShadowColorHint => c"投射阴影的颜色。",
+        TrKey::NativeCastShadowOffset => c"阴影偏移",
+        TrKey::NativeCastShadowOffsetHint => c"阴影相对于源的位置偏移。",
+
+        // ── Cast Shadow: generic param labels ──────────
+        TrKey::ParamCastShadowScale => c"缩放",
+        TrKey::ParamCastShadowScaleDesc => c"阴影从枢轴点的缩放因子。1.0 = 无缩放。",
+        TrKey::ParamCastShadowSoftness => c"柔和度",
+        TrKey::ParamCastShadowSoftnessDesc => c"应用于阴影边缘的模糊量。0 = 锐利，1 = 非常柔和。",
+        TrKey::ParamCastShadowShearAngle => c"切变角度",
+        TrKey::ParamCastShadowShearAngleDesc => c"切变变形的方向。0° = 右，90° = 下。",
+        TrKey::ParamCastShadowShearAmount => c"切变强度",
+        TrKey::ParamCastShadowShearAmountDesc => c"切变变形的强度。0 = 无切变，1 = 最大切变。",
+        TrKey::ParamCastShadowAlphaThreshold => c"Alpha 阈值",
+        TrKey::ParamCastShadowAlphaThresholdDesc => c"Alpha 值低于此值的源像素不产生阴影。",
+        TrKey::ParamCastShadowSourceOpacity => c"源不透明度",
+        TrKey::ParamCastShadowSourceOpacityDesc => c"源图像的不透明度。0 = 仅显示阴影，1 = 完全不透明。",
+        TrKey::ParamCastShadowPivotAngle => c"投影轴角度",
+        TrKey::ParamCastShadowPivotAngleDesc => c"控制投影轴在包围盒上的位置。0° = 底部，90° = 左侧，180° = 顶部，270° = 右侧。",
+        TrKey::ParamCastShadowFade => c"渐隐",
+        TrKey::ParamCastShadowFadeDesc => c"阴影随远离投影轴而逐渐透明。0 = 无渐隐，1 = 最大渐隐。",
+        TrKey::NativeCastShadowManualOffset => c"手动单轴中心",
+        TrKey::NativeCastShadowManualOffsetHint => c"手动调整投影轴位置。仅在手动 - 单轴模式下可用。",
+        TrKey::ParamCastShadowPivotMode => c"投影轴类型",
+        TrKey::ParamCastShadowPivotModeDesc => c"投影轴的确定方式。",
+        TrKey::MenuPivotAutoSingle => c"自动 - 单轴",
+        TrKey::MenuPivotAutoSingleDesc => c"自动从源 Alpha 的完整包围盒检测一条投影轴。",
+        TrKey::MenuPivotAutoMulti => c"自动 - 多轴",
+        TrKey::MenuPivotAutoMultiDesc => c"检测不连续的 Alpha 区域，并为每个区域分别投射阴影。",
+        TrKey::MenuPivotManualSingle => c"手动 - 单轴",
+        TrKey::MenuPivotManualSingleDesc => c"将投影轴置于画面中心。使用偏移距离和偏移角度进行调整。",
     }
 }

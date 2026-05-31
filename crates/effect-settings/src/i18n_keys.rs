@@ -763,6 +763,46 @@ i18n_keys! {
         ParamChromaKeyInvertDesc = "Invert the alpha matte. Keyed areas become opaque and non-keyed areas become transparent.";
         ParamChromaKeyEdgeBlur = "Edge Blur";
         ParamChromaKeyEdgeBlurDesc = "Spatial blur radius in pixels applied to the alpha matte for softer edges.";
+
+        // ── Cast Shadow: effect labels ────────────────
+        EffectCastShadowName = "zzzFX Cast Shadow";
+        EffectCastShadowDesc = "Casts a transform-based shadow from the source alpha, with scale, perspective, and softness controls.";
+
+        // ── Cast Shadow: native param labels & hints ───
+        NativeCastShadowColor = "Shadow Color";
+        NativeCastShadowColorHint = "Color of the cast shadow.";
+        NativeCastShadowOffset = "Shadow Offset";
+        NativeCastShadowOffsetHint = "Position offset of the shadow from the source.";
+        NativeCastShadowManualOffset = "Manual Axis Center";
+        NativeCastShadowManualOffsetHint = "Manually adjust the projection axis position. Only available in Manual Single Axis mode.";
+
+        // ── Cast Shadow: generic param labels ──────────
+        ParamCastShadowScale = "Scale";
+        ParamCastShadowScaleDesc = "Scale factor of the shadow from the pivot point. 1.0 = no scaling.";
+        ParamCastShadowSoftness = "Softness";
+        ParamCastShadowSoftnessDesc = "Blur amount applied to the shadow edges. 0 = sharp, 1 = very soft.";
+        ParamCastShadowShearAngle = "Shear Angle";
+        ParamCastShadowShearAngleDesc = "Direction of the shear deformation. 0° = right, 90° = down.";
+        ParamCastShadowShearAmount = "Shear Amount";
+        ParamCastShadowShearAmountDesc = "Intensity of the shear deformation. 0 = no shear, 1 = maximum shear.";
+        ParamCastShadowAlphaThreshold = "Alpha Threshold";
+        ParamCastShadowAlphaThresholdDesc = "Source pixels with alpha below this value do not cast shadows.";
+        ParamCastShadowSourceOpacity = "Source Opacity";
+        ParamCastShadowSourceOpacityDesc = "Opacity of the source image. 0 = shadow only, 1 = fully opaque.";
+        ParamCastShadowPivotAngle = "Pivot Angle";
+        ParamCastShadowPivotAngleDesc = "Controls which edge of the bounding box serves as the pivot axis. 0° = bottom, 90° = left, 180° = top, 270° = right.";
+        ParamCastShadowPivotMode = "Pivot Mode";
+        ParamCastShadowPivotModeDesc = "How the projection axis is determined.";
+        ParamCastShadowFade = "Fade";
+        ParamCastShadowFadeDesc = "Opacity falloff with distance from the pivot axis. 0 = no fade, 1 = maximum fade.";
+
+        // Pivot mode menu items
+        MenuPivotAutoSingle = "Auto - Single Axis";
+        MenuPivotAutoSingleDesc = "Automatically detect one projection axis from the full bounding box of the source alpha.";
+        MenuPivotAutoMulti = "Auto - Multi Axis";
+        MenuPivotAutoMultiDesc = "Detect disconnected alpha regions and project a separate shadow for each.";
+        MenuPivotManualSingle = "Manual - Single Axis";
+        MenuPivotManualSingleDesc = "Place the projection axis at the frame center. Use Offset Distance and Offset Angle to adjust.";
     }
 }
 

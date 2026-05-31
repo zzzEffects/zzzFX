@@ -7,6 +7,7 @@ mod bindings;
 mod i18n;
 mod shared;
 mod ambient_light;
+mod cast_shadow;
 mod chroma_key;
 mod stroke;
 mod repeater;
@@ -29,7 +30,7 @@ use crate::bindings::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    11
+    12
 }
 
 #[unsafe(no_mangle)]
@@ -46,6 +47,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         8 => ambient_light::get_plugin(),
         9 => midi_display::get_plugin(),
         10 => svg_display::get_plugin(),
+        11 => cast_shadow::get_plugin(),
         _ => ptr::null(),
     }
 }
