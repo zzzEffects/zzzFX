@@ -1,5 +1,4 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::OnceLock;
 
 use resvg::tiny_skia;
 use resvg::usvg;
@@ -8,16 +7,11 @@ use usvg::fontdb;
 use crate::settings::svg_display::SvgDisplay;
 
 // ---------------------------------------------------------------------------
-// Lazy fontdb — loaded once per process
+// Lazy fontdb — shared with latex_display via crate::get_fontdb()
 // ---------------------------------------------------------------------------
 
 fn get_fontdb() -> &'static fontdb::Database {
-    static FONTDB: OnceLock<fontdb::Database> = OnceLock::new();
-    FONTDB.get_or_init(|| {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
-        db
-    })
+    crate::get_fontdb()
 }
 
 // ---------------------------------------------------------------------------
@@ -204,29 +198,33 @@ fn composite_svg_over_bg(
     let bb = (bg[2] * 255.0).round() as u8;
     let ba_f = bg[3];
 
-    let n = output_w * output_h * 4;
-    let svg_pixels = &svg_pixels[..n.min(svg_pixels.len())];
+    // Initialize dst with background color first, then blend SVG on top
+    for chunk in dst.chunks_exact_mut(4) {
+        chunk[0] = br;
+        chunk[1] = bbg;
+        chunk[2] = bb;
+        chunk[3] = (ba_f * 255.0).round() as u8;
+    }
 
-    for (dst_chunk, svg_chunk) in dst.chunks_exact_mut(4).zip(svg_pixels.chunks_exact(4)) {
+    let n = (output_w * output_h * 4).min(svg_pixels.len());
+    let overlap = &svg_pixels[..n];
+
+    for (dst_chunk, svg_chunk) in dst[..n].chunks_exact_mut(4).zip(overlap.chunks_exact(4)) {
         let sr = svg_chunk[0] as f32 / 255.0;
         let sg = svg_chunk[1] as f32 / 255.0;
         let sb = svg_chunk[2] as f32 / 255.0;
         let sa = (svg_chunk[3] as f32 / 255.0) * opacity;
 
-        // SVG over background (premultiplied output)
-        let out_a = sa + ba_f * (1.0 - sa);
-        if out_a > 0.0 {
-            let inv_a = 1.0 / out_a;
-            dst_chunk[0] = ((sr * sa + br as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-            dst_chunk[1] = ((sg * sa + bbg as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-            dst_chunk[2] = ((sb * sa + bb as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-            dst_chunk[3] = (out_a * 255.0).round() as u8;
-        } else {
-            dst_chunk[0] = br;
-            dst_chunk[1] = bbg;
-            dst_chunk[2] = bb;
-            dst_chunk[3] = (ba_f * 255.0).round() as u8;
+        if sa <= 0.0 {
+            continue;
         }
+
+        let out_a = sa + ba_f * (1.0 - sa);
+        let inv_a = 1.0 / out_a;
+        dst_chunk[0] = ((sr * sa + br as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
+        dst_chunk[1] = ((sg * sa + bbg as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
+        dst_chunk[2] = ((sb * sa + bb as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
+        dst_chunk[3] = (out_a * 255.0).round() as u8;
     }
 }
 

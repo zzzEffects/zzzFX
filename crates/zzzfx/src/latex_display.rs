@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::OnceLock;
 
@@ -18,9 +19,11 @@ const SUBSCRIPT_Y_OFFSET: f64 = -0.25;
 const FRACTION_BAR_THICKNESS: f64 = 0.05;
 const FRACTION_BAR_OVERHANG: f64 = 0.5;
 const SQRT_BAR_THICKNESS: f64 = 0.04;
-const H_SPACING_FACTOR: f64 = 0.6; // fraction of font_size for inter-character spacing
-const SQRT_SYMBOL: char = '\u{221A}'; // √
-const LAYOUT_FONT_SIZE: f64 = 10.0; // fixed internal layout size; user font_size applied in transform
+const H_SPACING_FACTOR: f64 = 0.6;
+const SQRT_SYMBOL: char = '\u{221A}';
+const LAYOUT_FONT_SIZE: f64 = 10.0;
+const DISPLAY_SCALE_BOOST: f64 = 1.15;
+const INLINE_SCALE_BOOST: f64 = 1.0;
 
 // ---------------------------------------------------------------------------
 // LaTeX → Unicode symbol map
@@ -153,16 +156,11 @@ fn get_symbol_map() -> &'static HashMap<&'static str, char> {
 }
 
 // ---------------------------------------------------------------------------
-// Lazy fontdb
+// Lazy fontdb — shared with svg_display via crate::get_fontdb()
 // ---------------------------------------------------------------------------
 
 fn get_fontdb() -> &'static usvg::fontdb::Database {
-    static FONTDB: OnceLock<usvg::fontdb::Database> = OnceLock::new();
-    FONTDB.get_or_init(|| {
-        let mut db = usvg::fontdb::Database::new();
-        db.load_system_fonts();
-        db
-    })
+    crate::get_fontdb()
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +175,8 @@ pub struct CachedLaTeX {
     pub dpi: f32,
     formula_hash: u64,
     math_style: u8,
+    text_color: [f32; 4],
+    font_name_hash: u64,
 }
 
 impl CachedLaTeX {
@@ -192,15 +192,25 @@ impl CachedLaTeX {
         h.finish()
     }
 
+    fn hash_str(s: &str) -> u64 {
+        let mut h = DefaultHasher::new();
+        s.hash(&mut h);
+        h.finish()
+    }
+
     pub fn is_valid(
         &self,
         formula: &str,
         dpi: f32,
         math_style: LaTeXMathStyle,
+        text_color: &[f32; 4],
+        font_name: &str,
     ) -> bool {
         (self.dpi - dpi).abs() < f32::EPSILON
             && self.math_style == math_style as u8
             && self.formula_hash == Self::hash_formula(formula)
+            && self.text_color == *text_color
+            && self.font_name_hash == Self::hash_str(font_name)
     }
 }
 
@@ -275,6 +285,10 @@ impl<'a> Parser<'a> {
                 if depth > 0 {
                     self.pos += 1;
                 }
+            }
+            if depth != 0 {
+                // Unbalanced braces — group was never closed
+                return None;
             }
             let content = String::from_utf8_lossy(&self.chars[start..self.pos]).into_owned();
             if self.pos < self.chars.len() {
@@ -353,12 +367,16 @@ impl LayoutState {
 // Main parsing entry: formula string → DisplayList
 // ---------------------------------------------------------------------------
 
-fn parse_formula(formula: &str, _math_style: LaTeXMathStyle) -> Option<DisplayList> {
+fn parse_formula(formula: &str, math_style: LaTeXMathStyle) -> Option<DisplayList> {
     let mut parser = Parser::new(formula);
     let mut state = LayoutState::new();
     let default_color = Color::WHITE;
+    let scale_boost = match math_style {
+        LaTeXMathStyle::Display => DISPLAY_SCALE_BOOST,
+        LaTeXMathStyle::Inline => INLINE_SCALE_BOOST,
+    };
 
-    parse_expression(&mut parser, &mut state, LAYOUT_FONT_SIZE, 0.0, default_color, false);
+    parse_expression(&mut parser, &mut state, LAYOUT_FONT_SIZE * scale_boost, 0.0, default_color, false);
     Some(state.to_display_list())
 }
 
@@ -407,19 +425,20 @@ fn parse_expression(
                     // Simple ignore for now
                 }
                 "left" => {
-                    // Just ignore \left, render the next char
                     if let Some(ch) = parser.peek() {
                         let c = ch as char;
-                        if c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '|' || c == '.' {
+                        if matches!(c, '(' | ')' | '[' | ']' | '|' | '.') {
                             parser.advance();
                             state.push_glyph(c, font_size * 1.2, y_offset, color);
                         }
+                        // '{' and '}' are excluded — require LaTeX-style \left\{ escaping
+                        // which goes through the ordinary character path as escaped braces
                     }
                 }
                 "right" => {
                     if let Some(ch) = parser.peek() {
                         let c = ch as char;
-                        if c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '|' || c == '.' {
+                        if matches!(c, '(' | ')' | '[' | ']' | '|' | '.') {
                             parser.advance();
                             state.push_glyph(c, font_size * 1.2, y_offset, color);
                         }
@@ -681,9 +700,15 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
     let h = dl.total_height().max(1.0) as f32;
     let baseline_y = dl.height as f32;
 
-    let mut svg = format!(
+    // Pre-allocate capacity: header + ~300 bytes per item (avoids O(n²) reallocation)
+    let est_cap = 256 + dl.items.len() * 320;
+    let mut svg = String::with_capacity(est_cap);
+
+    write!(
+        svg,
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">"#
-    );
+    )
+    .unwrap();
 
     for item in &dl.items {
         match item {
@@ -694,11 +719,13 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
                 let sy = baseline_y - *y as f32;
                 let fs = *scale as f32;
                 let ch = char::from_u32(*char_code).unwrap_or('?');
-                let escaped = escape_xml_char(ch);
                 let fill = apply_text_color(color, text_color);
-                svg.push_str(&format!(
-                    r#"<text x="{sx}" y="{sy}" font-family="{font_family}" font-size="{fs}px" fill="{fill}">{escaped}</text>"#
-                ));
+                write_escaped_char(&mut svg, ch);
+                write!(
+                    svg,
+                    r#"</text><text x="{sx}" y="{sy}" font-family="{font_family}" font-size="{fs}px" fill="{fill}">"#
+                )
+                .unwrap();
             }
             DisplayItem::Line {
                 x, y, width, thickness, color, dashed,
@@ -709,14 +736,18 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
                 let st = (*thickness as f32).max(0.5);
                 let fill = apply_text_color(color, text_color);
                 if *dashed {
-                    svg.push_str(&format!(
-                        r#"<line x1="{sx}" y1="{sy}" x2="{}" y2="{sy}" stroke="{fill}" stroke-width="{st}" stroke-dasharray="{st} {st}"/>"#,
-                        sx + sw,
-                    ));
+                    write!(
+                        svg,
+                        r#"<line x1="{sx}" y1="{sy}" x2="{x2}" y2="{sy}" stroke="{fill}" stroke-width="{st}" stroke-dasharray="{st} {st}"/>"#,
+                        x2 = sx + sw,
+                    )
+                    .unwrap();
                 } else {
-                    svg.push_str(&format!(
+                    write!(
+                        svg,
                         r#"<rect x="{sx}" y="{sy}" width="{sw}" height="{st}" fill="{fill}"/>"#
-                    ));
+                    )
+                    .unwrap();
                 }
             }
             DisplayItem::Rect {
@@ -727,9 +758,11 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
                 let sw = *width as f32;
                 let sh = *height as f32;
                 let fill = apply_text_color(color, text_color);
-                svg.push_str(&format!(
+                write!(
+                    svg,
                     r#"<rect x="{sx}" y="{sy}" width="{sw}" height="{sh}" fill="{fill}"/>"#
-                ));
+                )
+                .unwrap();
             }
             DisplayItem::Path {
                 x, y, commands, fill, color,
@@ -739,13 +772,17 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
                 let path_d = commands_to_svg_d(commands);
                 let stroke_color = apply_text_color(color, text_color);
                 if *fill {
-                    svg.push_str(&format!(
+                    write!(
+                        svg,
                         r#"<path d="{path_d}" transform="translate({tx},{ty}) scale(1,-1)" fill="{stroke_color}"/>"#
-                    ));
+                    )
+                    .unwrap();
                 } else {
-                    svg.push_str(&format!(
+                    write!(
+                        svg,
                         r#"<path d="{path_d}" transform="translate({tx},{ty}) scale(1,-1)" fill="none" stroke="{stroke_color}" stroke-width="0.5"/>"#
-                    ));
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -753,6 +790,18 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
 
     svg.push_str("</svg>");
     svg
+}
+
+/// Append a character to the SVG buffer, XML-escaping only when necessary.
+fn write_escaped_char(svg: &mut String, ch: char) {
+    match ch {
+        '<' => svg.push_str("&lt;"),
+        '>' => svg.push_str("&gt;"),
+        '&' => svg.push_str("&amp;"),
+        '"' => svg.push_str("&quot;"),
+        '\'' => svg.push_str("&apos;"),
+        _ => svg.push(ch),
+    }
 }
 
 fn apply_text_color(item_color: &Color, user_color: [f32; 4]) -> String {
@@ -764,17 +813,6 @@ fn apply_text_color(item_color: &Color, user_color: [f32; 4]) -> String {
         format!("#{r:02x}{g:02x}{b:02x}")
     } else {
         format!("rgba({r},{g},{b},{a:.2})")
-    }
-}
-
-fn escape_xml_char(ch: char) -> String {
-    match ch {
-        '<' => "&lt;".into(),
-        '>' => "&gt;".into(),
-        '&' => "&amp;".into(),
-        '"' => "&quot;".into(),
-        '\'' => "&apos;".into(),
-        _ => ch.to_string(),
     }
 }
 
@@ -811,12 +849,17 @@ fn parse_svg(svg_bytes: &[u8], dpi: f32) -> Option<usvg::Tree> {
 // Public API
 // ---------------------------------------------------------------------------
 
-pub fn build_cache(formula: &str, font_family: &str, settings: &LaTeXDisplay) -> Option<CachedLaTeX> {
+pub fn build_cache(
+    formula: &str,
+    font_family: &str,
+    settings: &LaTeXDisplay,
+    text_color: &[f32; 4],
+) -> Option<CachedLaTeX> {
     let dl = parse_formula(formula, settings.math_style)?;
     if dl.width <= 0.0 || dl.total_height() <= 0.0 {
         return None;
     }
-    let svg = display_list_to_svg(&dl, font_family, [1.0, 1.0, 1.0, 1.0]);
+    let svg = display_list_to_svg(&dl, font_family, *text_color);
     let svg_bytes = svg.as_bytes();
     let tree = parse_svg(svg_bytes, settings.dpi)?;
     let size = tree.size();
@@ -832,6 +875,8 @@ pub fn build_cache(formula: &str, font_family: &str, settings: &LaTeXDisplay) ->
         dpi: settings.dpi,
         formula_hash: CachedLaTeX::hash_formula(formula),
         math_style: settings.math_style as u8,
+        text_color: *text_color,
+        font_name_hash: CachedLaTeX::hash_str(font_family),
     })
 }
 
@@ -849,13 +894,13 @@ pub fn render_latex(
     text_color: [f32; 4],
 ) -> Option<CachedLaTeX> {
     let cached = if let Some(c) = cache {
-        if c.is_valid(formula, settings.dpi, settings.math_style) {
+        if c.is_valid(formula, settings.dpi, settings.math_style, &text_color, font_family) {
             c.clone()
         } else {
-            build_cache(formula, font_family, settings)?
+            build_cache(formula, font_family, settings, &text_color)?
         }
     } else {
-        build_cache(formula, font_family, settings)?
+        build_cache(formula, font_family, settings, &text_color)?
     };
 
     let is_new_cache = cache.map_or(true, |c| !std::ptr::eq(c, &cached));
@@ -878,12 +923,8 @@ pub fn render_latex(
         None => return if is_new_cache { Some(cached) } else { None },
     };
 
-    // Re-generate SVG with user's text color and font family
-    let dl = parse_formula(formula, settings.math_style)?;
-    let svg = display_list_to_svg(&dl, font_family, text_color);
-    let svg_bytes = svg.as_bytes();
-    let tree = parse_svg(svg_bytes, settings.dpi)?;
-    resvg::render(&tree, transform, &mut svg_pixmap.as_mut());
+    // Render the cached tree directly — no per-frame SVG re-generation
+    resvg::render(&cached.tree, transform, &mut svg_pixmap.as_mut());
 
     composite_svg_over_bg(
         svg_pixmap.data(),
@@ -947,27 +988,33 @@ fn composite_svg_over_bg(
     let bb = (bg[2] * 255.0).round() as u8;
     let ba_f = bg[3];
 
-    let n = output_w * output_h * 4;
-    let svg_pixels = &svg_pixels[..n.min(svg_pixels.len())];
+    // Initialize dst with background color first, then blend SVG on top.
+    // This ensures pixels outside the SVG region get the background color.
+    for chunk in dst.chunks_exact_mut(4) {
+        chunk[0] = br;
+        chunk[1] = bbg;
+        chunk[2] = bb;
+        chunk[3] = (ba_f * 255.0).round() as u8;
+    }
 
-    for (dst_chunk, svg_chunk) in dst.chunks_exact_mut(4).zip(svg_pixels.chunks_exact(4)) {
+    let n = (output_w * output_h * 4).min(svg_pixels.len());
+    let overlap = &svg_pixels[..n];
+
+    for (dst_chunk, svg_chunk) in dst[..n].chunks_exact_mut(4).zip(overlap.chunks_exact(4)) {
         let sr = svg_chunk[0] as f32 / 255.0;
         let sg = svg_chunk[1] as f32 / 255.0;
         let sb = svg_chunk[2] as f32 / 255.0;
         let sa = (svg_chunk[3] as f32 / 255.0) * opacity;
 
-        let out_a = sa + ba_f * (1.0 - sa);
-        if out_a > 0.0 {
-            let inv_a = 1.0 / out_a;
-            dst_chunk[0] = ((sr * sa + br as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-            dst_chunk[1] = ((sg * sa + bbg as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-            dst_chunk[2] = ((sb * sa + bb as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-            dst_chunk[3] = (out_a * 255.0).round() as u8;
-        } else {
-            dst_chunk[0] = br;
-            dst_chunk[1] = bbg;
-            dst_chunk[2] = bb;
-            dst_chunk[3] = (ba_f * 255.0).round() as u8;
+        if sa <= 0.0 {
+            continue;
         }
+
+        let out_a = sa + ba_f * (1.0 - sa);
+        let inv_a = 1.0 / out_a;
+        dst_chunk[0] = ((sr * sa + br as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
+        dst_chunk[1] = ((sg * sa + bbg as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
+        dst_chunk[2] = ((sb * sa + bb as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
+        dst_chunk[3] = (out_a * 255.0).round() as u8;
     }
 }

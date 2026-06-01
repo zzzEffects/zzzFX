@@ -36,7 +36,7 @@ pub struct LaTeXDisplay {
 impl Default for LaTeXDisplay {
     fn default() -> Self {
         Self {
-            font_size: 8.0,
+            font_size: 10.0,
             scale: 1.0,
             position_x: 0.5,
             position_y: 0.5,

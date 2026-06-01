@@ -51,3 +51,16 @@ pub use settings::stroke::{
 };
 pub use settings::latex_display::{LaTeXDisplay, LaTeXDisplayFullSettings, MathStyle as LaTeXMathStyle};
 pub use settings::svg_display::{SvgDisplay, SvgDisplayFullSettings};
+
+use resvg::usvg;
+use std::sync::OnceLock;
+
+/// Lazy font database shared by all effects that need system fonts (SVG, LaTeX).
+pub(crate) fn get_fontdb() -> &'static usvg::fontdb::Database {
+    static FONTDB: OnceLock<usvg::fontdb::Database> = OnceLock::new();
+    FONTDB.get_or_init(|| {
+        let mut db = usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        db
+    })
+}

@@ -81,7 +81,6 @@ fn data() -> OfxResult<&'static EffectData> {
 // ---------------------------------------------------------------------------
 
 pub fn get_plugin() -> *const OfxPlugin {
-    std::panic::set_hook(Box::new(|info| { println!("{info:?}"); }));
     let pi = PLUGIN_INFO.get_or_init(|| OfxPlugin {
         pluginApi: kOfxImageEffectPluginApi.as_ptr(),
         apiVersion: 1,

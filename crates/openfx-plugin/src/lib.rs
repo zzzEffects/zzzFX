@@ -34,8 +34,17 @@ pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
     13
 }
 
+/// Set the global panic hook once when the DLL is first queried.
+static PANIC_HOOK_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
+    if !PANIC_HOOK_SET.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let _ = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("zzzFX plugin panic: {info:?}");
+        }));
+    }
     match nth {
         0 => chroma_key::get_plugin(),
         1 => stroke::get_plugin(),

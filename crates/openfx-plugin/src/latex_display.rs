@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     ffi::{CStr, CString, c_char, c_int, c_void},
     ptr,
     sync::OnceLock,
@@ -50,6 +51,10 @@ struct InstanceData {
     cached: Option<CachedLaTeX>,
 }
 
+thread_local! {
+    static RENDER_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+}
+
 // ---------------------------------------------------------------------------
 // Cached font names (reuses ASS Subtitle's global font enumeration)
 // ---------------------------------------------------------------------------
@@ -86,7 +91,6 @@ fn data() -> OfxResult<&'static EffectData> {
 // ---------------------------------------------------------------------------
 
 pub fn get_plugin() -> *const OfxPlugin {
-    std::panic::set_hook(Box::new(|info| { println!("{info:?}"); }));
     let pi = PLUGIN_INFO.get_or_init(|| OfxPlugin {
         pluginApi: kOfxImageEffectPluginApi.as_ptr(),
         apiVersion: 1,
@@ -512,7 +516,15 @@ unsafe fn action_render(
     gp(effect, &mut ep).ofx_ok()?;
     let mut data_ptr: *mut c_void = ptr::null_mut();
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
-    let idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
+    let idata = if data_ptr.is_null() {
+        None
+    } else {
+        let idata_ref = unsafe { &*(data_ptr as *const InstanceData) };
+        if idata_ref.magic != INSTANCE_MAGIC {
+            return Err(OfxStat::kOfxStatFailed);
+        }
+        Some(unsafe { &mut *(data_ptr as *mut InstanceData) })
+    };
 
     // Get output clip
     let mut dc: OfxImageClipHandle = ptr::null_mut();
@@ -546,96 +558,115 @@ unsafe fn action_render(
         }
     };
 
-    let mut dst_buf = vec![0u8; width * height * 4];
+    // Use thread-local buffer to avoid per-frame allocation (C-2)
+    let buf_size = width * height * 4;
     let bg = [bg_r, bg_g, bg_b, bg_a];
+    let text_color = [text_r, text_g, text_b, text_a];
 
-    if let Some(idata) = idata {
-        if !formula.is_empty() {
-            let new_cache = zzzfx::latex_display::render_latex(
-                &formula,
-                &font_name,
-                idata.cached.as_ref(),
-                &core_settings,
-                pos_x,
-                pos_y,
-                &mut dst_buf,
-                width,
-                height,
-                bg,
-                [text_r, text_g, text_b, text_a],
-            );
-            if let Some(c) = new_cache {
-                idata.cached = Some(c);
+    RENDER_BUF.with_borrow_mut(|buf| {
+        buf.resize(buf_size, 0u8);
+        let dst_buf = buf.as_mut_slice();
+
+        let rendered = if let Some(idata) = idata {
+            if !formula.is_empty() {
+                let new_cache = zzzfx::latex_display::render_latex(
+                    &formula,
+                    &font_name,
+                    idata.cached.as_ref(),
+                    &core_settings,
+                    pos_x,
+                    pos_y,
+                    dst_buf,
+                    width,
+                    height,
+                    bg,
+                    text_color,
+                );
+                match new_cache {
+                    Some(c) => {
+                        idata.cached = Some(c);
+                        true
+                    }
+                    None => false,
+                }
+            } else {
+                fill_buf_bg(dst_buf, bg);
+                true
             }
         } else {
-            fill_buf_bg(&mut dst_buf, bg);
+            false
+        };
+
+        // C-3: Fall back to background color on render failure
+        if !rendered {
+            fill_buf_bg(dst_buf, bg);
         }
-    } else {
-        fill_buf_bg(&mut dst_buf, bg);
-    }
 
-    // Pre-multiply alpha
-    if num_components == 4 {
-        for pixel in dst_buf.chunks_exact_mut(4) {
-            let a = pixel[3] as f32 / 255.0;
-            pixel[0] = (pixel[0] as f32 * a).round() as u8;
-            pixel[1] = (pixel[1] as f32 * a).round() as u8;
-            pixel[2] = (pixel[2] as f32 * a).round() as u8;
-        }
-    }
-
-    let mut dp: *mut c_void = ptr::null_mut();
-    pgp(di, kOfxImagePropData.as_ptr(), 0, &mut dp).ofx_ok()?;
-    let mut drb: c_int = 0;
-    pgi(di, kOfxImagePropRowBytes.as_ptr(), 0, &mut drb).ofx_ok()?;
-    let d_stride = drb.max(0) as usize;
-
-    let depth_str = {
-        let mut depth_ptr: *mut c_char = ptr::null_mut();
-        if su.property_suite.propGetString
-            .and_then(|pgs| pgs(di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr).ofx_ok().ok())
-            .is_some() && !depth_ptr.is_null()
-        {
-            CStr::from_ptr(depth_ptr)
-        } else {
-            kOfxBitDepthByte
-        }
-    };
-
-    let src_row_bytes = width * 4;
-    if depth_str == kOfxBitDepthByte {
-        for y in 0..height {
-            let src_row = (height - 1 - y) * src_row_bytes;
-            let host_row = (dp as *mut u8).add(y * d_stride);
-            for x in 0..width {
-                let si = src_row + x * 4;
-                let di = x * num_components;
-                host_row.add(di).copy_from_nonoverlapping(dst_buf.as_ptr().add(si), num_components);
+        // Pre-multiply alpha
+        if num_components == 4 {
+            for pixel in dst_buf.chunks_exact_mut(4) {
+                let a = pixel[3] as f32 / 255.0;
+                pixel[0] = (pixel[0] as f32 * a).round() as u8;
+                pixel[1] = (pixel[1] as f32 * a).round() as u8;
+                pixel[2] = (pixel[2] as f32 * a).round() as u8;
             }
         }
-    } else if depth_str == kOfxBitDepthShort {
-        for y in 0..height {
-            let src_row = (height - 1 - y) * src_row_bytes;
-            let host_row = (dp as *mut u8).add(y * d_stride) as *mut u16;
-            for x in 0..width {
-                for c in 0..num_components {
-                    let v = *dst_buf.as_ptr().add(src_row + x * 4 + c) as u16;
-                    *host_row.add(x * num_components + c) = (v << 8) | v;
+
+        let mut dp: *mut c_void = ptr::null_mut();
+        pgp(di, kOfxImagePropData.as_ptr(), 0, &mut dp).ofx_ok()?;
+        let mut drb: c_int = 0;
+        pgi(di, kOfxImagePropRowBytes.as_ptr(), 0, &mut drb).ofx_ok()?;
+        let d_stride = drb.max(0) as usize;
+
+        let depth_str = {
+            let mut depth_ptr: *mut c_char = ptr::null_mut();
+            if su.property_suite.propGetString
+                .and_then(|pgs| pgs(di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr).ofx_ok().ok())
+                .is_some() && !depth_ptr.is_null()
+            {
+                CStr::from_ptr(depth_ptr)
+            } else {
+                kOfxBitDepthByte
+            }
+        };
+
+        let src_row_bytes = width * 4;
+        if depth_str == kOfxBitDepthByte {
+            for y in 0..height {
+                let src_row = (height - 1 - y) * src_row_bytes;
+                let host_row = (dp as *mut u8).add(y * d_stride);
+                for x in 0..width {
+                    let si = src_row + x * 4;
+                    let di = x * num_components;
+                    host_row.add(di).copy_from_nonoverlapping(dst_buf.as_ptr().add(si), num_components);
+                }
+            }
+        } else if depth_str == kOfxBitDepthShort {
+            for y in 0..height {
+                let src_row = (height - 1 - y) * src_row_bytes;
+                let host_row = (dp as *mut u8).add(y * d_stride) as *mut u16;
+                for x in 0..width {
+                    for c in 0..num_components {
+                        let v = *dst_buf.as_ptr().add(src_row + x * 4 + c) as u16;
+                        *host_row.add(x * num_components + c) = (v << 8) | v;
+                    }
+                }
+            }
+        } else {
+            for y in 0..height {
+                let src_row = (height - 1 - y) * src_row_bytes;
+                let host_row = (dp as *mut u8).add(y * d_stride) as *mut f32;
+                for x in 0..width {
+                    for c in 0..num_components {
+                        let v = *dst_buf.as_ptr().add(src_row + x * 4 + c) as f32 / 255.0;
+                        *host_row.add(x * num_components + c) = v;
+                    }
                 }
             }
         }
-    } else {
-        for y in 0..height {
-            let src_row = (height - 1 - y) * src_row_bytes;
-            let host_row = (dp as *mut u8).add(y * d_stride) as *mut f32;
-            for x in 0..width {
-                for c in 0..num_components {
-                    let v = *dst_buf.as_ptr().add(src_row + x * 4 + c) as f32 / 255.0;
-                    *host_row.add(x * num_components + c) = v;
-                }
-            }
-        }
-    }
+
+        Ok::<_, OfxStatus>(())
+    })?;
 
     cri(di).ofx_ok()?;
     Ok(())
