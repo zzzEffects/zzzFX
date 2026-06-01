@@ -12,6 +12,7 @@ pub mod sprite_sheet;
 pub mod stroke;
 pub mod latex_display;
 pub mod svg_display;
+pub mod qr_code;
 
 pub use framework::*;
 pub use crate::i18n::keys::TrKey;

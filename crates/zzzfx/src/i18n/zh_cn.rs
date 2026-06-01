@@ -789,5 +789,63 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuLaTeXDisplayDesc => c"展示式数学样式（居中，较大的运算符和分数）。",
         TrKey::MenuLaTeXInline => c"内联",
         TrKey::MenuLaTeXInlineDesc => c"内联式数学样式（紧凑，用于文本中）。",
+
+        // ── QR Code: effect labels ──────────────────────────
+        TrKey::EffectQrCodeName => c"zzzFX 二维码",
+        TrKey::EffectQrCodeDesc => c"从文本生成二维码并渲染到输出画面，支持可配置的颜色、缩放和定位。",
+
+        // ── QR Code: native param labels & hints ─────────────
+        TrKey::NativeQrCodeContent => c"内容",
+        TrKey::NativeQrCodeContentHint => c"要编码到二维码中的文本或URL。",
+        TrKey::NativeQrCodeModuleColor => c"模块颜色",
+        TrKey::NativeQrCodeModuleColorHint => c"二维码模块的颜色（深色方块）。",
+        TrKey::NativeQrCodeLightModuleColor => c"底块颜色",
+        TrKey::NativeQrCodeLightModuleColorHint => c"二维码矩形内部未着色模块的颜色。默认为白色。",
+        TrKey::NativeQrCodeBackgroundColor => c"背景颜色",
+        TrKey::NativeQrCodeBackgroundColorHint => c"二维码背后的背景颜色。使用Alpha通道控制透明度。",
+        TrKey::NativeQrCodePosition => c"位置",
+        TrKey::NativeQrCodePositionHint => c"二维码的归一化位置（0-1）。0.5 = 居中。",
+
+        // ── QR Code: generic param labels ────────────────────
+        TrKey::ParamQrCodeScale => c"缩放",
+        TrKey::ParamQrCodeScaleDesc => c"应用于二维码的缩放倍率（1.0 = 适应输出）。",
+        TrKey::ParamQrCodePositionX => c"位置 X",
+        TrKey::ParamQrCodePositionXDesc => c"水平位置（0 = 左，0.5 = 中，1 = 右）。",
+        TrKey::ParamQrCodePositionY => c"位置 Y",
+        TrKey::ParamQrCodePositionYDesc => c"垂直位置（0 = 上，0.5 = 中，1 = 下）。",
+        TrKey::ParamQrCodeRotation => c"旋转",
+        TrKey::ParamQrCodeRotationDesc => c"围绕二维码中心的旋转角度（度）。",
+        TrKey::ParamQrCodeOpacity => c"不透明度",
+        TrKey::ParamQrCodeOpacityDesc => c"二维码的整体不透明度。0 = 完全透明，1 = 完全不透明。",
+        TrKey::ParamQrCodeMargin => c"边距",
+        TrKey::ParamQrCodeMarginDesc => c"二维码周围的静区边距（模块数，0-10，标准为 4）。",
+        TrKey::ParamQrCodeEcl => c"纠错等级",
+        TrKey::ParamQrCodeEclDesc => c"二维码损坏后可恢复的程度。等级越高，码越密集。",
+        TrKey::ParamQrCodeModuleShape => c"模块形状",
+        TrKey::ParamQrCodeModuleShapeDesc => c"单个二维码模块的形状（方形、圆形等）。",
+
+        // ── QR Code: ECL menu items ──────────────────────────
+        TrKey::MenuQrEclL => c"L（低，约 7%）",
+        TrKey::MenuQrEclLDesc => c"低纠错率。最小码，抗损能力最弱。",
+        TrKey::MenuQrEclM => c"M（中，约 15%）",
+        TrKey::MenuQrEclMDesc => c"中纠错率。大小与可靠性之间的良好平衡。",
+        TrKey::MenuQrEclQ => c"Q（四分之一，约 25%）",
+        TrKey::MenuQrEclQDesc => c"高纠错率。更大码，良好的抗损能力。",
+        TrKey::MenuQrEclH => c"H（高，约 30%）",
+        TrKey::MenuQrEclHDesc => c"最高纠错率。最大码，最佳抗损能力。",
+
+        // ── QR Code: Module Shape menu items ─────────────────
+        TrKey::MenuQrShapeSquare => c"方形",
+        TrKey::MenuQrShapeSquareDesc => c"标准方形模块。",
+        TrKey::MenuQrShapeCircle => c"圆形",
+        TrKey::MenuQrShapeCircleDesc => c"圆点模块。",
+        TrKey::MenuQrShapeRoundedSquare => c"圆角方形",
+        TrKey::MenuQrShapeRoundedSquareDesc => c"带有圆角的方形。",
+        TrKey::MenuQrShapeVertical => c"竖线",
+        TrKey::MenuQrShapeVerticalDesc => c"竖直条状模块。",
+        TrKey::MenuQrShapeHorizontal => c"横线",
+        TrKey::MenuQrShapeHorizontalDesc => c"水平条状模块。",
+        TrKey::MenuQrShapeDiamond => c"菱形",
+        TrKey::MenuQrShapeDiamondDesc => c"菱形模块。",
     }
 }

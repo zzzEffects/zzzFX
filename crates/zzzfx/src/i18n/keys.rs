@@ -781,5 +781,63 @@ i18n_keys! {
         MenuPivotAutoMultiDesc = "Detect disconnected alpha regions and project a separate shadow for each.";
         MenuPivotManualSingle = "Manual - Single Axis";
         MenuPivotManualSingleDesc = "Place the projection axis at the frame center. Use Offset Distance and Offset Angle to adjust.";
+
+        // -- QR Code: effect labels --
+        EffectQrCodeName = "zzzFX QR Code";
+        EffectQrCodeDesc = "Generates a QR code from text and renders it onto the output with configurable colors, scaling, and positioning.";
+
+        // -- QR Code: native param labels & hints --
+        NativeQrCodeContent = "Content";
+        NativeQrCodeContentHint = "Text or URL to encode in the QR code.";
+        NativeQrCodeModuleColor = "Module Color";
+        NativeQrCodeModuleColorHint = "Color of the QR code modules (the dark squares).";
+        NativeQrCodeLightModuleColor = "Light Module Color";
+        NativeQrCodeLightModuleColorHint = "Color of the light (uncolored) modules inside the QR code. Default is white.";
+        NativeQrCodeBackgroundColor = "Background Color";
+        NativeQrCodeBackgroundColorHint = "Background color behind the QR code. Use alpha to control transparency.";
+        NativeQrCodePosition = "Position";
+        NativeQrCodePositionHint = "Normalized position of the QR code (0-1). 0.5 = center.";
+
+        // -- QR Code: generic param labels --
+        ParamQrCodeScale = "Scale";
+        ParamQrCodeScaleDesc = "Scale multiplier applied to the QR code (1.0 = fit to output).";
+        ParamQrCodePositionX = "Position X";
+        ParamQrCodePositionXDesc = "Horizontal position (0 = left, 0.5 = center, 1 = right).";
+        ParamQrCodePositionY = "Position Y";
+        ParamQrCodePositionYDesc = "Vertical position (0 = top, 0.5 = center, 1 = bottom).";
+        ParamQrCodeRotation = "Rotation";
+        ParamQrCodeRotationDesc = "Rotation angle in degrees around the QR code center.";
+        ParamQrCodeOpacity = "Opacity";
+        ParamQrCodeOpacityDesc = "Overall opacity of the QR code. 0 = fully transparent, 1 = fully opaque.";
+        ParamQrCodeMargin = "Margin";
+        ParamQrCodeMarginDesc = "Quiet zone margin around the QR code in modules (0-10, standard is 4).";
+        ParamQrCodeEcl = "Error Correction Level";
+        ParamQrCodeEclDesc = "How much of the QR code can be restored if damaged. Higher levels mean denser codes.";
+        ParamQrCodeModuleShape = "Module Shape";
+        ParamQrCodeModuleShapeDesc = "Shape of individual QR code modules (squares, circles, etc.).";
+
+        // -- QR Code: ECL menu items --
+        MenuQrEclL = "L (Low, ~7%)";
+        MenuQrEclLDesc = "Low error correction. Smallest code, least damage resistance.";
+        MenuQrEclM = "M (Medium, ~15%)";
+        MenuQrEclMDesc = "Medium error correction. Good balance of size and reliability.";
+        MenuQrEclQ = "Q (Quartile, ~25%)";
+        MenuQrEclQDesc = "High error correction. Larger code, good damage resistance.";
+        MenuQrEclH = "H (High, ~30%)";
+        MenuQrEclHDesc = "Maximum error correction. Largest code, best damage resistance.";
+
+        // -- QR Code: Module Shape menu items --
+        MenuQrShapeSquare = "Square";
+        MenuQrShapeSquareDesc = "Standard square modules.";
+        MenuQrShapeCircle = "Circle";
+        MenuQrShapeCircleDesc = "Round dot modules.";
+        MenuQrShapeRoundedSquare = "Rounded Square";
+        MenuQrShapeRoundedSquareDesc = "Squares with rounded corners.";
+        MenuQrShapeVertical = "Vertical";
+        MenuQrShapeVerticalDesc = "Vertical bar modules.";
+        MenuQrShapeHorizontal = "Horizontal";
+        MenuQrShapeHorizontalDesc = "Horizontal bar modules.";
+        MenuQrShapeDiamond = "Diamond";
+        MenuQrShapeDiamondDesc = "Diamond-shaped modules.";
     }
 }

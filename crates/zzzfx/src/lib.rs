@@ -16,6 +16,7 @@ pub mod ass_subtitle;
 mod pixel_art;
 pub mod latex_display;
 pub mod svg_display;
+pub mod qr_code;
 
 pub use repeater::CompositorLayer;
 
@@ -51,6 +52,7 @@ pub use settings::stroke::{
 };
 pub use settings::latex_display::{LaTeXDisplay, LaTeXDisplayFullSettings, MathStyle as LaTeXMathStyle};
 pub use settings::svg_display::{SvgDisplay, SvgDisplayFullSettings};
+pub use settings::qr_code::{Ecl as QrEcl, ModuleShape as QrModuleShape, QrCode, QrCodeFullSettings};
 
 use resvg::usvg;
 use std::sync::OnceLock;

@@ -20,6 +20,7 @@ mod pixel_art;
 mod latex_display;
 mod file_param;
 mod svg_display;
+mod qr_code;
 
 use std::{ffi::c_int, ptr};
 
@@ -31,7 +32,7 @@ use crate::bindings::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    13
+    14
 }
 
 /// Set the global panic hook once when the DLL is first queried.
@@ -59,6 +60,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         10 => svg_display::get_plugin(),
         11 => cast_shadow::get_plugin(),
         12 => latex_display::get_plugin(),
+        13 => qr_code::get_plugin(),
         _ => ptr::null(),
     }
 }
