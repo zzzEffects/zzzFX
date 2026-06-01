@@ -749,5 +749,45 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuPivotAutoMultiDesc => c"检测不连续的 Alpha 区域，并为每个区域分别投射阴影。",
         TrKey::MenuPivotManualSingle => c"手动 - 单轴",
         TrKey::MenuPivotManualSingleDesc => c"将投影轴置于画面中心。使用偏移距离和偏移角度进行调整。",
+
+        // ── LaTeX Display: effect labels ──────────────────
+        TrKey::EffectLaTeXDisplayName => c"zzzFX LaTeX 显示",
+        TrKey::EffectLaTeXDisplayDesc => c"将 LaTeX 数学公式渲染到输出画面，支持可配置的字体大小、样式和混合控制。",
+
+        // ── LaTeX Display: native param labels & hints ─────
+        TrKey::NativeLaTeXFontChoice => c"字体",
+        TrKey::NativeLaTeXFontChoiceHint => c"选择用于 LaTeX 公式渲染的字体。",
+        TrKey::NativeLaTeXFormula => c"公式",
+        TrKey::NativeLaTeXFormulaHint => c"要渲染的 LaTeX 数学公式。示例：\\frac{a}{b} = \\sqrt{c}",
+        TrKey::NativeLaTeXTextColor => c"文本颜色",
+        TrKey::NativeLaTeXTextColorHint => c"公式文本的颜色。",
+        TrKey::NativeLaTeXBackgroundColor => c"背景颜色",
+        TrKey::NativeLaTeXBackgroundColorHint => c"公式后方背景的颜色。",
+        TrKey::NativeLaTeXPosition => c"位置",
+        TrKey::NativeLaTeXPositionHint => c"公式的归一化位置（0-1）。0.5 = 居中。",
+
+        // ── LaTeX Display: generic param labels ────────────
+        TrKey::ParamLaTeXFontSize => c"字体大小",
+        TrKey::ParamLaTeXFontSizeDesc => c"用于 LaTeX 公式渲染的基础字体大小（像素）。",
+        TrKey::ParamLaTeXScale => c"缩放",
+        TrKey::ParamLaTeXScaleDesc => c"应用于已渲染公式的额外缩放倍率。",
+        TrKey::ParamLaTeXPositionX => c"位置 X",
+        TrKey::ParamLaTeXPositionXDesc => c"水平位置（0 = 左侧，0.5 = 居中，1 = 右侧）。",
+        TrKey::ParamLaTeXPositionY => c"位置 Y",
+        TrKey::ParamLaTeXPositionYDesc => c"垂直位置（0 = 顶部，0.5 = 居中，1 = 底部）。",
+        TrKey::ParamLaTeXRotation => c"旋转",
+        TrKey::ParamLaTeXRotationDesc => c"绕公式中心的旋转角度（度）。",
+        TrKey::ParamLaTeXOpacity => c"不透明度",
+        TrKey::ParamLaTeXOpacityDesc => c"已渲染公式的整体不透明度。0 = 完全透明，1 = 完全不透明。",
+        TrKey::ParamLaTeXDpi => c"DPI",
+        TrKey::ParamLaTeXDpiDesc => c"用于解释公式物理单位的每英寸点数。",
+        TrKey::ParamLaTeXMathStyle => c"数学样式",
+        TrKey::ParamLaTeXMathStyleDesc => c"公式渲染样式：Display（居中、较大）或 Inline（紧凑、用于文本中）。",
+
+        // ── LaTeX Display: menu items ─────────────────────
+        TrKey::MenuLaTeXDisplay => c"展示",
+        TrKey::MenuLaTeXDisplayDesc => c"展示式数学样式（居中，较大的运算符和分数）。",
+        TrKey::MenuLaTeXInline => c"内联",
+        TrKey::MenuLaTeXInlineDesc => c"内联式数学样式（紧凑，用于文本中）。",
     }
 }

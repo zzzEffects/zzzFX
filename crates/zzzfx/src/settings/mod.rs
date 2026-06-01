@@ -10,6 +10,7 @@ pub mod pixel_art;
 pub mod repeater;
 pub mod sprite_sheet;
 pub mod stroke;
+pub mod latex_display;
 pub mod svg_display;
 
 pub use framework::*;

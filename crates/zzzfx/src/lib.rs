@@ -14,6 +14,7 @@ mod repeater;
 mod sprite_sheet;
 pub mod ass_subtitle;
 mod pixel_art;
+pub mod latex_display;
 pub mod svg_display;
 
 pub use repeater::CompositorLayer;
@@ -48,4 +49,5 @@ pub use settings::stroke::{
     BlendMode as StrokeBlendMode, FillMode, GradientSettings, StrokePosition, Stroke,
     StrokeFullSettings,
 };
+pub use settings::latex_display::{LaTeXDisplay, LaTeXDisplayFullSettings, MathStyle as LaTeXMathStyle};
 pub use settings::svg_display::{SvgDisplay, SvgDisplayFullSettings};

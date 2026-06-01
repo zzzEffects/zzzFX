@@ -17,6 +17,7 @@ mod ascii_art;
 mod long_shadow;
 mod midi_display;
 mod pixel_art;
+mod latex_display;
 mod file_param;
 mod svg_display;
 
@@ -30,7 +31,7 @@ use crate::bindings::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    12
+    13
 }
 
 #[unsafe(no_mangle)]
@@ -48,6 +49,7 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         9 => midi_display::get_plugin(),
         10 => svg_display::get_plugin(),
         11 => cast_shadow::get_plugin(),
+        12 => latex_display::get_plugin(),
         _ => ptr::null(),
     }
 }

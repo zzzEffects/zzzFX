@@ -672,6 +672,46 @@ i18n_keys! {
         ParamSvgDpi = "DPI";
         ParamSvgDpiDesc = "Dots per inch for interpreting SVG physical units (pt, cm, etc.).";
 
+        // ── LaTeX Display: effect labels ──────────────────
+        EffectLaTeXDisplayName = "zzzFX LaTeX Display";
+        EffectLaTeXDisplayDesc = "Renders LaTeX math formulas onto the output frame with configurable font size, styling, and blending controls.";
+
+        // ── LaTeX Display: native param labels & hints ─────
+        NativeLaTeXFontChoice = "Font";
+        NativeLaTeXFontChoiceHint = "Select a font for the LaTeX formula rendering.";
+        NativeLaTeXFormula = "Formula";
+        NativeLaTeXFormulaHint = "LaTeX math formula to render. Example: \\frac{a}{b} = \\sqrt{c}";
+        NativeLaTeXTextColor = "Text Color";
+        NativeLaTeXTextColorHint = "Color of the formula text.";
+        NativeLaTeXBackgroundColor = "Background Color";
+        NativeLaTeXBackgroundColorHint = "Color of the background behind the formula.";
+        NativeLaTeXPosition = "Position";
+        NativeLaTeXPositionHint = "Normalized position of the formula (0-1). 0.5 = center.";
+
+        // ── LaTeX Display: generic param labels ────────────
+        ParamLaTeXFontSize = "Font Size";
+        ParamLaTeXFontSizeDesc = "Base font size in pixels used for the LaTeX formula rendering.";
+        ParamLaTeXScale = "Scale";
+        ParamLaTeXScaleDesc = "Additional scale multiplier applied to the rendered formula.";
+        ParamLaTeXPositionX = "Position X";
+        ParamLaTeXPositionXDesc = "Horizontal position (0 = left, 0.5 = center, 1 = right).";
+        ParamLaTeXPositionY = "Position Y";
+        ParamLaTeXPositionYDesc = "Vertical position (0 = top, 0.5 = center, 1 = bottom).";
+        ParamLaTeXRotation = "Rotation";
+        ParamLaTeXRotationDesc = "Rotation angle in degrees around the formula center.";
+        ParamLaTeXOpacity = "Opacity";
+        ParamLaTeXOpacityDesc = "Overall opacity of the rendered formula. 0 = fully transparent, 1 = fully opaque.";
+        ParamLaTeXDpi = "DPI";
+        ParamLaTeXDpiDesc = "Dots per inch for interpreting formula physical units.";
+        ParamLaTeXMathStyle = "Math Style";
+        ParamLaTeXMathStyleDesc = "Formula rendering style: Display (centered, larger) or Inline (compact, for use within text).";
+
+        // ── LaTeX Display: menu items ─────────────────────
+        MenuLaTeXDisplay = "Display";
+        MenuLaTeXDisplayDesc = "Display-style math (centered, larger operators and fractions).";
+        MenuLaTeXInline = "Inline";
+        MenuLaTeXInlineDesc = "Inline-style math (compact, for use within text).";
+
         // ── Chroma Key: effect labels ────────────────────
         EffectChromaKeyName = "zzzFX Chroma Key";
         EffectChromaKeyDesc = "Keys out a user-selectable color from the foreground, with edge softness and spill suppression, compositing over the background.";
