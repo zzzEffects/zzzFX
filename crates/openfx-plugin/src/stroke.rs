@@ -7,7 +7,7 @@ use std::{
 use zzzfx::settings::TrKey;
 use zzzfx::{
     Stroke, StrokeFullSettings,
-    settings::{SettingID, SettingKind, Settings, SettingsList},
+    settings::{Settings, SettingsList},
 };
 
 use crate::bindings::*;
@@ -21,25 +21,15 @@ use crate::shared::{
 };
 
 // ---------------------------------------------------------------------------
-// Native OFX parameter names
+// Native OFX parameter names (Double2D position params only — colors use generic)
 // ---------------------------------------------------------------------------
 
-const STROKE_COLOR_PARAM: &CStr = c"stroke_color";
 const GRADIENT_START_POS_PARAM: &CStr = c"gradient_start_pos";
-const GRADIENT_START_COLOR_PARAM: &CStr = c"gradient_start_color";
 const GRADIENT_END_POS_PARAM: &CStr = c"gradient_end_pos";
-const GRADIENT_END_COLOR_PARAM: &CStr = c"gradient_end_color";
 const GRADIENT_GROUP_PARAM: &CStr = c"gradient_group";
 
-fn is_native_grouped_name(name: &str) -> bool {
-    matches!(
-        name,
-        "stroke_color_r" | "stroke_color_g" | "stroke_color_b" | "stroke_color_a" |
-        "gradient_start_x" | "gradient_start_y" |
-        "gradient_start_color_r" | "gradient_start_color_g" | "gradient_start_color_b" | "gradient_start_color_a" |
-        "gradient_end_x" | "gradient_end_y" |
-        "gradient_end_color_r" | "gradient_end_color_g" | "gradient_end_color_b" | "gradient_end_color_a"
-    )
+fn is_position_component(name: &str) -> bool {
+    matches!(name, "gradient_start_x" | "gradient_start_y" | "gradient_end_x" | "gradient_end_y")
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +80,6 @@ unsafe fn set_host_info_inner(host: *mut OfxHost) -> OfxResult<()> {
     let host_info = HostInfo { host: h, fetch_suite: fs };
     let suites = SuiteCache::new(host_info)?;
     let settings_list = SettingsList::<StrokeFullSettings>::new();
-    // Initialize i18n before building string cache (cache captures translations)
     i18n::set_lang(i18n::detect_system_lang());
     let (strings, menu_item_strings) = build_string_cache(&settings_list);
 
@@ -211,40 +200,19 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     let mut param_set: OfxParamSetHandle = ptr::null_mut();
     gp(desc, &mut param_set).ofx_ok()?;
 
-    // --- Block A: Params before Stroke Color ---
+    // --- Generic loop: define_single_param handles all types including ColorRGBA ---
     for desc in d.settings_list.setting_descriptors.iter() {
-        if desc.id.name == "stroke_color_r" { break; }
-        if is_native_grouped_name(desc.id.name) { continue; }
-        define_single_param(su, param_set, desc, &defaults, c"", &d.strings, &d.menu_item_strings)?;
-    }
-
-    // --- Native RGBA: Stroke Color ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(param_set, kOfxParamTypeRGBA.as_ptr(), STROKE_COLOR_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeStrokeColor).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeStrokeColorHint).as_ptr()).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
-    }
-
-    // --- Block C: Params from alpha_threshold onwards ---
-    let mut after_stroke_color = false;
-    for desc in d.settings_list.setting_descriptors.iter() {
-        if desc.id.name == "stroke_color_r" { after_stroke_color = true; continue; }
-        if !after_stroke_color || desc.id.name == "stroke_color_g" || desc.id.name == "stroke_color_b" || desc.id.name == "stroke_color_a" { continue; }
-        if is_native_grouped_name(desc.id.name) { continue; }
-        if let SettingKind::Group { .. } = &desc.kind {
+        if is_position_component(desc.id.name) { continue; }
+        if let zzzfx::settings::SettingKind::Group { .. } = &desc.kind {
+            // Manual gradient group with Double2D position params for better UX
             let ds = d.strings.get(&desc.id).unwrap();
             let id_cstr = ds.0.as_c_str();
             let dv = defaults.get_field::<bool>(&desc.id).map_err(|_| OfxStat::kOfxStatFailed)?;
-            let mut gp: OfxPropertySetHandle = ptr::null_mut();
-            pdef(param_set, kOfxParamTypeGroup.as_ptr(), GRADIENT_GROUP_PARAM.as_ptr(), &mut gp).ofx_ok()?;
-            ps(gp, kOfxPropLabel.as_ptr(), 0, ds.1.as_ptr()).ofx_ok()?;
+            let mut gp_h: OfxPropertySetHandle = ptr::null_mut();
+            pdef(param_set, kOfxParamTypeGroup.as_ptr(), GRADIENT_GROUP_PARAM.as_ptr(), &mut gp_h).ofx_ok()?;
+            ps(gp_h, kOfxPropLabel.as_ptr(), 0, ds.1.as_ptr()).ofx_ok()?;
             if let Some(desc_text) = ds.2.as_deref() {
-                ps(gp, kOfxParamPropHint.as_ptr(), 0, desc_text.as_ptr()).ofx_ok()?;
+                ps(gp_h, kOfxParamPropHint.as_ptr(), 0, desc_text.as_ptr()).ofx_ok()?;
             }
             let mut cb: OfxPropertySetHandle = ptr::null_mut();
             pdef(param_set, kOfxParamTypeBoolean.as_ptr(), id_cstr.as_ptr(), &mut cb).ofx_ok()?;
@@ -254,57 +222,38 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
             pi(cb, kOfxParamPropDefault.as_ptr(), 0, dv as i32).ofx_ok()?;
             ps(cb, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
             pi(cb, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
+
+            // Children: handle ColorRGBA children via define_single_param, position children as Double2D
+            if let zzzfx::settings::SettingKind::Group { children } = &desc.kind {
+                for child in children.iter() {
+                    if is_position_component(child.id.name) { continue; }
+                    define_single_param(su, param_set, child, &defaults, GRADIENT_GROUP_PARAM, &d.strings, &d.menu_item_strings)?;
+                }
+            }
+
+            // Native Double2D: Gradient Start
+            {
+                let mut pp: OfxPropertySetHandle = ptr::null_mut();
+                pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), GRADIENT_START_POS_PARAM.as_ptr(), &mut pp).ofx_ok()?;
+                ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientStart).as_ptr()).ofx_ok()?;
+                ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientStartHint).as_ptr()).ofx_ok()?;
+                ps(pp, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
+                pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?;
+                pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?;
+            }
+            // Native Double2D: Gradient End
+            {
+                let mut pp: OfxPropertySetHandle = ptr::null_mut();
+                pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), GRADIENT_END_POS_PARAM.as_ptr(), &mut pp).ofx_ok()?;
+                ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientEnd).as_ptr()).ofx_ok()?;
+                ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientEndHint).as_ptr()).ofx_ok()?;
+                ps(pp, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
+                pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
+                pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
+            }
         } else {
             define_single_param(su, param_set, desc, &defaults, c"", &d.strings, &d.menu_item_strings)?;
         }
-    }
-
-    // --- Native Double2D: Gradient Start ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), GRADIENT_START_POS_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientStart).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientStartHint).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?;
-    }
-
-    // --- Native RGBA: Gradient Start Color ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(param_set, kOfxParamTypeRGBA.as_ptr(), GRADIENT_START_COLOR_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientStartColor).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientStartColorHint).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 0.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 0.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 0.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
-    }
-
-    // --- Native Double2D: Gradient End ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), GRADIENT_END_POS_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientEnd).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientEndHint).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
-    }
-
-    // --- Native RGBA: Gradient End Color ---
-    {
-        let mut pp: OfxPropertySetHandle = ptr::null_mut();
-        pdef(param_set, kOfxParamTypeRGBA.as_ptr(), GRADIENT_END_COLOR_PARAM.as_ptr(), &mut pp).ofx_ok()?;
-        ps(pp, kOfxPropLabel.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientEndColor).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropHint.as_ptr(), 0, i18n::tr_cstr(TrKey::NativeGradientEndColorHint).as_ptr()).ofx_ok()?;
-        ps(pp, kOfxParamPropParent.as_ptr(), 0, GRADIENT_GROUP_PARAM.as_ptr()).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 0, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 1, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 2, 1.0).ofx_ok()?;
-        pd(pp, kOfxParamPropDefault.as_ptr(), 3, 1.0).ofx_ok()?;
     }
 
     Ok(())
@@ -426,7 +375,6 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     let row_bytes_u8 = width * 4;
     let total_u8 = row_bytes_u8 * height;
 
-    // Reuse thread-local buffers to avoid per-frame allocations for large frames.
     thread_local! {
         static RENDER_BUFS: std::cell::RefCell<(Vec<u8>, Vec<u8>)> =
             std::cell::RefCell::new((Vec::new(), Vec::new()));
@@ -459,90 +407,11 @@ unsafe fn apply_params(
     let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
-    let td = &d.settings_list.setting_descriptors;
-    let find_id = |name: &str| -> OfxResult<SettingID<StrokeFullSettings>> {
-        td.iter().find(|d| d.id.name == name)
-            .map(|d| d.id.clone())
-            .ok_or(OfxStat::kOfxStatFailed)
-    };
-
-    // Collect gradient children IDs
-    let grad_children = {
-        let group_desc = td.iter().find(|d| d.id.name == "gradient")
-            .ok_or(OfxStat::kOfxStatFailed)?;
-        if let zzzfx::settings::SettingKind::Group { children } = &group_desc.kind {
-            children.clone()
-        } else { unreachable!() }
-    };
-    let find_child = |name: &str| -> OfxResult<SettingID<StrokeFullSettings>> {
-        grad_children.iter().find(|c| c.id.name == name)
-            .map(|c| c.id.clone())
-            .ok_or(OfxStat::kOfxStatFailed)
-    };
-
-    // --- Native RGBA: Stroke Color ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, STROKE_COLOR_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut r: f64 = 0.0; let mut g: f64 = 0.0;
-        let mut b: f64 = 0.0; let mut a: f64 = 0.0;
-        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("stroke_color_r")?, r as f32).unwrap();
-        dst.set_field::<f32>(&find_id("stroke_color_g")?, g as f32).unwrap();
-        dst.set_field::<f32>(&find_id("stroke_color_b")?, b as f32).unwrap();
-        dst.set_field::<f32>(&find_id("stroke_color_a")?, a as f32).unwrap();
-    }
-
-    // --- Native Double2D: Gradient Start ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, GRADIENT_START_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut x: f64 = 0.0; let mut y: f64 = 0.0;
-        pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_start_x")?, x as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_y")?, y as f32).unwrap();
-    }
-
-    // --- Native RGBA: Gradient Start Color ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, GRADIENT_START_COLOR_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut r: f64 = 0.0; let mut g: f64 = 0.0;
-        let mut b: f64 = 0.0; let mut a: f64 = 0.0;
-        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_start_color_r")?, r as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_color_g")?, g as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_color_b")?, b as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_start_color_a")?, a as f32).unwrap();
-    }
-
-    // --- Native Double2D: Gradient End ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, GRADIENT_END_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut x: f64 = 0.0; let mut y: f64 = 0.0;
-        pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_end_x")?, x as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_y")?, y as f32).unwrap();
-    }
-
-    // --- Native RGBA: Gradient End Color ---
-    {
-        let mut p: OfxParamHandle = ptr::null_mut();
-        pgh(param_set, GRADIENT_END_COLOR_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
-        let mut r: f64 = 0.0; let mut g: f64 = 0.0;
-        let mut b: f64 = 0.0; let mut a: f64 = 0.0;
-        pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_child("gradient_end_color_r")?, r as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_color_g")?, g as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_color_b")?, b as f32).unwrap();
-        dst.set_field::<f32>(&find_child("gradient_end_color_a")?, a as f32).unwrap();
-    }
-
-    // --- Read remaining generic params ---
+    // --- Generic loop: read all descriptors via read_generic_param ---
     for desc in d.settings_list.setting_descriptors.iter() {
-        if is_native_grouped_name(desc.id.name) { continue; }
-        if let zzzfx::settings::SettingKind::Group { .. } = &desc.kind {
+        if is_position_component(desc.id.name) { continue; }
+        if let zzzfx::settings::SettingKind::Group { children } = &desc.kind {
+            // Read Group enable checkbox
             let ds = d.strings.get(&desc.id).unwrap();
             let id_cstr = ds.0.as_c_str();
             let mut p: OfxParamHandle = ptr::null_mut();
@@ -550,6 +419,41 @@ unsafe fn apply_params(
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
             dst.set_field::<bool>(&desc.id, v != 0).unwrap();
+
+            // Read Group children via read_generic_param (handles ColorRGBA children)
+            for child in children.iter() {
+                if is_position_component(child.id.name) { continue; }
+                read_generic_param(su, param_set, time, child, dst, &d.strings)?;
+            }
+
+            // Native Double2D: Gradient Start
+            {
+                let mut p: OfxParamHandle = ptr::null_mut();
+                pgh(param_set, GRADIENT_START_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+                let mut x: f64 = 0.0; let mut y: f64 = 0.0;
+                pgv(p, time, &mut x, &mut y).ofx_ok()?;
+                for child in children.iter() {
+                    match child.id.name {
+                        "gradient_start_x" => { dst.set_field::<f32>(&child.id, x as f32).unwrap(); }
+                        "gradient_start_y" => { dst.set_field::<f32>(&child.id, y as f32).unwrap(); }
+                        _ => {}
+                    }
+                }
+            }
+            // Native Double2D: Gradient End
+            {
+                let mut p: OfxParamHandle = ptr::null_mut();
+                pgh(param_set, GRADIENT_END_POS_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
+                let mut x: f64 = 0.0; let mut y: f64 = 0.0;
+                pgv(p, time, &mut x, &mut y).ofx_ok()?;
+                for child in children.iter() {
+                    match child.id.name {
+                        "gradient_end_x" => { dst.set_field::<f32>(&child.id, x as f32).unwrap(); }
+                        "gradient_end_y" => { dst.set_field::<f32>(&child.id, y as f32).unwrap(); }
+                        _ => {}
+                    }
+                }
+            }
         } else {
             read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
         }
@@ -557,4 +461,3 @@ unsafe fn apply_params(
 
     Ok(())
 }
-

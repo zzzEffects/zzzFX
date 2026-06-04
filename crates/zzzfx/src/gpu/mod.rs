@@ -428,8 +428,8 @@ fn create_buffers(device: &wgpu::Device, width: u32, height: u32) -> GpuBuffers 
 
 fn build_uniforms(settings: &Stroke, width: u32, height: u32) -> StrokeUniforms {
     let max_dim = width.max(height) as f32;
-    let sw = settings.stroke_width.clamp(0.0, 1.0);
-    let w_px = (sw / 10.0) * max_dim;
+    let sw = settings.stroke_width.clamp(0.0, 100.0);
+    let w_px = (sw * max_dim) / 1000.0;
     let feather = settings.stroke_feathering.clamp(0.0, 1.0);
     let feather_px = feather * w_px;
 

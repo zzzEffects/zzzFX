@@ -130,7 +130,7 @@ impl Default for Stroke {
         Self {
             stroke_position: StrokePosition::Outer,
             fill_mode: FillMode::SolidColor,
-            stroke_width: 0.05,
+            stroke_width: 5.0,
             stroke_color_r: 1.0,
             stroke_color_g: 1.0,
             stroke_color_b: 1.0,
@@ -252,7 +252,7 @@ impl Settings for StrokeFullSettings {
             SettingDescriptor {
                 label_key: TrKey::ParamStrokeWidth,
                 description_key: Some(TrKey::ParamStrokeWidthDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
+                kind: SettingKind::FloatRange { range: 0.0..=100.0, logarithmic: false },
                 id: setting_id::STROKE_WIDTH,
             },
             SettingDescriptor {

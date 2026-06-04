@@ -103,13 +103,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         case 2u: { // Center
             let half_w = uniforms.stroke_width_px * 0.5;
-            if blend_range <= 0.0 {
-                stroke_alpha_local = gaussian_edge(sigma, half_w, d);
-            } else if src_a <= lower_bound || src_a >= upper_bound {
-                stroke_alpha_local = 0.0;
-            } else {
-                stroke_alpha_local = gaussian_edge(sigma, half_w, d) * (1.0 - src_a);
-            }
+            stroke_alpha_local = gaussian_edge(sigma, half_w, d);
         }
         default: {
             stroke_alpha_local = 0.0;

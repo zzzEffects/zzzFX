@@ -30,7 +30,7 @@ thread_local! {
 
 impl Stroke {
     pub fn is_identity(&self) -> bool {
-        let sw = self.stroke_width.clamp(0.0, 1.0);
+        let sw = self.stroke_width.clamp(0.0, 100.0);
         let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
         let src_opacity = self.source_opacity.clamp(0.0, 1.0);
         (sw <= 0.0 || stroke_a <= 0.0) && src_opacity >= 1.0
@@ -46,10 +46,10 @@ impl Stroke {
         }
 
         let total_pixels = width * height;
-        let sw = self.stroke_width.clamp(0.0, 1.0);
+        let sw = self.stroke_width.clamp(0.0, 100.0);
         let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
         let max_dim = width.max(height) as f32;
-        let w_px = (sw / 10.0) * max_dim;
+        let w_px = (sw * max_dim) / 1000.0;
 
         // Fast path: no stroke
         if w_px <= 0.0 || stroke_a <= 0.0 {
@@ -84,7 +84,7 @@ impl Stroke {
         height: usize,
         total_pixels: usize,
     ) {
-        let sw = self.stroke_width.clamp(0.0, 1.0);
+        let sw = self.stroke_width.clamp(0.0, 100.0);
         let threshold = self.alpha_threshold.clamp(0.0, 1.0);
         let edge_blend = self.edge_blend.clamp(0.0, 1.0);
         let blend_range = edge_blend / 2.0;
@@ -94,7 +94,7 @@ impl Stroke {
         let src_opacity = self.source_opacity.clamp(0.0, 1.0);
         let stroke_a = self.stroke_color_a.clamp(0.0, 1.0);
         let max_dim = width.max(height) as f32;
-        let w_px = (sw / 10.0) * max_dim;
+        let w_px = (sw * max_dim) / 1000.0;
         let feather_px = feather * w_px;
         let sigma = feather_px / 3.0;
 
@@ -252,13 +252,7 @@ impl Stroke {
                 }
                 StrokePosition::Center => {
                     let half_w = w_px * 0.5;
-                    if blend_range <= 0.0 {
-                        gaussian_edge(sigma, half_w, d)
-                    } else if src_a_raw <= lower_bound || src_a_raw >= upper_bound {
-                        0.0
-                    } else {
-                        gaussian_edge(sigma, half_w, d) * (1.0 - src_a_raw)
-                    }
+                    gaussian_edge(sigma, half_w, d)
                 }
             };
 
