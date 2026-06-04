@@ -17,6 +17,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
+    action_get_region_of_definition_generator,
 };
 
 // ---------------------------------------------------------------------------
@@ -175,6 +176,8 @@ unsafe fn main_entry_inner(
         action_render(effect, inArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
         action_get_clip_preferences(outArgs)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        match data() { Ok(d) => action_get_region_of_definition_generator(&d.suites, effect, inArgs, outArgs), Err(e) => Err(e) }
     } else if action == kOfxImageEffectActionIsIdentity {
         Err(OfxStat::kOfxStatReplyDefault)
     } else {
@@ -307,8 +310,8 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
-    // --- Custom param (hidden): fileData (persisted binary) ---
-    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
+    // --- String param (hidden): fileData (persisted as base64) ---
+    file_param::define_file_data_string_param(su, param_set, PAGE_NAME)?;
 
     Ok(())
 }
@@ -429,7 +432,7 @@ unsafe fn action_instance_changed(
                 idata.sheet_height = h;
             }
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+            file_param::write_file_data_base64(su, param_set, &file_bytes)?;
             file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
             file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
 
@@ -444,7 +447,7 @@ unsafe fn action_instance_changed(
             let img = image::load_from_memory(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?.to_rgba8();
             let (w, h) = img.dimensions();
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+            file_param::write_file_data_base64(su, param_set, &file_bytes)?;
 
             let mut ep: OfxPropertySetHandle = ptr::null_mut();
             (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
@@ -502,10 +505,10 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
-    // Recover image data from Custom param on project reload
+    // Lazy recovery: read image data from String param on project reload
     if let Some(ref mut idata_inner) = idata {
         if idata_inner.decoded_rgba.is_empty() {
-            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
+            if let Ok(bytes) = file_param::read_file_data_base64(su, param_set) {
                 if !bytes.is_empty() {
                     if let Ok(img) = image::load_from_memory(&bytes) {
                         let rgba_img = img.to_rgba8();

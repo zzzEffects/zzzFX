@@ -689,3 +689,50 @@ pub unsafe fn action_get_regions_of_interest_common(
     .ofx_ok()?;
     Ok(())
 }
+
+/// GetRegionOfDefinition for Generator effects (no Source clip).
+/// Returns the Output clip's region which equals the project canvas size.
+pub unsafe fn action_get_region_of_definition_generator(
+    suites: &SuiteCache,
+    effect: OfxImageEffectHandle,
+    in_args: OfxPropertySetHandle,
+    out_args: OfxPropertySetHandle,
+) -> OfxResult<()> {
+    let pg = suites
+        .property_suite
+        .propGetDouble
+        .ok_or(OfxStat::kOfxStatFailed)?;
+    let psn = suites
+        .property_suite
+        .propSetDoubleN
+        .ok_or(OfxStat::kOfxStatFailed)?;
+    let cgh = suites
+        .image_effect_suite
+        .clipGetHandle
+        .ok_or(OfxStat::kOfxStatFailed)?;
+    let crod = suites
+        .image_effect_suite
+        .clipGetRegionOfDefinition
+        .ok_or(OfxStat::kOfxStatFailed)?;
+
+    let mut oc: OfxImageClipHandle = ptr::null_mut();
+    cgh(effect, c"Output".as_ptr(), &mut oc, ptr::null_mut()).ofx_ok()?;
+    let mut rod = OfxRectD {
+        x1: 0.0,
+        x2: 0.0,
+        y1: 0.0,
+        y2: 0.0,
+    };
+    let mut t: OfxTime = 0.0;
+    pg(in_args, kOfxPropTime.as_ptr(), 0, &mut t).ofx_ok()?;
+    crod(oc, t, &mut rod).ofx_ok()?;
+
+    psn(
+        out_args,
+        c"OfxImageEffectPropRegionOfDefinition".as_ptr(),
+        4,
+        ptr::addr_of_mut!(rod) as *mut _,
+    )
+    .ofx_ok()?;
+    Ok(())
+}

@@ -15,6 +15,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
+    action_get_region_of_definition_generator,
 };
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,8 @@ unsafe fn main_entry_inner(
         action_render(effect, inArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
         action_get_clip_preferences(outArgs)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        match data() { Ok(d) => action_get_region_of_definition_generator(&d.suites, effect, inArgs, outArgs), Err(e) => Err(e) }
     } else if action == kOfxImageEffectActionIsIdentity {
         Err(OfxStat::kOfxStatReplyDefault)
     } else {

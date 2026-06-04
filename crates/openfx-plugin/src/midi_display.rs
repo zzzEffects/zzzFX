@@ -7,8 +7,9 @@ use std::{
 use zzzfx::{
     MidiDisplay, MidiDisplayFullSettings,
     midi_display::{MidiData, parse_midi_file},
-    settings::{SettingID, Settings, SettingsList, TrKey},
+    settings::{Settings, SettingsList, TrKey},
 };
+use zzzfx::settings::midi_display::setting_id;
 
 use crate::bindings::*;
 use crate::file_param;
@@ -17,6 +18,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
+    action_get_region_of_definition_generator,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,6 +174,8 @@ unsafe fn main_entry_inner(
         action_render(effect, inArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
         action_get_clip_preferences(outArgs)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        match data() { Ok(d) => action_get_region_of_definition_generator(&d.suites, effect, inArgs, outArgs), Err(e) => Err(e) }
     } else if action == kOfxImageEffectActionIsIdentity {
         Err(OfxStat::kOfxStatReplyDefault)
     } else {
@@ -303,8 +307,8 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
-    // --- Custom param (hidden): fileData (persisted binary) ---
-    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
+    // --- String param (hidden): fileData (persisted as base64) ---
+    file_param::define_file_data_string_param(su, param_set, PAGE_NAME)?;
 
     Ok(())
 }
@@ -417,7 +421,7 @@ unsafe fn action_instance_changed(
                 idata.cache_valid = false;
             }
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &bytes)?;
+            file_param::write_file_data_base64(su, param_set, &bytes)?;
             file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
             file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
 
@@ -431,7 +435,7 @@ unsafe fn action_instance_changed(
             let bytes = std::fs::read(&path_str).map_err(|_| OfxStat::kOfxStatFailed)?;
             let midi_data = parse_midi_file(&bytes).map_err(|_| OfxStat::kOfxStatFailed)?;
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &bytes)?;
+            file_param::write_file_data_base64(su, param_set, &bytes)?;
 
             let mut ep: OfxPropertySetHandle = ptr::null_mut();
             (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
@@ -529,12 +533,14 @@ unsafe fn action_render(
     let ss: MidiDisplay = (&settings).into();
     let mut dst_buf = vec![0u8; width * height * 4];
 
-    // Recover MIDI data from Custom param on project reload
-    if let Some(idata_inner) = &mut idata {
-        if idata_inner.midi_data.is_none() {
-            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
-                if !bytes.is_empty() {
-                    if let Ok(md) = parse_midi_file(&bytes) {
+    // Lazy recovery: read file data from String param if InstanceData is empty (fresh instance)
+    // Lazy recovery: if InstanceData is empty (fresh instance after project load or undo),
+    // pull file bytes from persisted params. This is a one-time cost, not per-frame.
+    if idata.as_ref().and_then(|i| i.midi_data.as_ref()).is_none() {
+        if let Ok(bytes) = file_param::read_file_data_base64(su, param_set) {
+            if !bytes.is_empty() {
+                if let Ok(md) = parse_midi_file(&bytes) {
+                    if let Some(ref mut idata_inner) = idata {
                         idata_inner.midi_data = Some(md);
                     }
                 }
@@ -542,10 +548,27 @@ unsafe fn action_render(
         }
     }
 
-    // Render
-    if let Some(idata_inner) = &idata {
-        if let Some(ref midi_data) = idata_inner.midi_data {
-            ss.render(midi_data, &mut dst_buf, width, height, time_seconds);
+    // Render — always produce visible output (background fill as fallback)
+    match idata {
+        Some(ref idata_inner) => {
+            if let Some(ref midi_data) = idata_inner.midi_data {
+                ss.render(midi_data, &mut dst_buf, width, height, time_seconds);
+            }
+        }
+        None => {}
+    }
+    // Fill with background color when midi_data is None (no file loaded yet)
+    if idata.as_ref().and_then(|i| i.midi_data.as_ref()).is_none() {
+        let bg_a = (ss.background_color_a * ss.background_opacity).clamp(0.0, 1.0);
+        let br = (ss.background_color_r * 255.0).round() as u8;
+        let bbg = (ss.background_color_g * 255.0).round() as u8;
+        let bb = (ss.background_color_b * 255.0).round() as u8;
+        let ba = (bg_a * 255.0).round() as u8;
+        for chunk in dst_buf.chunks_exact_mut(4) {
+            chunk[0] = br;
+            chunk[1] = bbg;
+            chunk[2] = bb;
+            chunk[3] = ba;
         }
     }
 
@@ -661,13 +684,6 @@ unsafe fn apply_params(
     let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
     let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
 
-    let find_id = |name: &str| -> OfxResult<SettingID<MidiDisplayFullSettings>> {
-        d.settings_list.all_descriptors()
-            .find(|d| d.id.name == name)
-            .map(|d| d.id.clone())
-            .ok_or(OfxStat::kOfxStatFailed)
-    };
-
     // --- Native RGBA: noteColor ---
     {
         let mut p: OfxParamHandle = ptr::null_mut();
@@ -675,10 +691,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("note_color_r")?, r.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("note_color_g")?, g.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("note_color_b")?, b.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("note_color_a")?, a.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_R, r.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_G, g.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_B, b.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_A, a.clamp(0.0, 1.0) as f32).unwrap();
     }
 
     // --- Native RGBA: noteBorderColor ---
@@ -688,10 +704,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("note_border_color_r")?, r.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("note_border_color_g")?, g.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("note_border_color_b")?, b.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("note_border_color_a")?, a.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_R, r.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_G, g.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_B, b.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_A, a.clamp(0.0, 1.0) as f32).unwrap();
     }
 
     // --- Native RGBA: backgroundColor ---
@@ -701,10 +717,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("background_color_r")?, r.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("background_color_g")?, g.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("background_color_b")?, b.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("background_color_a")?, a.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_R, r.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_G, g.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_B, b.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_A, a.clamp(0.0, 1.0) as f32).unwrap();
     }
 
     // --- Read generic params ---

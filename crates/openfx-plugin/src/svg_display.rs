@@ -18,6 +18,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
+    action_get_region_of_definition_generator,
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,8 @@ unsafe fn main_entry_inner(
         action_render(effect, inArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
         action_get_clip_preferences(outArgs)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        match data() { Ok(d) => action_get_region_of_definition_generator(&d.suites, effect, inArgs, outArgs), Err(e) => Err(e) }
     } else if action == kOfxImageEffectActionIsIdentity {
         Err(OfxStat::kOfxStatReplyDefault)
     } else {
@@ -274,8 +277,8 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
-    // --- Custom param (hidden): fileData (persisted binary) ---
-    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
+    // --- String param (hidden): fileData (persisted as base64) ---
+    file_param::define_file_data_string_param(su, param_set, PAGE_NAME)?;
 
     Ok(())
 }
@@ -407,7 +410,7 @@ unsafe fn action_instance_changed(
             let cached = zzzfx::svg_display::build_cache(&svg_bytes, 96.0);
 
             // Persist file data and path to OFX params (before moving svg_bytes)
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &svg_bytes)?;
+            file_param::write_file_data_base64(su, param_set, &svg_bytes)?;
             file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
             file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
 
@@ -432,7 +435,7 @@ unsafe fn action_instance_changed(
             let svg_bytes = std::fs::read(&path_str).map_err(|_| OfxStat::kOfxStatFailed)?;
             let cached = zzzfx::svg_display::build_cache(&svg_bytes, 96.0);
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &svg_bytes)?;
+            file_param::write_file_data_base64(su, param_set, &svg_bytes)?;
 
             let mut ep: OfxPropertySetHandle = ptr::null_mut();
             (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
@@ -526,11 +529,13 @@ unsafe fn action_render(
     let bg = [bg_r, bg_g, bg_b, bg_a];
 
     if let Some(idata) = idata {
-        // Recover file data from Custom param on project reload
+        // Lazy recovery: if InstanceData is empty (fresh instance after project load or undo),
+        // pull file bytes from persisted params. This is a one-time cost, not per-frame.
         if idata.svg_bytes.is_empty() {
-            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
+            if let Ok(bytes) = file_param::read_file_data_base64(su, param_set) {
                 if !bytes.is_empty() {
                     idata.svg_bytes = bytes;
+                    idata.cached_svg = None;
                 }
             }
         }

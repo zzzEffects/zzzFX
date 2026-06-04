@@ -1,4 +1,4 @@
-use zzzfx_core::{FillMode, StrokePosition, Stroke};
+use zzzfx::{FillMode, StrokePosition, Stroke};
 
 fn make_square_with_alpha(width: usize, height: usize) -> Vec<u8> {
     let len = width * height * 4;
@@ -54,7 +54,7 @@ fn zero_alpha_stroke_is_passthrough() {
 fn outer_stroke_expands() {
     let effect = Stroke {
         stroke_position: StrokePosition::Outer,
-        stroke_width: 0.5,
+        stroke_width: 60.0,
         stroke_color_r: 1.0,
         stroke_color_g: 0.0,
         stroke_color_b: 0.0,
@@ -69,8 +69,6 @@ fn outer_stroke_expands() {
     effect.apply_effect(&src, &mut dst, w, h);
 
     // Check that stroke was applied: some pixels should be modified outside the shape.
-    // GPU (JFA Euclidean) and CPU (4SSED) may produce slightly different stroke boundaries,
-    // so check for any red-tinted pixels rather than exact R-only values.
     let mut stroke_pixels = 0;
     for i in (0..dst.len()).step_by(4) {
         let is_stroke = dst[i] > 200 && dst[i + 1] < dst[i] && dst[i + 2] < dst[i];
@@ -178,7 +176,7 @@ fn sharp_corners_vs_rounded_produce_different_output() {
     // (both GPU Euclidean JFA and CPU 4SSED)
     let effect_rounded = Stroke {
         stroke_position: StrokePosition::Outer,
-        stroke_width: 1.0,
+        stroke_width: 80.0,
         stroke_color_r: 1.0,
         stroke_color_g: 0.0,
         stroke_color_b: 0.0,
@@ -250,7 +248,7 @@ fn edge_blend_zero_is_binary() {
     // With edge_blend=0, should behave like original hard threshold
     let effect = Stroke {
         stroke_position: StrokePosition::Outer,
-        stroke_width: 0.5,
+        stroke_width: 60.0,
         stroke_color_r: 1.0,
         stroke_color_g: 0.0,
         stroke_color_b: 0.0,

@@ -143,7 +143,7 @@ fn parse_format_line(line: &str) -> Vec<String> {
 }
 
 /// Parse ASS timestamp (e.g., "0:00:01.00") → milliseconds.
-fn parse_ass_timestamp(ts: &str) -> Option<i64> {
+pub(crate) fn parse_ass_timestamp(ts: &str) -> Option<i64> {
     let parts: Vec<&str> = ts.split(':').collect();
     if parts.len() != 3 {
         return None;

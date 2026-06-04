@@ -1,5 +1,5 @@
-use zzzfx_core::blend::{blend_channel, luminance};
-use zzzfx_core::StrokeBlendMode;
+use zzzfx::blend::{blend_channel, luminance};
+use zzzfx::settings::stroke::BlendMode as StrokeBlendMode;
 
 #[test]
 fn normal_returns_blend_color() {

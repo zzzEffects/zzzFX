@@ -1,15 +1,15 @@
-use zzzfx_core::settings::stroke::setting_id;
-use zzzfx_core::settings::{
+use zzzfx::settings::stroke::setting_id;
+use zzzfx::settings::{
     EnumValue, GetSetFieldError, SettingKind, Settings, SettingsBlock, SettingsList,
 };
-use zzzfx_core::{StrokePosition, StrokeFullSettings};
+use zzzfx::{StrokePosition, StrokeFullSettings};
 
 #[test]
 fn zzz_stroke_descriptors_count() {
     let list = SettingsList::<StrokeFullSettings>::new();
     let all: Vec<_> = list.all_descriptors().collect();
-    // 13 top-level + 12 gradient children + 1 edge_blend = 26
-    assert_eq!(all.len(), 26);
+    // 11 top-level + gradient group children = 17
+    assert_eq!(all.len(), 17);
 }
 
 #[test]
@@ -19,14 +19,14 @@ fn get_and_set_fields() {
     // Float field
     assert_eq!(
         settings.get_field::<f32>(&setting_id::STROKE_WIDTH).unwrap(),
-        0.05
+        5.0
     );
     settings
-        .set_field::<f32>(&setting_id::STROKE_WIDTH, 0.5)
+        .set_field::<f32>(&setting_id::STROKE_WIDTH, 50.0)
         .unwrap();
     assert_eq!(
         settings.get_field::<f32>(&setting_id::STROKE_WIDTH).unwrap(),
-        0.5
+        50.0
     );
 
     // Enum field
@@ -68,7 +68,7 @@ fn json_round_trip() {
     let list = SettingsList::<StrokeFullSettings>::new();
 
     let mut settings = StrokeFullSettings::default();
-    settings.stroke_width = 0.5;
+    settings.stroke_width = 50.0;
     settings.stroke_color_r = 0.8;
     settings.stroke_color_g = 0.2;
     settings.stroke_color_b = 0.4;
@@ -78,7 +78,7 @@ fn json_round_trip() {
     let json = list.to_json_string(&settings).unwrap();
     let parsed = list.from_json_generic(&json).unwrap();
 
-    assert_eq!(parsed.stroke_width, 0.5);
+    assert_eq!(parsed.stroke_width, 50.0);
     assert_eq!(parsed.stroke_color_r, 0.8);
     assert_eq!(parsed.stroke_color_g, 0.2);
     assert_eq!(parsed.stroke_color_b, 0.4);
@@ -152,7 +152,7 @@ fn descriptor_kinds() {
         .iter()
         .find(|d| d.label_key.en() == "Stroke Width")
         .unwrap();
-    assert!(matches!(sw.kind, SettingKind::Percentage { .. }));
+    assert!(matches!(sw.kind, SettingKind::FloatRange { .. }));
 
     let sharp = descriptors
         .iter()

@@ -17,6 +17,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
+    action_get_region_of_definition_generator,
 };
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,8 @@ unsafe fn main_entry_inner(
         action_render(effect, inArgs)
     } else if action == kOfxImageEffectActionGetClipPreferences {
         action_get_clip_preferences(outArgs)
+    } else if action == kOfxImageEffectActionGetRegionOfDefinition {
+        match data() { Ok(d) => action_get_region_of_definition_generator(&d.suites, effect, inArgs, outArgs), Err(e) => Err(e) }
     } else if action == kOfxImageEffectActionIsIdentity {
         Err(OfxStat::kOfxStatReplyDefault)
     } else {
@@ -346,8 +349,8 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     }
 
-    // --- Custom param (hidden): fileData (persisted binary) ---
-    file_param::define_file_data_param(su, param_set, PAGE_NAME)?;
+    // --- String param (hidden): fileData (persisted as plain text) ---
+    file_param::define_file_data_string_param(su, param_set, PAGE_NAME)?;
 
     // --- Native Choice: font_override_choice ---
     {
@@ -493,7 +496,7 @@ unsafe fn action_instance_changed(
                 idata.file_path = path_str.clone();
             }
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+            file_param::write_string_param(su, param_set, file_param::FILE_DATA_PARAM, &content)?;
             file_param::write_string_param(su, param_set, FILE_PATH_PARAM, &path_str)?;
             file_param::reveal_param(su, param_set, file_param::RELOAD_FILE_PARAM)?;
 
@@ -508,7 +511,7 @@ unsafe fn action_instance_changed(
             let content = decode_ass_file(&file_bytes).map_err(|_| OfxStat::kOfxStatFailed)?;
             let ass_script = parse_ass_file(&content).map_err(|_| OfxStat::kOfxStatFailed)?;
 
-            file_param::write_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM, &file_bytes)?;
+            file_param::write_string_param(su, param_set, file_param::FILE_DATA_PARAM, &content)?;
 
             let mut ep: OfxPropertySetHandle = ptr::null_mut();
             (su.image_effect_suite.getPropertySet.ok_or(OfxStat::kOfxStatFailed)?)(effect, &mut ep).ofx_ok()?;
@@ -608,15 +611,15 @@ unsafe fn action_render(
     gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut data_ptr).ofx_ok()?;
     let mut idata = if data_ptr.is_null() { None } else { Some(&mut *(data_ptr as *mut InstanceData)) };
 
-    // Recover ASS data from Custom param on project reload
+    // Lazy recovery: read ASS content from String param if script is empty (fresh instance)
+    // Lazy recovery: if InstanceData is empty (fresh instance after project load or undo),
+    // pull file bytes from persisted params. This is a one-time cost, not per-frame.
     if let Some(ref mut idata_inner) = idata {
         if idata_inner.ass_script.is_none() {
-            if let Ok(bytes) = file_param::read_custom_param_bytes(su, param_set, file_param::FILE_DATA_PARAM) {
-                if !bytes.is_empty() {
-                    if let Ok(content) = decode_ass_file(&bytes) {
-                        if let Ok(script) = parse_ass_file(&content) {
-                            idata_inner.ass_script = Some(script);
-                        }
+            if let Ok(content) = file_param::read_string_param(su, param_set, file_param::FILE_DATA_PARAM) {
+                if !content.is_empty() {
+                    if let Ok(script) = parse_ass_file(&content) {
+                        idata_inner.ass_script = Some(script);
                     }
                 }
             }

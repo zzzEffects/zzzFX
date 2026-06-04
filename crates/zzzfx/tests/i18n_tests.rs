@@ -1,5 +1,5 @@
-use effect_settings::TrKey;
-use zzzfx_core::i18n;
+use zzzfx::TrKey;
+use zzzfx::i18n;
 
 #[test]
 fn all_keys_have_non_empty_en() {

@@ -44,12 +44,12 @@ fn test_ass_color_to_rgba_rgb_order() {
 
 #[test]
 fn test_parse_ass_time() {
-    assert_eq!(parser::parse_ass_time("0:00:00.00"), 0);
-    assert_eq!(parser::parse_ass_time("0:00:01.00"), 1000);
-    assert_eq!(parser::parse_ass_time("0:01:00.00"), 60000);
-    assert_eq!(parser::parse_ass_time("1:00:00.00"), 3600000);
-    assert_eq!(parser::parse_ass_time("0:00:00.50"), 500);
-    assert_eq!(parser::parse_ass_time("0:00:05.25"), 5250);
+    assert_eq!(parser::parse_ass_timestamp("0:00:00.00"), Some(0));
+    assert_eq!(parser::parse_ass_timestamp("0:00:01.00"), Some(1000));
+    assert_eq!(parser::parse_ass_timestamp("0:01:00.00"), Some(60000));
+    assert_eq!(parser::parse_ass_timestamp("1:00:00.00"), Some(3600000));
+    assert_eq!(parser::parse_ass_timestamp("0:00:00.50"), Some(500));
+    assert_eq!(parser::parse_ass_timestamp("0:00:05.25"), Some(5250));
 }
 
 #[test]

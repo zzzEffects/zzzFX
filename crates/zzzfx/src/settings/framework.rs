@@ -499,6 +499,24 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
         stream.map_begin(None)?;
 
         for descriptor in self.list.all_descriptors() {
+            // ColorRGBA/ColorRGB emit individual component keys — skip the group key
+            match &descriptor.kind {
+                SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+                    emit_color_f32(stream, r_id, self.settings)?;
+                    emit_color_f32(stream, g_id, self.settings)?;
+                    emit_color_f32(stream, b_id, self.settings)?;
+                    emit_color_f32(stream, a_id, self.settings)?;
+                    continue;
+                }
+                SettingKind::ColorRGB { r_id, g_id, b_id } => {
+                    emit_color_f32(stream, r_id, self.settings)?;
+                    emit_color_f32(stream, g_id, self.settings)?;
+                    emit_color_f32(stream, b_id, self.settings)?;
+                    continue;
+                }
+                _ => {}
+            }
+
             stream.map_key_begin()?;
             stream.text_begin(Some(descriptor.id.name.len()))?;
             stream.text_fragment(descriptor.id.name)?;
@@ -531,20 +549,8 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
                     stream.bool(self.settings.get_field::<bool>(&descriptor.id).unwrap_or(false))?;
                     stream.map_value_end()?;
                 }
-                SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
-                    // Emit individual r/g/b/a keys for backward compat
-                    emit_color_f32(stream, r_id, self.settings)?;
-                    emit_color_f32(stream, g_id, self.settings)?;
-                    emit_color_f32(stream, b_id, self.settings)?;
-                    emit_color_f32(stream, a_id, self.settings)?;
-                    continue;
-                }
-                SettingKind::ColorRGB { r_id, g_id, b_id } => {
-                    emit_color_f32(stream, r_id, self.settings)?;
-                    emit_color_f32(stream, g_id, self.settings)?;
-                    emit_color_f32(stream, b_id, self.settings)?;
-                    continue;
-                }
+                // ColorRGBA/ColorRGB handled above before key emission — unreachable here
+                SettingKind::ColorRGBA { .. } | SettingKind::ColorRGB { .. } => {}
             }
         }
 
