@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use rayon::prelude::*;
 
 use crate::blend::{self, blend_channel, fast_u32_to_f32, IS_STENCIL_OR_OUTLINE, RECIP_255};
-use crate::gpu;
 use crate::settings::stroke::{
     BlendMode, FillMode, StrokePosition, Stroke,
 };
@@ -66,7 +65,8 @@ impl Stroke {
         }
 
         // GPU first
-        match gpu::try_gpu_render(self, src, dst, width, height) {
+        #[cfg(feature = "gpu")]
+        match crate::gpu::try_gpu_render(self, src, dst, width, height) {
             Ok(true) => return,
             Ok(false) => {}
             Err(_) => {}

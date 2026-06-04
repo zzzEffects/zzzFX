@@ -323,12 +323,6 @@ pub fn ass_color_to_rgba(hex: &str) -> [f32; 4] {
     ]
 }
 
-/// Parse ASS time `H:MM:SS.cc` → milliseconds.
-#[allow(dead_code)]
-pub(crate) fn parse_ass_time(s: &str) -> i64 {
-    parse_ass_timestamp(s).unwrap_or(0)
-}
-
 // ---------------------------------------------------------------------------
 // Override tag parsing — public API
 // ---------------------------------------------------------------------------

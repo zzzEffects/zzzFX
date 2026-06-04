@@ -1,6 +1,5 @@
 pub mod ambient_light;
 pub mod cast_shadow;
-pub mod ascii_art;
 pub mod ass_glyph;
 pub mod ass_subtitle;
 pub mod chroma_key;

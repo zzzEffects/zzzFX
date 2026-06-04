@@ -3,11 +3,12 @@
 
 use std::process;
 
-use xtask::{build_ofx_plugin, macos_ae_plugin};
+use xtask::{build_aviutl2_plugin, build_ofx_plugin, macos_ae_plugin};
 
 fn main() {
     let cmd = clap::Command::new("xtask")
         .subcommand_required(true)
+        .subcommand(build_aviutl2_plugin::command())
         .subcommand(build_ofx_plugin::command())
         .subcommand(macos_ae_plugin::command());
 
@@ -16,6 +17,9 @@ fn main() {
     let (task, args) = matches.subcommand().unwrap();
 
     match task {
+        "build-aviutl2-plugin" => {
+            build_aviutl2_plugin::main(args).unwrap();
+        }
         "macos-ae-plugin" => {
             macos_ae_plugin::main(args).unwrap();
         }

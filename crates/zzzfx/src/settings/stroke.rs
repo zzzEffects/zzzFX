@@ -159,6 +159,7 @@ pub mod setting_id {
     pub const STROKE_POSITION:         SID = setting_id!("stroke_position", stroke_position);
     pub const FILL_MODE:               SID = setting_id!("fill_mode", fill_mode);
     pub const STROKE_WIDTH:            SID = setting_id!("stroke_width", stroke_width);
+    pub const STROKE_COLOR:            SID = setting_id!("stroke_color_r", stroke_color_r);
     pub const STROKE_COLOR_R:          SID = setting_id!("stroke_color_r", stroke_color_r);
     pub const STROKE_COLOR_G:          SID = setting_id!("stroke_color_g", stroke_color_g);
     pub const STROKE_COLOR_B:          SID = setting_id!("stroke_color_b", stroke_color_b);
@@ -172,12 +173,14 @@ pub mod setting_id {
     pub const USE_SHARP_CORNERS:       SID = setting_id!("use_sharp_corners", use_sharp_corners);
     pub const GRADIENT_START_X:        SID = setting_id!("gradient_start_x", gradient.settings.start_x);
     pub const GRADIENT_START_Y:        SID = setting_id!("gradient_start_y", gradient.settings.start_y);
+    pub const GRADIENT_START_COLOR:    SID = setting_id!("gradient_start_color_r", gradient.settings.start_color_r);
     pub const GRADIENT_START_COLOR_R:  SID = setting_id!("gradient_start_color_r", gradient.settings.start_color_r);
     pub const GRADIENT_START_COLOR_G:  SID = setting_id!("gradient_start_color_g", gradient.settings.start_color_g);
     pub const GRADIENT_START_COLOR_B:  SID = setting_id!("gradient_start_color_b", gradient.settings.start_color_b);
     pub const GRADIENT_START_COLOR_A:  SID = setting_id!("gradient_start_color_a", gradient.settings.start_color_a);
     pub const GRADIENT_END_X:          SID = setting_id!("gradient_end_x", gradient.settings.end_x);
     pub const GRADIENT_END_Y:          SID = setting_id!("gradient_end_y", gradient.settings.end_y);
+    pub const GRADIENT_END_COLOR:      SID = setting_id!("gradient_end_color_r", gradient.settings.end_color_r);
     pub const GRADIENT_END_COLOR_R:    SID = setting_id!("gradient_end_color_r", gradient.settings.end_color_r);
     pub const GRADIENT_END_COLOR_G:    SID = setting_id!("gradient_end_color_g", gradient.settings.end_color_g);
     pub const GRADIENT_END_COLOR_B:    SID = setting_id!("gradient_end_color_b", gradient.settings.end_color_b);
@@ -253,28 +256,15 @@ impl Settings for StrokeFullSettings {
                 id: setting_id::STROKE_WIDTH,
             },
             SettingDescriptor {
-                label_key: TrKey::ParamStrokeColorRed,
-                description_key: Some(TrKey::ParamStrokeColorRedDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::STROKE_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamStrokeColorGreen,
-                description_key: Some(TrKey::ParamStrokeColorGreenDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::STROKE_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamStrokeColorBlue,
-                description_key: Some(TrKey::ParamStrokeColorBlueDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::STROKE_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamStrokeColorAlpha,
-                description_key: Some(TrKey::ParamStrokeColorAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::STROKE_COLOR_A,
+                label_key: TrKey::ParamStrokeColor,
+                description_key: Some(TrKey::ParamStrokeColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::STROKE_COLOR_R,
+                    g_id: setting_id::STROKE_COLOR_G,
+                    b_id: setting_id::STROKE_COLOR_B,
+                    a_id: setting_id::STROKE_COLOR_A,
+                },
+                id: setting_id::STROKE_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamAlphaThreshold,
@@ -349,28 +339,15 @@ impl Settings for StrokeFullSettings {
                             id: setting_id::GRADIENT_START_Y,
                         },
                         SettingDescriptor {
-                            label_key: TrKey::ParamStartColorRed,
-                            description_key: Some(TrKey::ParamStartColorRedDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_START_COLOR_R,
-                        },
-                        SettingDescriptor {
-                            label_key: TrKey::ParamStartColorGreen,
-                            description_key: Some(TrKey::ParamStartColorGreenDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_START_COLOR_G,
-                        },
-                        SettingDescriptor {
-                            label_key: TrKey::ParamStartColorBlue,
-                            description_key: Some(TrKey::ParamStartColorBlueDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_START_COLOR_B,
-                        },
-                        SettingDescriptor {
-                            label_key: TrKey::ParamStartColorAlpha,
-                            description_key: Some(TrKey::ParamStartColorAlphaDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_START_COLOR_A,
+                            label_key: TrKey::ParamGradientStartColor,
+                            description_key: Some(TrKey::ParamGradientStartColorDesc),
+                            kind: SettingKind::ColorRGBA {
+                                r_id: setting_id::GRADIENT_START_COLOR_R,
+                                g_id: setting_id::GRADIENT_START_COLOR_G,
+                                b_id: setting_id::GRADIENT_START_COLOR_B,
+                                a_id: setting_id::GRADIENT_START_COLOR_A,
+                            },
+                            id: setting_id::GRADIENT_START_COLOR,
                         },
                         SettingDescriptor {
                             label_key: TrKey::ParamEndPointX,
@@ -385,28 +362,15 @@ impl Settings for StrokeFullSettings {
                             id: setting_id::GRADIENT_END_Y,
                         },
                         SettingDescriptor {
-                            label_key: TrKey::ParamEndColorRed,
-                            description_key: Some(TrKey::ParamEndColorRedDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_END_COLOR_R,
-                        },
-                        SettingDescriptor {
-                            label_key: TrKey::ParamEndColorGreen,
-                            description_key: Some(TrKey::ParamEndColorGreenDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_END_COLOR_G,
-                        },
-                        SettingDescriptor {
-                            label_key: TrKey::ParamEndColorBlue,
-                            description_key: Some(TrKey::ParamEndColorBlueDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_END_COLOR_B,
-                        },
-                        SettingDescriptor {
-                            label_key: TrKey::ParamEndColorAlpha,
-                            description_key: Some(TrKey::ParamEndColorAlphaDesc),
-                            kind: SettingKind::Percentage { logarithmic: false },
-                            id: setting_id::GRADIENT_END_COLOR_A,
+                            label_key: TrKey::ParamGradientEndColor,
+                            description_key: Some(TrKey::ParamGradientEndColorDesc),
+                            kind: SettingKind::ColorRGBA {
+                                r_id: setting_id::GRADIENT_END_COLOR_R,
+                                g_id: setting_id::GRADIENT_END_COLOR_G,
+                                b_id: setting_id::GRADIENT_END_COLOR_B,
+                                a_id: setting_id::GRADIENT_END_COLOR_A,
+                            },
+                            id: setting_id::GRADIENT_END_COLOR,
                         },
                     ],
                 },

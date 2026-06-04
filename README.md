@@ -1,6 +1,6 @@
 # zzzFX — Open-Source Video Effect Plugins
 
-zzzFX is an open-source and free series of video effect plugins for After Effects, Premiere and OpenFX hosts (such as VEGAS Pro, DaVinci Resolve, etc.).
+zzzFX is an open-source and free series of video effect plugins for After Effects, Premiere, AviUtl2, and OpenFX hosts (such as VEGAS Pro, DaVinci Resolve, etc.).
 
 The plugin framework is based on [VideoFX-rs](https://github.com/zzzEffect/VideoFX-rs) (MIT licensed), with modifications and extensions for zzzFX's effect system.
 
@@ -18,6 +18,7 @@ zzzFX/
 │   ├── zzzfx/                  # Shared effect library (core)
 │   ├── macros/                 # Proc macro: #[derive(FullSettings)]
 │   ├── ae-plugin/              # After Effects / Premiere plugin (cdylib)
+│   ├── aviutl2-plugin/         # AviUtl2 filter plugin (cdylib)
 │   └── openfx-plugin/          # OpenFX plugin (cdylib)
 │       └── vendor/
 │           └── openfx/         # OpenFX SDK (git submodule)
@@ -29,6 +30,7 @@ zzzFX/
 | Host | Crate | Build Command |
 |------|-------|---------------|
 | After Effects / Premiere | `ae-plugin` | `cargo build -p zzzfx-ae-plugin --release` |
+| AviUtl2 | `aviutl2-plugin` | `cargo xtask build-aviutl2-plugin --release` |
 | OpenFX (Resolve, Natron, VEGAS, etc.) | `openfx-plugin` | `cargo xtask build-ofx-plugin --release` |
 
 ## Effects
@@ -47,6 +49,8 @@ All effects are implemented in `zzzfx` and bundled into both the AE and OFX plug
 | Pixel Art Style | Color quantization in pixel blocks with ordered/Floyd-Steinberg dithering + grid |
 | Repeater | Keyframe-driven time-offset layer compositor with blend modes |
 | Sprite Sheet | Grid-based sprite sheet reader with animation, scaling, and rotation |
+| LaTeX Display | LaTeX math formula renderer with configurable font, style, and blending |
+| QR Code | QR code generator from text with configurable colors, scaling, and module shapes |
 | Stroke | Alpha-channel stroke with distance transform, fill modes, and blend modes |
 | SVG Display | SVG file renderer with system font loading, scaling, and cache |
 
@@ -98,6 +102,9 @@ cargo xtask build-ofx-plugin --release
 # Build the After Effects / Premiere plugin (output: target/release/zzzfx_ae_plugin.dll)
 # Copy and rename to: C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\zzzfx-ae.aex
 cargo build -p zzzfx-ae-plugin --release
+
+# Build the AviUtl2 plugin (output in crates/aviutl2-plugin/build/)
+cargo xtask build-aviutl2-plugin --release
 ```
 
 #### macOS
@@ -126,6 +133,12 @@ Copy the built `.ofx.bundle/` from `crates/openfx-plugin/build/` to your OFX hos
 - **DaVinci Resolve**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\OFXPlugins\`
 - **Natron**: `C:\Program Files\Common Files\OFX\Plugins\`
 - **VEGAS Pro**: `C:\Program Files\VEGAS\VEGAS Pro\OFX Video Plug-Ins\`
+
+### AviUtl2
+
+Copy the built `zzzFX.au2pkg.zip` from `crates/aviutl2-plugin/build/` to the AviUtl2 `cache/` directory, then restart AviUtl2.
+
+The 14 effects will appear under the **zzzFX** label in the Filter menu, with Japanese as the built-in language. For other UI languages, `.aul2` localization files are included for English, Simplified Chinese, and Korean.
 
 ### After Effects / Premiere
 

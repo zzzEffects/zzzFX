@@ -23,11 +23,11 @@ fn main() {
         Property::Category("zzzFX"),
 
         #[cfg(target_os = "windows")]
-        Property::CodeWin64X86("EffectMain"),
+        Property::CodeWin64X86("EffectMainStroke"),
         #[cfg(target_os = "macos")]
-        Property::CodeMacIntel64("EffectMain"),
+        Property::CodeMacIntel64("EffectMainStroke"),
         #[cfg(target_os = "macos")]
-        Property::CodeMacARM64("EffectMain"),
+        Property::CodeMacARM64("EffectMainStroke"),
 
         Property::AE_PiPL_Version { major: 2, minor: 0 },
         Property::AE_Effect_Spec_Version { major: PF_PLUG_IN_VERSION, minor: PF_PLUG_IN_SUBVERS },
@@ -55,7 +55,7 @@ fn main() {
         ),
         Property::AE_Effect_Match_Name("zzzfx-stroke"),
         Property::AE_Reserved_Info(8),
-        Property::AE_Effect_Support_URL("https://example.com/plugin"),
+        Property::AE_Effect_Support_URL("https://github.com/zzzEffect/zzzFX"),
     ]);
 
     // ── Additional effects — PiPL resources at IDs 16001+ ─────────────────
@@ -69,17 +69,25 @@ fn main() {
             })
         }
 
-        let extra: &[(&'static str, &'static str, &'static str)] = &[
+        let effects: &[(&'static str, &'static str, &'static str)] = &[
+            ("zzzFX Stroke",              "zzzfx-stroke",          "EffectMainStroke"),
             ("zzzFX Repeater",            "zzzfx-repeater",       "EffectMainRepeater"),
             ("zzzFX Sprite Sheet",        "zzzfx-sprite-sheet",   "EffectMainSpriteSheet"),
             ("zzzFX ASCII Art Style",     "zzzfx-ascii-art",      "EffectMainAsciiArt"),
             ("zzzFX Pixel Art Style",     "zzzfx-pixel-art",      "EffectMainPixelArt"),
             ("zzzFX Ambient Light Fusion","zzzfx-ambient-light",   "EffectMainAmbientLight"),
             ("zzzFX Long Shadow",         "zzzfx-long-shadow",     "EffectMainLongShadow"),
+            ("zzzFX Cast Shadow",         "zzzfx-cast-shadow",     "EffectMainCastShadow"),
+            ("zzzFX Chroma Key",          "zzzfx-chroma-key",      "EffectMainChromaKey"),
+            ("zzzFX MIDI Display",        "zzzfx-midi-display",    "EffectMainMidiDisplay"),
+            ("zzzFX SVG Display",         "zzzfx-svg-display",     "EffectMainSvgDisplay"),
+            ("zzzFX LaTeX Display",       "zzzfx-latex-display",   "EffectMainLaTeXDisplay"),
+            ("zzzFX QR Code",             "zzzfx-qr-code",         "EffectMainQrCode"),
+            ("zzzFX ASS Subtitle",        "zzzfx-ass-subtitle",    "EffectMainAssSubtitle"),
         ];
 
-        let mut extra_pipls = Vec::new();
-        for (idx, (name, match_name, entry_name)) in extra.iter().enumerate() {
+        let mut all_pipls = Vec::new();
+        for (idx, (name, match_name, entry_name)) in effects.iter().enumerate() {
             let (name, match_name, entry_name) = (*name, *match_name, *entry_name);
             let pipl = build_pipl(vec![
                 Property::Kind(PIPLType::AEEffect),
@@ -108,11 +116,11 @@ fn main() {
                 Property::AE_Reserved_Info(8),
                 Property::AE_Effect_Support_URL("https://example.com/plugin"),
             ]).unwrap();
-            extra_pipls.push((16001 + idx as i16, pipl));
+            all_pipls.push((16000 + idx as i16, pipl));
         }
 
         let mut res = winres::WindowsResource::new();
-        for (id, pipl) in &extra_pipls {
+        for (id, pipl) in &all_pipls {
             res.append_rc_content(&format!(
                 "{} PiPL DISCARDABLE BEGIN \"{}\" END\n",
                 id,

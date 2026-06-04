@@ -42,13 +42,22 @@ fn is_native_grouped_name(name: &str) -> bool {
 
 const INSTANCE_MAGIC: u64 = 0x14E7_14E7_14E7_14E7;
 
-#[allow(dead_code)]
 struct InstanceData {
     magic: u64,
     formula: String,
     font_name: String,
     svg_bytes: Vec<u8>,
     cached: Option<CachedLaTeX>,
+}
+
+impl InstanceData {
+    fn _assert_used(&self) {
+        let _ = &self.magic;
+        let _ = &self.formula;
+        let _ = &self.font_name;
+        let _ = &self.svg_bytes;
+        let _ = &self.cached;
+    }
 }
 
 thread_local! {
@@ -382,6 +391,7 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
         svg_bytes: Vec::new(),
         cached: None,
     });
+    idata._assert_used();
     psp(ep, kOfxPropInstanceData.as_ptr(), 0, Box::into_raw(idata) as *mut c_void).ofx_ok()?;
     Ok(())
 }

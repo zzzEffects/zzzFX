@@ -173,12 +173,14 @@ pub mod setting_id {
     pub const KEYBOARD_WIDTH:         SID = setting_id!("keyboard_width", keyboard_width);
     // Note Appearance
     pub const NOTE_COLOR_MODE:        SID = setting_id!("note_color_mode", note_color_mode);
+    pub const NOTE_COLOR:             SID = setting_id!("note_color_r", note_color_r);
     pub const NOTE_COLOR_R:           SID = setting_id!("note_color_r", note_color_r);
     pub const NOTE_COLOR_G:           SID = setting_id!("note_color_g", note_color_g);
     pub const NOTE_COLOR_B:           SID = setting_id!("note_color_b", note_color_b);
     pub const NOTE_COLOR_A:           SID = setting_id!("note_color_a", note_color_a);
     pub const NOTE_OPACITY:           SID = setting_id!("note_opacity", note_opacity);
     pub const NOTE_BORDER_THICKNESS:  SID = setting_id!("note_border_thickness", note_border_thickness);
+    pub const NOTE_BORDER_COLOR:      SID = setting_id!("note_border_color_r", note_border_color_r);
     pub const NOTE_BORDER_COLOR_R:    SID = setting_id!("note_border_color_r", note_border_color_r);
     pub const NOTE_BORDER_COLOR_G:    SID = setting_id!("note_border_color_g", note_border_color_g);
     pub const NOTE_BORDER_COLOR_B:    SID = setting_id!("note_border_color_b", note_border_color_b);
@@ -190,6 +192,7 @@ pub mod setting_id {
     pub const VELOCITY_AFFECTS_BRIGHTNESS: SID = setting_id!("velocity_affects_brightness", velocity_affects_brightness);
     pub const MINIMUM_VELOCITY:             SID = setting_id!("minimum_velocity", minimum_velocity);
     // Background
+    pub const BACKGROUND_COLOR:    SID = setting_id!("background_color_r", background_color_r);
     pub const BACKGROUND_COLOR_R:  SID = setting_id!("background_color_r", background_color_r);
     pub const BACKGROUND_COLOR_G:  SID = setting_id!("background_color_g", background_color_g);
     pub const BACKGROUND_COLOR_B:  SID = setting_id!("background_color_b", background_color_b);
@@ -300,30 +303,16 @@ impl Settings for MidiDisplayFullSettings {
                 },
                 id: setting_id::NOTE_COLOR_MODE,
             },
-            // Native RGBA placeholders — skipped in OFX define loop, defined as native param instead
             SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteColorR,
-                description_key: Some(TrKey::ParamMidiNoteColorRDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteColorG,
-                description_key: Some(TrKey::ParamMidiNoteColorGDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteColorB,
-                description_key: Some(TrKey::ParamMidiNoteColorBDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteColorA,
-                description_key: Some(TrKey::ParamMidiNoteColorADesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_COLOR_A,
+                label_key: TrKey::ParamMidiNoteColor,
+                description_key: Some(TrKey::ParamMidiNoteColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::NOTE_COLOR_R,
+                    g_id: setting_id::NOTE_COLOR_G,
+                    b_id: setting_id::NOTE_COLOR_B,
+                    a_id: setting_id::NOTE_COLOR_A,
+                },
+                id: setting_id::NOTE_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamMidiNoteOpacity,
@@ -338,28 +327,15 @@ impl Settings for MidiDisplayFullSettings {
                 id: setting_id::NOTE_BORDER_THICKNESS,
             },
             SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteBorderColorR,
-                description_key: Some(TrKey::ParamMidiNoteBorderColorRDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_BORDER_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteBorderColorG,
-                description_key: Some(TrKey::ParamMidiNoteBorderColorGDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_BORDER_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteBorderColorB,
-                description_key: Some(TrKey::ParamMidiNoteBorderColorBDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_BORDER_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiNoteBorderColorA,
-                description_key: Some(TrKey::ParamMidiNoteBorderColorADesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::NOTE_BORDER_COLOR_A,
+                label_key: TrKey::ParamMidiNoteBorderColor,
+                description_key: Some(TrKey::ParamMidiNoteBorderColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::NOTE_BORDER_COLOR_R,
+                    g_id: setting_id::NOTE_BORDER_COLOR_G,
+                    b_id: setting_id::NOTE_BORDER_COLOR_B,
+                    a_id: setting_id::NOTE_BORDER_COLOR_A,
+                },
+                id: setting_id::NOTE_BORDER_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamMidiNoteBorderOpacity,
@@ -394,28 +370,15 @@ impl Settings for MidiDisplayFullSettings {
             },
             // ── Background ───────────────────────────────────────
             SettingDescriptor {
-                label_key: TrKey::ParamMidiBackgroundColorR,
-                description_key: Some(TrKey::ParamMidiBackgroundColorRDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::BACKGROUND_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiBackgroundColorG,
-                description_key: Some(TrKey::ParamMidiBackgroundColorGDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::BACKGROUND_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiBackgroundColorB,
-                description_key: Some(TrKey::ParamMidiBackgroundColorBDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::BACKGROUND_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamMidiBackgroundColorA,
-                description_key: Some(TrKey::ParamMidiBackgroundColorADesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::BACKGROUND_COLOR_A,
+                label_key: TrKey::ParamMidiBackgroundColor,
+                description_key: Some(TrKey::ParamMidiBackgroundColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::BACKGROUND_COLOR_R,
+                    g_id: setting_id::BACKGROUND_COLOR_G,
+                    b_id: setting_id::BACKGROUND_COLOR_B,
+                    a_id: setting_id::BACKGROUND_COLOR_A,
+                },
+                id: setting_id::BACKGROUND_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamMidiBackgroundOpacity,

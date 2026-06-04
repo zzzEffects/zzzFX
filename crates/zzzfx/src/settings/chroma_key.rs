@@ -49,6 +49,7 @@ pub mod setting_id {
     use super::ChromaKeyFullSettings;
     type SID = SettingID<ChromaKeyFullSettings>;
 
+    pub const KEY_COLOR:         SID = setting_id!("key_color_r", key_color_r);
     pub const KEY_COLOR_R:       SID = setting_id!("key_color_r", key_color_r);
     pub const KEY_COLOR_G:       SID = setting_id!("key_color_g", key_color_g);
     pub const KEY_COLOR_B:       SID = setting_id!("key_color_b", key_color_b);
@@ -71,28 +72,15 @@ impl Settings for ChromaKeyFullSettings {
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
             SettingDescriptor {
-                label_key: TrKey::ParamChromaKeyColorRed,
-                description_key: Some(TrKey::ParamChromaKeyColorRedDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::KEY_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamChromaKeyColorGreen,
-                description_key: Some(TrKey::ParamChromaKeyColorGreenDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::KEY_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamChromaKeyColorBlue,
-                description_key: Some(TrKey::ParamChromaKeyColorBlueDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::KEY_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamChromaKeyColorAlpha,
-                description_key: Some(TrKey::ParamChromaKeyColorAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::KEY_COLOR_A,
+                label_key: TrKey::ParamChromaKeyKeyColor,
+                description_key: Some(TrKey::ParamChromaKeyKeyColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::KEY_COLOR_R,
+                    g_id: setting_id::KEY_COLOR_G,
+                    b_id: setting_id::KEY_COLOR_B,
+                    a_id: setting_id::KEY_COLOR_A,
+                },
+                id: setting_id::KEY_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamChromaKeyThreshold,

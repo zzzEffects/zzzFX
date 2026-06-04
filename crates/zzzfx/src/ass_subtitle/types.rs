@@ -328,12 +328,9 @@ impl DirtyRect {
 
 /// Karaoke syllable timing data for timed character coloring.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct KaraokeSyllable {
-    pub char_start: usize,
     pub char_end: usize,
     pub duration_cs: i64,
-    pub kind: KaraokeKind,
 }
 
 /// Precomputed per-event data, keyed by (generation, event pointer address).

@@ -410,11 +410,13 @@ pub mod setting_id {
     pub const FONT_SCALE_Y:     SID = setting_id!("font_scale_y", font_scale_y);
     pub const FONT_ROTATION:    SID = setting_id!("font_rotation", font_rotation);
     pub const COLOR_MODE:       SID = setting_id!("color_mode", color_mode);
+    pub const FONT_COLOR:       SID = setting_id!("font_color_r", font_color_r);
     pub const FONT_COLOR_R:     SID = setting_id!("font_color_r", font_color_r);
     pub const FONT_COLOR_G:     SID = setting_id!("font_color_g", font_color_g);
     pub const FONT_COLOR_B:     SID = setting_id!("font_color_b", font_color_b);
     pub const FONT_COLOR_A:     SID = setting_id!("font_color_a", font_color_a);
     pub const GRID_THICKNESS:   SID = setting_id!("grid_thickness", grid_thickness);
+    pub const GRID_COLOR:       SID = setting_id!("grid_color_r", grid_color_r);
     pub const GRID_COLOR_R:     SID = setting_id!("grid_color_r", grid_color_r);
     pub const GRID_COLOR_G:     SID = setting_id!("grid_color_g", grid_color_g);
     pub const GRID_COLOR_B:     SID = setting_id!("grid_color_b", grid_color_b);
@@ -422,6 +424,7 @@ pub mod setting_id {
     pub const BRIGHTNESS:       SID = setting_id!("brightness", brightness);
     pub const CONTRAST:         SID = setting_id!("contrast", contrast);
     pub const INVERT_LUMA:      SID = setting_id!("invert_luma", invert_luma);
+    pub const BG_COLOR:   SID = setting_id!("bg_color_r", bg_color_r);
     pub const BG_COLOR_R: SID = setting_id!("bg_color_r", bg_color_r);
     pub const BG_COLOR_G: SID = setting_id!("bg_color_g", bg_color_g);
     pub const BG_COLOR_B: SID = setting_id!("bg_color_b", bg_color_b);
@@ -541,28 +544,15 @@ impl Settings for AsciiArtFullSettings {
                 id: setting_id::COLOR_MODE,
             },
             SettingDescriptor {
-                label_key: TrKey::ParamGridColorRed,
-                description_key: Some(TrKey::ParamGridColorRedDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::FONT_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorGreen,
-                description_key: Some(TrKey::ParamGridColorGreenDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::FONT_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorBlue,
-                description_key: Some(TrKey::ParamGridColorBlueDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::FONT_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorAlpha,
-                description_key: Some(TrKey::ParamGridColorAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::FONT_COLOR_A,
+                label_key: TrKey::ParamAsciiFontColor,
+                description_key: Some(TrKey::ParamAsciiFontColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::FONT_COLOR_R,
+                    g_id: setting_id::FONT_COLOR_G,
+                    b_id: setting_id::FONT_COLOR_B,
+                    a_id: setting_id::FONT_COLOR_A,
+                },
+                id: setting_id::FONT_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamGridThickness,
@@ -571,28 +561,15 @@ impl Settings for AsciiArtFullSettings {
                 id: setting_id::GRID_THICKNESS,
             },
             SettingDescriptor {
-                label_key: TrKey::ParamGridColorRed,
-                description_key: Some(TrKey::ParamGridColorRedDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorGreen,
-                description_key: Some(TrKey::ParamGridColorGreenDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorBlue,
-                description_key: Some(TrKey::ParamGridColorBlueDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorAlpha,
-                description_key: Some(TrKey::ParamGridColorAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_A,
+                label_key: TrKey::ParamAsciiGridColor,
+                description_key: Some(TrKey::ParamAsciiGridColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::GRID_COLOR_R,
+                    g_id: setting_id::GRID_COLOR_G,
+                    b_id: setting_id::GRID_COLOR_B,
+                    a_id: setting_id::GRID_COLOR_A,
+                },
+                id: setting_id::GRID_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamAsciiBrightness,
@@ -611,6 +588,17 @@ impl Settings for AsciiArtFullSettings {
                 description_key: Some(TrKey::ParamAsciiInvertLumaDesc),
                 kind: SettingKind::Boolean,
                 id: setting_id::INVERT_LUMA,
+            },
+            SettingDescriptor {
+                label_key: TrKey::ParamAsciiBgColor,
+                description_key: Some(TrKey::ParamAsciiBgColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::BG_COLOR_R,
+                    g_id: setting_id::BG_COLOR_G,
+                    b_id: setting_id::BG_COLOR_B,
+                    a_id: setting_id::BG_COLOR_A,
+                },
+                id: setting_id::BG_COLOR,
             },
         ]
         .into_boxed_slice()

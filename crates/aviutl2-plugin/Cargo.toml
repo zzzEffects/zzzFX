@@ -1,0 +1,18 @@
+[package]
+name = "zzzfx-aviutl2-plugin"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zzzfx = { path = "../zzzfx", default-features = false }
+aviutl2 = "0.31"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true

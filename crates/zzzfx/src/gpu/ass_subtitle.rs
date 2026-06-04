@@ -25,8 +25,6 @@ struct AssUniforms {
 static GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 
 struct GpuContext {
-    #[allow(dead_code)]
-    device: &'static wgpu::Device,
     queue: &'static wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     bufs: GpuBuffers,
@@ -71,6 +69,8 @@ pub fn try_ass_subtitle_gpu_composite(
         return Err("buffer size mismatch".to_string());
     }
 
+    let (device, _) = super::get_or_init_shared_device()?;
+
     let ctx = match get_or_init_gpu() {
         Ok(ctx) => ctx,
         Err(_) => {
@@ -85,7 +85,7 @@ pub fn try_ass_subtitle_gpu_composite(
     };
 
     if guard.bufs.width != width || guard.bufs.height != height {
-        guard.bufs = create_buffers(&guard.device, width, height);
+        guard.bufs = create_buffers(device, width, height);
         guard.bind_group = None; // Invalidate cached bind group
     }
 
@@ -114,7 +114,7 @@ pub fn try_ass_subtitle_gpu_composite(
 
     // Build or reuse bind group (references buffers by handle, valid across frames)
     if guard.bind_group.is_none() {
-        guard.bind_group = Some(guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        guard.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ass_composite"),
             layout: &guard.pipeline.get_bind_group_layout(0),
             entries: &[
@@ -139,8 +139,7 @@ pub fn try_ass_subtitle_gpu_composite(
     let wg_x = (width + 15) / 16;
     let wg_y = (height + 15) / 16;
     {
-        let mut encoder = guard
-            .device
+        let mut encoder = device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -156,8 +155,7 @@ pub fn try_ass_subtitle_gpu_composite(
 
     // Readback
     {
-        let mut encoder = guard
-            .device
+        let mut encoder = device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         encoder.copy_buffer_to_buffer(
             &guard.bufs.dst_buf,
@@ -171,7 +169,7 @@ pub fn try_ass_subtitle_gpu_composite(
 
     let staging_slice = guard.bufs.staging_buf.slice(..src_size);
     staging_slice.map_async(wgpu::MapMode::Read, |_| {});
-    let _ = guard.device.poll(wgpu::PollType::Wait {
+    let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
     });
@@ -204,7 +202,6 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
     let bufs = create_buffers(device, 256, 256);
 
     let _ = GPU_CTX.set(Mutex::new(GpuContext {
-        device,
         queue,
         pipeline,
         bufs,

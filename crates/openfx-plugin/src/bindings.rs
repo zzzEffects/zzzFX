@@ -46,7 +46,6 @@ impl From<std::ffi::c_int> for OfxStatus {
 
 pub type OfxResult<T> = Result<T, OfxStatus>;
 
-#[allow(dead_code)]
 pub mod OfxStat {
     use crate::bindings::OfxStatus;
 

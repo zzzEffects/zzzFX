@@ -54,6 +54,11 @@ pub mod setting_id {
     use super::LongShadowFullSettings;
     type SID = SettingID<LongShadowFullSettings>;
 
+    pub const SHADOW_COLOR:     SID = setting_id!("shadow_color_r", shadow_color_r);
+    pub const SHADOW_COLOR_R:   SID = setting_id!("shadow_color_r", shadow_color_r);
+    pub const SHADOW_COLOR_G:   SID = setting_id!("shadow_color_g", shadow_color_g);
+    pub const SHADOW_COLOR_B:   SID = setting_id!("shadow_color_b", shadow_color_b);
+    pub const SHADOW_COLOR_A:   SID = setting_id!("shadow_color_a", shadow_color_a);
     pub const ANGLE:            SID = setting_id!("angle", angle);
     pub const LENGTH:           SID = setting_id!("length", length);
     pub const SOFTNESS:         SID = setting_id!("softness", softness);
@@ -72,6 +77,17 @@ impl Settings for LongShadowFullSettings {
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
+            SettingDescriptor {
+                label_key: TrKey::ParamShadowColor,
+                description_key: Some(TrKey::ParamShadowColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::SHADOW_COLOR_R,
+                    g_id: setting_id::SHADOW_COLOR_G,
+                    b_id: setting_id::SHADOW_COLOR_B,
+                    a_id: setting_id::SHADOW_COLOR_A,
+                },
+                id: setting_id::SHADOW_COLOR,
+            },
             SettingDescriptor {
                 label_key: TrKey::ParamShadowAngle,
                 description_key: Some(TrKey::ParamShadowAngleDesc),

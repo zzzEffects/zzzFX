@@ -96,6 +96,12 @@ i18n_keys! {
         ParamEndColorBlueDesc = "Blue component of the gradient end color.";
         ParamEndColorAlpha = "End Color Alpha";
         ParamEndColorAlphaDesc = "Alpha component of the gradient end color.";
+        ParamStrokeColor = "Stroke Color";
+        ParamStrokeColorDesc = "Color of the stroke.";
+        ParamGradientStartColor = "Gradient Start Color";
+        ParamGradientStartColorDesc = "Color at the gradient start.";
+        ParamGradientEndColor = "Gradient End Color";
+        ParamGradientEndColorDesc = "Color at the gradient end.";
         ParamUseSharpCorners = "Use Sharp Corners";
         ParamUseSharpCornersDesc = "When enabled, stroke corners are sharp (square) instead of rounded.";
 
@@ -395,6 +401,12 @@ i18n_keys! {
         ParamAsciiContrastDesc = "Pre-mapping contrast adjustment. 0.5 is neutral, 0 = flat, 1 = maximum contrast.";
         ParamAsciiInvertLuma = "Invert Luminance";
         ParamAsciiInvertLumaDesc = "When enabled, dark source areas map to light characters and vice versa.";
+        ParamAsciiFontColor = "Font Color";
+        ParamAsciiFontColorDesc = "Color used for characters when Color Mode is set to Solid Color.";
+        ParamAsciiGridColor = "Grid Color";
+        ParamAsciiGridColorDesc = "Color of the cell grid lines.";
+        ParamAsciiBgColor = "Background Color";
+        ParamAsciiBgColorDesc = "Color of the background behind characters.";
         ParamAsciiColorMode = "Color Mode";
         ParamAsciiColorModeDesc = "How to color the output characters.";
         ParamAsciiFontName = "Font Name";
@@ -441,6 +453,8 @@ i18n_keys! {
         ParamGridColorGreenDesc = "Green component of the grid line color.";
         ParamGridColorBlue = "Grid Color Blue";
         ParamGridColorBlueDesc = "Blue component of the grid line color.";
+        ParamGridColor = "Grid Color";
+        ParamGridColorDesc = "Color of the grid lines between pixel blocks.";
         ParamGridColorAlpha = "Grid Color Alpha";
         ParamGridColorAlphaDesc = "Alpha/opacity of the grid lines. 0 = fully transparent, 1 = fully opaque.";
 
@@ -489,6 +503,8 @@ i18n_keys! {
         ParamShadowOpacityDesc = "Overall shadow opacity multiplier.";
         ParamShadowAlphaThreshold = "Alpha Threshold";
         ParamShadowAlphaThresholdDesc = "Source pixels with alpha below this value do not cast shadows.";
+        ParamShadowColor = "Shadow Color";
+        ParamShadowColorDesc = "Color of the long shadow.";
         ParamShadowSourceOpacity = "Source Opacity";
         ParamShadowSourceOpacityDesc = "Opacity of the source image. 0 = shadow only, 1 = fully opaque.";
 
@@ -555,6 +571,12 @@ i18n_keys! {
         ParamMidiKeyboardWidthDesc = "Width of the keyboard as a fraction of the output dimension.";
 
         // ── MIDI Display: Note Appearance params ─────────
+        ParamMidiNoteColor = "Note Color";
+        ParamMidiNoteColorDesc = "Color of notes when Color Mode is set to Solid.";
+        ParamMidiNoteBorderColor = "Note Border Color";
+        ParamMidiNoteBorderColorDesc = "Color of the note border.";
+        ParamMidiBackgroundColor = "Background Color";
+        ParamMidiBackgroundColorDesc = "Color of the background behind the piano roll.";
         ParamMidiNoteColorMode = "Note Color Mode";
         ParamMidiNoteColorModeDesc = "How note colors are determined.";
         ParamMidiNoteColorR = "Note Color Red";
@@ -739,6 +761,8 @@ i18n_keys! {
         ParamChromaKeyShowMatteDesc = "Display the alpha matte as grayscale for debugging purposes.";
         ParamChromaKeyInvert = "Invert";
         ParamChromaKeyInvertDesc = "Invert the alpha matte. Keyed areas become opaque and non-keyed areas become transparent.";
+        ParamChromaKeyKeyColor = "Key Color";
+        ParamChromaKeyKeyColorDesc = "Color to key out from the foreground.";
         ParamChromaKeyEdgeBlur = "Edge Blur";
         ParamChromaKeyEdgeBlurDesc = "Spatial blur radius in pixels applied to the alpha matte for softer edges.";
 
@@ -769,6 +793,8 @@ i18n_keys! {
         ParamCastShadowSourceOpacityDesc = "Opacity of the source image. 0 = shadow only, 1 = fully opaque.";
         ParamCastShadowPivotAngle = "Pivot Angle";
         ParamCastShadowPivotAngleDesc = "Controls which edge of the bounding box serves as the pivot axis. 0° = bottom, 90° = left, 180° = top, 270° = right.";
+        ParamCastShadowColor = "Shadow Color";
+        ParamCastShadowColorDesc = "Color of the cast shadow.";
         ParamCastShadowPivotMode = "Pivot Mode";
         ParamCastShadowPivotModeDesc = "How the projection axis is determined.";
         ParamCastShadowFade = "Fade";

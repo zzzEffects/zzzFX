@@ -18,6 +18,8 @@ pub mod latex_display;
 pub mod svg_display;
 pub mod qr_code;
 
+pub use crate::i18n::TrKey;
+
 pub use repeater::CompositorLayer;
 
 pub use settings::ambient_light::{AmbientLight, AmbientLightFullSettings};

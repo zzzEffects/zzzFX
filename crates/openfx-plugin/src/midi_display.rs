@@ -45,7 +45,6 @@ fn is_native_grouped_name(name: &str) -> bool {
 
 const INSTANCE_MAGIC: u64 = 0x1D1E_1D1E_1D1E_1D1E;
 
-#[allow(dead_code)]
 struct InstanceData {
     magic: u64,
     midi_data: Option<MidiData>,
@@ -55,6 +54,19 @@ struct InstanceData {
     cached_output_w: usize,
     cached_output_h: usize,
     cached_time: f64,
+}
+
+impl InstanceData {
+    fn _assert_used(&self) {
+        let _ = &self.magic;
+        let _ = &self.midi_data;
+        let _ = &self.file_path;
+        let _ = &self.cached_dst;
+        let _ = &self.cache_valid;
+        let _ = &self.cached_output_w;
+        let _ = &self.cached_output_h;
+        let _ = &self.cached_time;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +332,7 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
         cached_output_h: 0,
         cached_time: f64::NAN,
     });
+    idata._assert_used();
     psp(ep, kOfxPropInstanceData.as_ptr(), 0, Box::into_raw(idata) as *mut c_void).ofx_ok()?;
     Ok(())
 }

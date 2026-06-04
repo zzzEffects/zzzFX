@@ -89,7 +89,7 @@ pub fn map_params<T: Settings<Key = TrKey> + 'static>(
     default_settings: &T,
     legacy_default_settings: &T,
 ) -> Result<(), Error> {
-    use ae::{CheckBoxDef, FloatSliderDef, ParamFlag, PopupDef, ValueDisplayFlag};
+    use ae::{CheckBoxDef, ColorDef, FloatSliderDef, ParamFlag, PopupDef, ValueDisplayFlag};
 
     fn get_defaults<U: zzzfx::settings::SettingField + 'static, T: Settings>(
         defaults: &T,
@@ -259,6 +259,54 @@ pub fn map_params<T: Settings<Key = TrKey> + 'static>(
                     },
                 )?;
             }
+            SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+                let default_r = default_settings.get_field::<f32>(r_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_r = legacy_default_settings.get_field::<f32>(r_id).map_err(|_| Error::BadCallbackParameter)?;
+                let default_g = default_settings.get_field::<f32>(g_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_g = legacy_default_settings.get_field::<f32>(g_id).map_err(|_| Error::BadCallbackParameter)?;
+                let default_b = default_settings.get_field::<f32>(b_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_b = legacy_default_settings.get_field::<f32>(b_id).map_err(|_| Error::BadCallbackParameter)?;
+                let default_a = default_settings.get_field::<f32>(a_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_a = legacy_default_settings.get_field::<f32>(a_id).map_err(|_| Error::BadCallbackParameter)?;
+                let to_u8 = |v: f32| -> u8 { (v.clamp(0.0, 1.0) * 255.0).round() as u8 };
+                params.add_customized(
+                    ParamID::Param(descriptor.id.ae_id()),
+                    zzzfx::i18n::tr(descriptor.label_key),
+                    ColorDef::setup(|c| {
+                        c.set_default(ae::Pixel8 { alpha: to_u8(default_a), red: to_u8(default_r), green: to_u8(default_g), blue: to_u8(default_b) });
+                        c.set_value(ae::Pixel8 { alpha: to_u8(legacy_a), red: to_u8(legacy_r), green: to_u8(legacy_g), blue: to_u8(legacy_b) });
+                    }),
+                    |p| {
+                        p.set_id(descriptor.id.ae_id());
+                        p.set_flag(ParamFlag::START_COLLAPSED, true);
+                        p.set_flag(ParamFlag::USE_VALUE_FOR_OLD_PROJECTS, true);
+                        -1
+                    },
+                )?;
+            }
+            SettingKind::ColorRGB { r_id, g_id, b_id } => {
+                let default_r = default_settings.get_field::<f32>(r_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_r = legacy_default_settings.get_field::<f32>(r_id).map_err(|_| Error::BadCallbackParameter)?;
+                let default_g = default_settings.get_field::<f32>(g_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_g = legacy_default_settings.get_field::<f32>(g_id).map_err(|_| Error::BadCallbackParameter)?;
+                let default_b = default_settings.get_field::<f32>(b_id).map_err(|_| Error::BadCallbackParameter)?;
+                let legacy_b = legacy_default_settings.get_field::<f32>(b_id).map_err(|_| Error::BadCallbackParameter)?;
+                let to_u8 = |v: f32| -> u8 { (v.clamp(0.0, 1.0) * 255.0).round() as u8 };
+                params.add_customized(
+                    ParamID::Param(descriptor.id.ae_id()),
+                    zzzfx::i18n::tr(descriptor.label_key),
+                    ColorDef::setup(|c| {
+                        c.set_default(ae::Pixel8 { alpha: 255, red: to_u8(default_r), green: to_u8(default_g), blue: to_u8(default_b) });
+                        c.set_value(ae::Pixel8 { alpha: 255, red: to_u8(legacy_r), green: to_u8(legacy_g), blue: to_u8(legacy_b) });
+                    }),
+                    |p| {
+                        p.set_id(descriptor.id.ae_id());
+                        p.set_flag(ParamFlag::START_COLLAPSED, true);
+                        p.set_flag(ParamFlag::USE_VALUE_FOR_OLD_PROJECTS, true);
+                        -1
+                    },
+                )?;
+            }
         }
     }
 
@@ -331,6 +379,25 @@ pub fn apply_settings_list<T: Settings>(
                 ).map_err(|_| Error::BadCallbackParameter)?;
                 apply_settings_list(children, params, settings)?;
             }
+            SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+                let color = params
+                    .get(ParamID::Param(descriptor.id.ae_id()))?
+                    .as_color()?
+                    .value();
+                settings.set_field::<f32>(r_id, color.red as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+                settings.set_field::<f32>(g_id, color.green as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+                settings.set_field::<f32>(b_id, color.blue as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+                settings.set_field::<f32>(a_id, color.alpha as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+            }
+            SettingKind::ColorRGB { r_id, g_id, b_id } => {
+                let color = params
+                    .get(ParamID::Param(descriptor.id.ae_id()))?
+                    .as_color()?
+                    .value();
+                settings.set_field::<f32>(r_id, color.red as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+                settings.set_field::<f32>(g_id, color.green as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+                settings.set_field::<f32>(b_id, color.blue as f32 / 255.0).map_err(|_| Error::BadCallbackParameter)?;
+            }
         }
     }
     Ok(())
@@ -391,11 +458,11 @@ pub fn copy_layer_to_contiguous(in_layer: &ae::Layer, buf: &mut [u8], width: usi
     let src_row_bytes = in_layer.row_bytes();
     let stride = if src_row_bytes > 0 { src_row_bytes as usize } else { -src_row_bytes as usize };
     let row_bytes = width * 4;
-    if stride < row_bytes { return; }
+    let src_buf = in_layer.buffer();
     for y in 0..height {
         unsafe {
             std::ptr::copy_nonoverlapping(
-                in_layer.buffer().as_ptr().add(y * stride),
+                src_buf.as_ptr().add(y * stride),
                 buf.as_mut_ptr().add(y * row_bytes),
                 row_bytes,
             );
@@ -407,12 +474,12 @@ pub fn copy_contiguous_to_layer(buf: &[u8], out_layer: &mut ae::Layer, width: us
     let dst_row_bytes = out_layer.row_bytes();
     let stride = if dst_row_bytes > 0 { dst_row_bytes as usize } else { -dst_row_bytes as usize };
     let row_bytes = width * 4;
-    if stride < row_bytes { return; }
+    let dst_buf = out_layer.buffer_mut();
     for y in 0..height {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 buf.as_ptr().add(y * row_bytes),
-                out_layer.buffer_mut().as_mut_ptr().add(y * stride),
+                dst_buf.as_mut_ptr().add(y * stride),
                 row_bytes,
             );
         }

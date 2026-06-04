@@ -35,17 +35,11 @@ pub struct HostInfo {
 // ---------------------------------------------------------------------------
 
 pub struct SuiteCache {
-    #[allow(dead_code)]
     pub host_info: HostInfo,
     pub property_suite: &'static OfxPropertySuiteV1,
     pub image_effect_suite: &'static OfxImageEffectSuiteV1,
-    #[allow(dead_code)]
-    pub memory_suite: &'static OfxMemorySuiteV1,
     pub parameter_suite: &'static OfxParameterSuiteV1,
-    #[allow(dead_code)]
     pub interact_suite: Option<&'static OfxInteractSuiteV1>,
-    #[allow(dead_code)]
-    pub draw_suite: Option<&'static OfxDrawSuiteV1>,
     pub supports_multiple_clip_depths: AtomicBool,
 }
 
@@ -61,11 +55,6 @@ impl SuiteCache {
             kOfxImageEffectSuite.as_ptr(),
             1,
         ) as *const OfxImageEffectSuiteV1;
-        let memory_suite = (host_info.fetch_suite)(
-            host_info.host as *const _ as _,
-            kOfxMemorySuite.as_ptr(),
-            1,
-        ) as *const OfxMemorySuiteV1;
         let parameter_suite = (host_info.fetch_suite)(
             host_info.host as *const _ as _,
             kOfxParameterSuite.as_ptr(),
@@ -76,12 +65,6 @@ impl SuiteCache {
             c"OfxInteractSuite".as_ptr(),
             1,
         ) as *const OfxInteractSuiteV1;
-        let draw_suite = (host_info.fetch_suite)(
-            host_info.host as *const _ as _,
-            c"OfxDrawSuite".as_ptr(),
-            1,
-        ) as *const OfxDrawSuiteV1;
-
         Ok(Self {
             host_info,
             property_suite: property_suite
@@ -90,14 +73,10 @@ impl SuiteCache {
             image_effect_suite: image_effect_suite
                 .as_ref()
                 .ok_or(OfxStat::kOfxStatErrMissingHostFeature)?,
-            memory_suite: memory_suite
-                .as_ref()
-                .ok_or(OfxStat::kOfxStatErrMissingHostFeature)?,
             parameter_suite: parameter_suite
                 .as_ref()
                 .ok_or(OfxStat::kOfxStatErrMissingHostFeature)?,
             interact_suite: unsafe { interact_suite.as_ref() },
-            draw_suite: unsafe { draw_suite.as_ref() },
             supports_multiple_clip_depths: AtomicBool::new(false),
         })
     }
@@ -305,6 +284,52 @@ pub unsafe fn define_single_param<T: Settings<Key = TrKey> + Clone>(
             .ofx_ok()?;
             pi(pp, kOfxParamPropDefault.as_ptr(), 0, dv as i32).ofx_ok()?;
         }
+        SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+            let dv_r = default_settings
+                .get_field::<f32>(r_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            let dv_g = default_settings
+                .get_field::<f32>(g_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            let dv_b = default_settings
+                .get_field::<f32>(b_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            let dv_a = default_settings
+                .get_field::<f32>(a_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            pdef(
+                param_set,
+                kOfxParamTypeRGBA.as_ptr(),
+                id_cstr.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 0, dv_r as f64).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 1, dv_g as f64).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 2, dv_b as f64).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 3, dv_a as f64).ofx_ok()?;
+        }
+        SettingKind::ColorRGB { r_id, g_id, b_id } => {
+            let dv_r = default_settings
+                .get_field::<f32>(r_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            let dv_g = default_settings
+                .get_field::<f32>(g_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            let dv_b = default_settings
+                .get_field::<f32>(b_id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            pdef(
+                param_set,
+                kOfxParamTypeRGB.as_ptr(),
+                id_cstr.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 0, dv_r as f64).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 1, dv_g as f64).ofx_ok()?;
+            pd(pp, kOfxParamPropDefault.as_ptr(), 2, dv_b as f64).ofx_ok()?;
+        }
         SettingKind::Group { children } => {
             let dv = default_settings
                 .get_field::<bool>(&descriptor.id)
@@ -415,6 +440,26 @@ pub unsafe fn read_generic_param<T: Settings<Key = TrKey> + Clone>(
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
             dst.set_field::<bool>(&desc.id, v != 0).ok();
+        }
+        SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+            let mut r: f64 = 0.0;
+            let mut g: f64 = 0.0;
+            let mut b: f64 = 0.0;
+            let mut a: f64 = 0.0;
+            pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
+            dst.set_field::<f32>(r_id, r as f32).ok();
+            dst.set_field::<f32>(g_id, g as f32).ok();
+            dst.set_field::<f32>(b_id, b as f32).ok();
+            dst.set_field::<f32>(a_id, a as f32).ok();
+        }
+        SettingKind::ColorRGB { r_id, g_id, b_id } => {
+            let mut r: f64 = 0.0;
+            let mut g: f64 = 0.0;
+            let mut b: f64 = 0.0;
+            pgv(p, time, &mut r, &mut g, &mut b).ofx_ok()?;
+            dst.set_field::<f32>(r_id, r as f32).ok();
+            dst.set_field::<f32>(g_id, g as f32).ok();
+            dst.set_field::<f32>(b_id, b as f32).ok();
         }
         SettingKind::Group { .. } => {}
     }

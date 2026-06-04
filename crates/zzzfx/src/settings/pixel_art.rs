@@ -84,6 +84,7 @@ pub mod setting_id {
     pub const DITHERING:        SID = setting_id!("dithering", dithering);
     pub const DITHERING_AMOUNT: SID = setting_id!("dithering_amount", dithering_amount);
     pub const GRID_THICKNESS:   SID = setting_id!("grid_thickness", grid_thickness);
+    pub const GRID_COLOR:       SID = setting_id!("grid_color_r", grid_color_r);
     pub const GRID_COLOR_R:     SID = setting_id!("grid_color_r", grid_color_r);
     pub const GRID_COLOR_G:     SID = setting_id!("grid_color_g", grid_color_g);
     pub const GRID_COLOR_B:     SID = setting_id!("grid_color_b", grid_color_b);
@@ -158,28 +159,15 @@ impl Settings for PixelArtFullSettings {
                 id: setting_id::GRID_THICKNESS,
             },
             SettingDescriptor {
-                label_key: TrKey::ParamGridColorRed,
-                description_key: Some(TrKey::ParamGridColorRedDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_R,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorGreen,
-                description_key: Some(TrKey::ParamGridColorGreenDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_G,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorBlue,
-                description_key: Some(TrKey::ParamGridColorBlueDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_B,
-            },
-            SettingDescriptor {
-                label_key: TrKey::ParamGridColorAlpha,
-                description_key: Some(TrKey::ParamGridColorAlphaDesc),
-                kind: SettingKind::Percentage { logarithmic: false },
-                id: setting_id::GRID_COLOR_A,
+                label_key: TrKey::ParamGridColor,
+                description_key: Some(TrKey::ParamGridColorDesc),
+                kind: SettingKind::ColorRGBA {
+                    r_id: setting_id::GRID_COLOR_R,
+                    g_id: setting_id::GRID_COLOR_G,
+                    b_id: setting_id::GRID_COLOR_B,
+                    a_id: setting_id::GRID_COLOR_A,
+                },
+                id: setting_id::GRID_COLOR,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamColorLevels,

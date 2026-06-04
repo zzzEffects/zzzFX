@@ -245,6 +245,17 @@ pub enum SettingKind<T: Settings> {
     },
     Boolean,
     Group { children: Vec<SettingDescriptor<T>> },
+    ColorRGBA {
+        r_id: SettingID<T>,
+        g_id: SettingID<T>,
+        b_id: SettingID<T>,
+        a_id: SettingID<T>,
+    },
+    ColorRGB {
+        r_id: SettingID<T>,
+        g_id: SettingID<T>,
+        b_id: SettingID<T>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -462,6 +473,22 @@ pub struct SettingsList<T: Settings> {
     pub setting_descriptors: Box<[SettingDescriptor<T>]>,
 }
 
+fn emit_color_f32<'sval, S: sval::Stream<'sval> + ?Sized, T: Settings>(
+    stream: &mut S,
+    id: &SettingID<T>,
+    settings: &T,
+) -> sval::Result {
+    stream.map_key_begin()?;
+    stream.text_begin(Some(id.name.len()))?;
+    stream.text_fragment(id.name)?;
+    stream.text_end()?;
+    stream.map_key_end()?;
+    stream.map_value_begin()?;
+    stream.f32(settings.get_field::<f32>(id).unwrap())?;
+    stream.map_value_end()?;
+    Ok(())
+}
+
 struct SettingsAndList<'a, 'b, T: Settings> {
     settings: &'a T,
     list: &'b SettingsList<T>,
@@ -478,27 +505,47 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
             stream.text_end()?;
             stream.map_key_end()?;
 
-            stream.map_value_begin()?;
             match &descriptor.kind {
                 SettingKind::Enumeration { .. } => {
+                    stream.map_value_begin()?;
                     stream.u32(
                         self.settings
                             .get_field::<EnumValue>(&descriptor.id)
                             .unwrap()
                             .0,
                     )?;
+                    stream.map_value_end()?;
                 }
                 SettingKind::Percentage { .. } | SettingKind::FloatRange { .. } => {
+                    stream.map_value_begin()?;
                     stream.f32(self.settings.get_field::<f32>(&descriptor.id).unwrap())?;
+                    stream.map_value_end()?;
                 }
                 SettingKind::IntRange { .. } => {
+                    stream.map_value_begin()?;
                     stream.i32(self.settings.get_field::<i32>(&descriptor.id).unwrap())?;
+                    stream.map_value_end()?;
                 }
                 SettingKind::Boolean | SettingKind::Group { .. } => {
+                    stream.map_value_begin()?;
                     stream.bool(self.settings.get_field::<bool>(&descriptor.id).unwrap())?;
+                    stream.map_value_end()?;
+                }
+                SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+                    // Emit individual r/g/b/a keys for backward compat
+                    emit_color_f32(stream, r_id, self.settings)?;
+                    emit_color_f32(stream, g_id, self.settings)?;
+                    emit_color_f32(stream, b_id, self.settings)?;
+                    emit_color_f32(stream, a_id, self.settings)?;
+                    continue;
+                }
+                SettingKind::ColorRGB { r_id, g_id, b_id } => {
+                    emit_color_f32(stream, r_id, self.settings)?;
+                    emit_color_f32(stream, g_id, self.settings)?;
+                    emit_color_f32(stream, b_id, self.settings)?;
+                    continue;
                 }
             }
-            stream.map_value_end()?;
         }
 
         stream.map_key_begin()?;
@@ -668,6 +715,24 @@ impl<T: Settings> SettingsList<T> {
                     json.get_and_expect::<bool>(key)?
                         .map(|b| settings.set_field::<bool>(&descriptor.id, b));
                     Self::settings_from_json(json, children, settings)?;
+                }
+                SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
+                    json.get_and_expect::<f32>(r_id.name)?
+                        .map(|n| settings.set_field::<f32>(r_id, n.clamp(0.0, 1.0)));
+                    json.get_and_expect::<f32>(g_id.name)?
+                        .map(|n| settings.set_field::<f32>(g_id, n.clamp(0.0, 1.0)));
+                    json.get_and_expect::<f32>(b_id.name)?
+                        .map(|n| settings.set_field::<f32>(b_id, n.clamp(0.0, 1.0)));
+                    json.get_and_expect::<f32>(a_id.name)?
+                        .map(|n| settings.set_field::<f32>(a_id, n.clamp(0.0, 1.0)));
+                }
+                SettingKind::ColorRGB { r_id, g_id, b_id } => {
+                    json.get_and_expect::<f32>(r_id.name)?
+                        .map(|n| settings.set_field::<f32>(r_id, n.clamp(0.0, 1.0)));
+                    json.get_and_expect::<f32>(g_id.name)?
+                        .map(|n| settings.set_field::<f32>(g_id, n.clamp(0.0, 1.0)));
+                    json.get_and_expect::<f32>(b_id.name)?
+                        .map(|n| settings.set_field::<f32>(b_id, n.clamp(0.0, 1.0)));
                 }
             }
         }

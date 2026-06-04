@@ -1013,10 +1013,8 @@ fn build_karaoke_syllables(segments: &[TagSegment]) -> Vec<KaraokeSyllable> {
         let seg_len = seg.text.chars().count();
         if let Some(ref kd) = seg.tags.karaoke {
             syllables.push(KaraokeSyllable {
-                char_start: char_offset,
                 char_end: char_offset + seg_len,
                 duration_cs: kd.duration_cs,
-                kind: kd.kind,
             });
         }
         char_offset += seg_len;
