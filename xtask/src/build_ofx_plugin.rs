@@ -137,7 +137,13 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
         let target = TARGETS
             .iter()
             .find(|candidate_target| candidate_target.target_triple == target_triple)
-            .unwrap_or_else(|| panic!("Your target \"{}\" is not supported", target_triple));
+            .unwrap_or_else(|| {
+                eprintln!("Error: target \"{target_triple}\" is not supported. Available targets:");
+                for t in TARGETS {
+                    eprintln!("  {}", t.target_triple);
+                }
+                std::process::exit(1);
+            });
         (build_plugin_for_target(target, release_mode)?, target.ofx_architecture)
     };
 

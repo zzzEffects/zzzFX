@@ -164,7 +164,7 @@ pub fn try_gpu_render(
         guard.bufs.bind_groups = Some(create_bind_groups(&guard, &guard.device));
     }
     let (bg_mask, bg_jfa_from_a, bg_jfa_from_b, bg_compose_a, bg_compose_b) =
-        guard.bufs.bind_groups.as_ref().unwrap();
+        guard.bufs.bind_groups.as_ref().ok_or("bind groups not initialized")?;
 
     let workgroup_count_x = (w + 15) / 16;
     let workgroup_count_y = (h + 15) / 16;
@@ -308,7 +308,9 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         pipeline_compose,
         bufs,
     }));
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "GPU context init race".to_string())
 }
 
 fn create_pipelines(

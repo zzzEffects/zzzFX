@@ -146,14 +146,19 @@ impl ChromaKey {
 
             bufs.alpha.par_iter_mut().enumerate().for_each(|(i, alpha)| {
                 let o = i * 4;
-                let r = src[o] as f32 * RECIP_255;
-                let g = src[o + 1] as f32 * RECIP_255;
-                let b = src[o + 2] as f32 * RECIP_255;
-                let (_, cb, cr) = rgb_to_ycbcr(r, g, b);
-                let dc = cb - key_cb;
-                let dr = cr - key_cr;
-                let dist_sq = (dc * dc + dr * dr) * 0.5;
-                *alpha = compute_key_alpha(dist_sq, threshold_sq, soft_end_sq, range_sq, edge_softness);
+                let a = src[o + 3] as f32 * RECIP_255;
+                if a <= 0.0 {
+                    *alpha = 0.0;
+                } else {
+                    let r = src[o] as f32 * RECIP_255;
+                    let g = src[o + 1] as f32 * RECIP_255;
+                    let b = src[o + 2] as f32 * RECIP_255;
+                    let (_, cb, cr) = rgb_to_ycbcr(r, g, b);
+                    let dc = cb - key_cb;
+                    let dr = cr - key_cr;
+                    let dist_sq = (dc * dc + dr * dr) * 0.5;
+                    *alpha = compute_key_alpha(dist_sq, threshold_sq, soft_end_sq, range_sq, edge_softness);
+                }
             });
 
             blur_alpha(&mut bufs.alpha, &mut bufs.blur_h, width, height, blur_radius);
@@ -204,7 +209,7 @@ impl ChromaKey {
 fn compute_key_alpha(dist_sq: f32, threshold_sq: f32, soft_end_sq: f32, range_sq: f32, edge_softness: f32) -> f32 {
     if dist_sq <= threshold_sq {
         0.0
-    } else if edge_softness <= 0.0 || dist_sq >= soft_end_sq {
+    } else if edge_softness <= 0.0 || range_sq <= 0.0 || dist_sq >= soft_end_sq {
         1.0
     } else {
         let t = (dist_sq - threshold_sq) / range_sq;
@@ -214,6 +219,13 @@ fn compute_key_alpha(dist_sq: f32, threshold_sq: f32, soft_end_sq: f32, range_sq
 
 #[inline]
 fn write_pixel(row: &mut [u8], o: usize, r: f32, g: f32, b: f32, a: f32, mut key_alpha: f32, spill_suppression: f32, show_matte: bool, invert: bool) {
+    if a <= 0.0 {
+        row[o] = 0;
+        row[o + 1] = 0;
+        row[o + 2] = 0;
+        row[o + 3] = 0;
+        return;
+    }
     if invert {
         key_alpha = 1.0 - key_alpha;
     }
@@ -239,8 +251,8 @@ fn write_pixel(row: &mut [u8], o: usize, r: f32, g: f32, b: f32, a: f32, mut key
     };
 
     let out_a = a * key_alpha;
-    row[o] = (out_r * out_a * 255.0).round() as u8;
-    row[o + 1] = (out_g * out_a * 255.0).round() as u8;
-    row[o + 2] = (out_b * out_a * 255.0).round() as u8;
+    row[o] = (out_r * 255.0).round() as u8;
+    row[o + 1] = (out_g * 255.0).round() as u8;
+    row[o + 2] = (out_b * 255.0).round() as u8;
     row[o + 3] = (out_a * 255.0).round() as u8;
 }

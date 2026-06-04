@@ -146,7 +146,7 @@ pub fn try_repeater_gpu_render(
             ],
         }));
     }
-    let bind_group = guard.bind_group.as_ref().unwrap();
+    let bind_group = guard.bind_group.as_ref().ok_or("bind group not initialized")?;
 
     // One submit per layer so per-layer uniform writes are visible
     for i in 0..layers.len() {
@@ -259,7 +259,9 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         bufs,
         bind_group: None,
     }));
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "repeater: GPU ctx init race".to_string())
 }
 
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {

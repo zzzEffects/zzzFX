@@ -80,15 +80,42 @@ static CTX: OnceLock<Mutex<Ctx>> = OnceLock::new();
 // ---------------------------------------------------------------------------
 
 fn get_or_init() -> Result<std::sync::MutexGuard<'static, Ctx>, String> {
-    let mutex = CTX.get_or_init(|| Mutex::new(create_ctx()));
-    let guard = mutex
+    if let Some(mutex) = CTX.get() {
+        return mutex
+            .lock()
+            .map_err(|_| "ctx lock poisoned".to_string());
+    }
+
+    static INIT_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = INIT_LOCK
         .lock()
-        .map_err(|_| "ctx lock poisoned".to_string())?;
-    Ok(guard)
+        .map_err(|_| "init lock poisoned".to_string())?;
+
+    if let Some(mutex) = CTX.get() {
+        return mutex
+            .lock()
+            .map_err(|_| "ctx lock poisoned".to_string());
+    }
+
+    if GPU_AVAILABLE.load(Ordering::Relaxed) {
+        match create_ctx() {
+            Ok(ctx) => {
+                let _ = CTX.set(Mutex::new(ctx));
+            }
+            Err(_) => {
+                GPU_AVAILABLE.store(false, Ordering::Relaxed);
+            }
+        }
+    }
+
+    CTX.get()
+        .ok_or_else(|| "GPU initialization failed".to_string())?
+        .lock()
+        .map_err(|_| "ctx lock poisoned".to_string())
 }
 
-fn create_ctx() -> Ctx {
-    let (device, queue) = get_or_init_shared_device().expect("shared device");
+fn create_ctx() -> Result<Ctx, String> {
+    let (device, queue) = get_or_init_shared_device()?;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("cast_shadow"),
         source: super::load_shader(include_str!("../shaders/cast_shadow.wgsl")),
@@ -205,7 +232,7 @@ fn create_ctx() -> Ctx {
         ],
     }));
 
-    Ctx {
+    Ok(Ctx {
         device,
         queue,
         pipeline_project,
@@ -216,7 +243,7 @@ fn create_ctx() -> Ctx {
         bg_blur_h,
         bg_blur_v,
         bg_composite,
-    }
+    })
 }
 
 fn create_bufs(device: &wgpu::Device, w: u32, h: u32) -> Bufs {
@@ -442,7 +469,7 @@ pub fn try_cast_shadow_gpu_render(
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&ctx.pipeline_project);
-                pass.set_bind_group(0, ctx.bg_project.as_ref().unwrap(), &[]);
+                pass.set_bind_group(0, ctx.bg_project.as_ref().ok_or("bind group not initialized")?, &[]);
                 pass.dispatch_workgroups(wx, wy, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
@@ -466,7 +493,7 @@ pub fn try_cast_shadow_gpu_render(
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&ctx.pipeline_blur);
-                pass.set_bind_group(0, ctx.bg_blur_h.as_ref().unwrap(), &[]);
+                pass.set_bind_group(0, ctx.bg_blur_h.as_ref().ok_or("bind group not initialized")?, &[]);
                 pass.dispatch_workgroups(wx, wy, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
@@ -484,7 +511,7 @@ pub fn try_cast_shadow_gpu_render(
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&ctx.pipeline_blur);
-                pass.set_bind_group(0, ctx.bg_blur_v.as_ref().unwrap(), &[]);
+                pass.set_bind_group(0, ctx.bg_blur_v.as_ref().ok_or("bind group not initialized")?, &[]);
                 pass.dispatch_workgroups(wx, wy, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
@@ -500,7 +527,7 @@ pub fn try_cast_shadow_gpu_render(
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&ctx.pipeline_composite);
-                pass.set_bind_group(0, ctx.bg_composite.as_ref().unwrap(), &[]);
+                pass.set_bind_group(0, ctx.bg_composite.as_ref().ok_or("bind group not initialized")?, &[]);
                 pass.dispatch_workgroups(wx, wy, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));

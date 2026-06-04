@@ -193,7 +193,7 @@ fn gpu_render_impl(
             ],
         }));
     }
-    let bind_group = guard.bind_group.as_ref().unwrap();
+    let bind_group = guard.bind_group.as_ref().ok_or("bind group not initialized")?;
 
     let image_size = dst_w as u64 * dst_h as u64 * 4;
 
@@ -254,7 +254,9 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         bind_group: None,
         cached_sheet_hash: 0,
     }));
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "sprite_sheet: GPU ctx init race".to_string())
 }
 
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {

@@ -133,7 +133,7 @@ pub fn try_ass_subtitle_gpu_composite(
             ],
         }));
     }
-    let bg = guard.bind_group.as_ref().unwrap();
+    let bg = guard.bind_group.as_ref().ok_or("bind group not initialized")?;
 
     // Dispatch
     let wg_x = (width + 15) / 16;
@@ -207,7 +207,9 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         bufs,
         bind_group: None,
     }));
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "ass_subtitle: GPU ctx init race".to_string())
 }
 
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {

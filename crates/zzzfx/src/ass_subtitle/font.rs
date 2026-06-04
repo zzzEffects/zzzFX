@@ -115,11 +115,10 @@ impl FontCache {
             if let Some(data) = font.copy_font_data() {
                 // copy_font_data already returns Arc<Vec<u8>> — use directly
                 if let Ok(mut loaded) = self.loaded.lock() {
-                    // Evict ~25% when full and inserting a new key
+                    // When full, clear the entire cache to prevent unbounded growth
+                    // and avoid non-deterministic eviction. At 8 entries max, this is cheap.
                     if loaded.len() >= MAX_LOADED_FONTS && !loaded.contains_key(&key) {
-                        let keep = (MAX_LOADED_FONTS * 3) / 4;
-                        let mut n = 0usize;
-                        loaded.retain(|_, _| { n += 1; n <= keep });
+                        loaded.clear();
                     }
                     loaded.insert(key, Arc::clone(&data));
                 }
@@ -173,11 +172,8 @@ impl FontCache {
         }
         let result = Arc::new(Self::find_matching_indices_inner(&q));
         if let Ok(mut cache) = self.matching_cache.lock() {
-            // Evict ~25% when full and inserting a new key
             if cache.len() >= MAX_MATCHING_CACHE && !cache.contains_key(&q) {
-                let keep = (MAX_MATCHING_CACHE * 3) / 4;
-                let mut n = 0usize;
-                cache.retain(|_, _| { n += 1; n <= keep });
+                cache.clear();
             }
             cache.insert(q, Arc::clone(&result));
         }
@@ -202,11 +198,8 @@ impl FontCache {
             .ok()
             .map_or(false, |f| f.glyph_for_char(c).map_or(false, |gid| gid != 0));
         if let Ok(mut cache) = self.coverage_cache.lock() {
-            // Evict ~25% when full and inserting a new key
             if cache.len() >= COVERAGE_CACHE_MAX && !cache.contains_key(&key) {
-                let keep = (COVERAGE_CACHE_MAX * 3) / 4;
-                let mut n = 0usize;
-                cache.retain(|_, _| { n += 1; n <= keep });
+                cache.clear();
             }
             cache.insert(key, has);
         }

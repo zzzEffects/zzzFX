@@ -125,7 +125,7 @@ pub fn try_ambient_light_gpu_render(
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
             pass.set_pipeline(&g.pipeline);
-            pass.set_bind_group(0, g.bg.as_ref().unwrap(), &[]);
+            pass.set_bind_group(0, g.bg.as_ref().ok_or("bind group not initialized")?, &[]);
             pass.dispatch_workgroups(wx, wy, 1);
         }
         g.queue.submit(std::iter::once(enc.finish()));
@@ -174,7 +174,7 @@ fn get_or_init() -> Result<&'static Mutex<Ctx>, String> {
     });
     let bufs = create_bufs(device, 256, 256);
     let _ = CTX.set(Mutex::new(Ctx { device, queue, pipeline, bufs, bg: None }));
-    Ok(CTX.get().unwrap())
+    CTX.get().ok_or_else(|| "ambient_light: GPU ctx init race".to_string())
 }
 
 fn create_bufs(device: &wgpu::Device, w: u32, h: u32) -> Bufs {

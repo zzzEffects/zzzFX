@@ -204,7 +204,7 @@ pub fn try_ass_glyph_gpu_composite(
             ],
         }));
     }
-    let bg = guard.bind_group.as_ref().unwrap();
+    let bg = guard.bind_group.as_ref().ok_or("bind group not initialized")?;
 
     // Dispatch one workgroup per glyph
     {
@@ -292,7 +292,9 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
     });
 
     GPU_CTX.set(ctx).map_err(|_| "GPU already initialized".to_string())?;
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "ass_glyph: GPU ctx init race".to_string())
 }
 
 fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {

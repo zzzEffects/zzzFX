@@ -618,24 +618,26 @@ pub(crate) fn floyd_steinberg_diffuse(
             let old_b = cells[idx][2];
 
             // Quantize (full error diffusion)
-            let new_r = (old_r * levels_f + 0.5).floor() / levels_f;
-            let new_g = (old_g * levels_f + 0.5).floor() / levels_f;
-            let new_b = (old_b * levels_f + 0.5).floor() / levels_f;
+            let quant_r = (old_r * levels_f + 0.5).floor() / levels_f;
+            let quant_g = (old_g * levels_f + 0.5).floor() / levels_f;
+            let quant_b = (old_b * levels_f + 0.5).floor() / levels_f;
+
+            // Error = what was removed by quantization, scaled by dither_amount
+            let err_r = (old_r - quant_r) * dither_amount;
+            let err_g = (old_g - quant_g) * dither_amount;
+            let err_b = (old_b - quant_b) * dither_amount;
 
             // Blend with original using dither_amount
             if let Some(ref orig) = originals {
                 let o = orig[idx];
-                cells[idx][0] = o[0] + (new_r - o[0]) * dither_amount;
-                cells[idx][1] = o[1] + (new_g - o[1]) * dither_amount;
-                cells[idx][2] = o[2] + (new_b - o[2]) * dither_amount;
+                cells[idx][0] = o[0] + (quant_r - o[0]) * dither_amount;
+                cells[idx][1] = o[1] + (quant_g - o[1]) * dither_amount;
+                cells[idx][2] = o[2] + (quant_b - o[2]) * dither_amount;
             } else {
-                cells[idx] = [new_r, new_g, new_b, cells[idx][3]];
+                cells[idx][0] = quant_r;
+                cells[idx][1] = quant_g;
+                cells[idx][2] = quant_b;
             }
-
-            // Compute error relative to the blended result, then diffuse
-            let err_r = (old_r - cells[idx][0]) * dither_amount;
-            let err_g = (old_g - cells[idx][1]) * dither_amount;
-            let err_b = (old_b - cells[idx][2]) * dither_amount;
 
             // Diffuse error to neighbors (no per-write clamping — bounded error)
             if col + 1 < cols {

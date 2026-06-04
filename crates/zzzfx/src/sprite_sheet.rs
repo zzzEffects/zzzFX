@@ -492,8 +492,8 @@ impl SpriteSheet {
                     let src_x = rx * cos_a + ry * sin_a + cx_src;
                     let src_y = -rx * sin_a + ry * cos_a + cy_src;
                     let di = dx * 4;
-                    if src_x >= 0.0 && src_x < (src_w as f64 - 1.0)
-                        && src_y >= 0.0 && src_y < (src_h as f64 - 1.0)
+                    if src_x >= 0.0 && src_x < src_w as f64
+                        && src_y >= 0.0 && src_y < src_h as f64
                     {
                         let sx0 = src_x.floor() as usize;
                         let sy0 = src_y.floor() as usize;

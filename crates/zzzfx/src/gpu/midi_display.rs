@@ -151,7 +151,7 @@ pub fn try_midi_display_gpu_render(
                 timestamp_writes: None,
             });
             pass.set_pipeline(&guard.pipeline);
-            pass.set_bind_group(0, guard.bind_group.as_ref().unwrap(), &[]);
+            pass.set_bind_group(0, guard.bind_group.as_ref().ok_or("bind group not initialized")?, &[]);
             pass.dispatch_workgroups((dst_w + 15) / 16, (dst_h + 15) / 16, 1);
         }
         encoder.copy_buffer_to_buffer(&guard.bufs.dst_buf, 0, &guard.bufs.staging_buf, 0, image_size);
@@ -212,7 +212,9 @@ fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
         bufs,
         bind_group: None,
     }));
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "midi_display: GPU ctx init race".to_string())
 }
 
 fn create_buffers(device: &wgpu::Device, w: u32, h: u32, note_hint: u32) -> GpuBuffers {

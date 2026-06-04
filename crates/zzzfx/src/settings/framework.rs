@@ -484,7 +484,7 @@ fn emit_color_f32<'sval, S: sval::Stream<'sval> + ?Sized, T: Settings>(
     stream.text_end()?;
     stream.map_key_end()?;
     stream.map_value_begin()?;
-    stream.f32(settings.get_field::<f32>(id).unwrap())?;
+    stream.f32(settings.get_field::<f32>(id).unwrap_or(0.0))?;
     stream.map_value_end()?;
     Ok(())
 }
@@ -511,24 +511,24 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
                     stream.u32(
                         self.settings
                             .get_field::<EnumValue>(&descriptor.id)
-                            .unwrap()
+                            .unwrap_or(EnumValue(0))
                             .0,
                     )?;
                     stream.map_value_end()?;
                 }
                 SettingKind::Percentage { .. } | SettingKind::FloatRange { .. } => {
                     stream.map_value_begin()?;
-                    stream.f32(self.settings.get_field::<f32>(&descriptor.id).unwrap())?;
+                    stream.f32(self.settings.get_field::<f32>(&descriptor.id).unwrap_or(0.0))?;
                     stream.map_value_end()?;
                 }
                 SettingKind::IntRange { .. } => {
                     stream.map_value_begin()?;
-                    stream.i32(self.settings.get_field::<i32>(&descriptor.id).unwrap())?;
+                    stream.i32(self.settings.get_field::<i32>(&descriptor.id).unwrap_or(0))?;
                     stream.map_value_end()?;
                 }
                 SettingKind::Boolean | SettingKind::Group { .. } => {
                     stream.map_value_begin()?;
-                    stream.bool(self.settings.get_field::<bool>(&descriptor.id).unwrap())?;
+                    stream.bool(self.settings.get_field::<bool>(&descriptor.id).unwrap_or(false))?;
                     stream.map_value_end()?;
                 }
                 SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {

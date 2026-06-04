@@ -428,7 +428,9 @@ fn get_or_init_ctx() -> Result<&'static Mutex<GpuCtx>, String> {
         bind_group_cell: None,
         bind_group_fill: None,
     }));
-    Ok(GPU_CTX.get().unwrap())
+    GPU_CTX
+        .get()
+        .ok_or_else(|| "pixel_art: GPU ctx init race".to_string())
 }
 
 fn create_pipelines(

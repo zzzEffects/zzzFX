@@ -193,39 +193,7 @@ fn composite_svg_over_bg(
     output_w: usize,
     output_h: usize,
 ) {
-    let br = (bg[0] * 255.0).round() as u8;
-    let bbg = (bg[1] * 255.0).round() as u8;
-    let bb = (bg[2] * 255.0).round() as u8;
-    let ba_f = bg[3];
-
-    // Initialize dst with background color first, then blend SVG on top
-    for chunk in dst.chunks_exact_mut(4) {
-        chunk[0] = br;
-        chunk[1] = bbg;
-        chunk[2] = bb;
-        chunk[3] = (ba_f * 255.0).round() as u8;
-    }
-
-    let n = (output_w * output_h * 4).min(svg_pixels.len());
-    let overlap = &svg_pixels[..n];
-
-    for (dst_chunk, svg_chunk) in dst[..n].chunks_exact_mut(4).zip(overlap.chunks_exact(4)) {
-        let sr = svg_chunk[0] as f32 / 255.0;
-        let sg = svg_chunk[1] as f32 / 255.0;
-        let sb = svg_chunk[2] as f32 / 255.0;
-        let sa = (svg_chunk[3] as f32 / 255.0) * opacity;
-
-        if sa <= 0.0 {
-            continue;
-        }
-
-        let out_a = sa + ba_f * (1.0 - sa);
-        let inv_a = 1.0 / out_a;
-        dst_chunk[0] = ((sr * sa + br as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-        dst_chunk[1] = ((sg * sa + bbg as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-        dst_chunk[2] = ((sb * sa + bb as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-        dst_chunk[3] = (out_a * 255.0).round() as u8;
-    }
+    crate::blend::composite_over_bg(svg_pixels, dst, opacity, bg, output_w, output_h);
 }
 
 // ---------------------------------------------------------------------------

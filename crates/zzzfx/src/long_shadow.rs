@@ -45,9 +45,11 @@ impl LongShadow {
         let dx = rad.cos();
         let dy = rad.sin();
 
-        // Length in pixels based on frame diagonal
+        // Length in pixels based on frame diagonal (capped at 4096 to prevent
+        // pathological O(N²) behavior on extreme values)
         let diagonal = ((width * width + height * height) as f32).sqrt();
         let length_px = (length * diagonal).round() as usize;
+        let length_px = length_px.min(4096);
         if length_px == 0 {
             dst[..total * 4].copy_from_slice(&src[..total * 4]);
             return;

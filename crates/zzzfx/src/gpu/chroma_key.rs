@@ -153,7 +153,7 @@ pub fn try_chroma_key_gpu_render(
         guard.bind_groups = Some(create_bind_groups(&guard, guard.device));
     }
     let (bg_alpha, bg_blur_a_to_b, bg_blur_b_to_a, bg_composite_a, bg_composite_b) =
-        guard.bind_groups.as_ref().unwrap();
+        guard.bind_groups.as_ref().ok_or("bind groups not initialized")?;
 
     // ---- Stage 1: compute_alpha ----
     let alpha_uniforms = AlphaUniforms {
@@ -289,7 +289,8 @@ fn get_or_init() -> Result<&'static Mutex<Ctx>, String> {
         bufs,
         bind_groups: None,
     }));
-    Ok(CTX.get().unwrap())
+    CTX.get()
+        .ok_or_else(|| "chroma_key: GPU ctx init race".to_string())
 }
 
 fn create_pipelines(

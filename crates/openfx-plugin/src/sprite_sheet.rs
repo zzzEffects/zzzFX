@@ -1078,9 +1078,8 @@ unsafe fn interact_pen_down(
         idata.selection_range_end = None;
         idata.first_click_frame = Some(frame_idx);
         idata.second_click_frame = None;
-    } else if idata.second_click_frame.is_none() {
+    } else if let (None, Some(start)) = (idata.second_click_frame, idata.first_click_frame) {
         // Second click: commit the range.
-        let start = idata.first_click_frame.unwrap();
         let end = frame_idx;
         let lo = start.min(end);
         let hi = start.max(end);

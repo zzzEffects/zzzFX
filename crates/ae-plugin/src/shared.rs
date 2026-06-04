@@ -109,7 +109,7 @@ pub fn map_params<T: Settings<Key = TrKey> + 'static>(
                     default_settings, legacy_default_settings, descriptor,
                 )?
                 .map(|default| {
-                    options.iter().position(|item| item.index == default.0).unwrap() as i32 + 1
+                    options.iter().position(|item| item.index == default.0).unwrap_or(0) as i32 + 1
                 });
                 params.add_customized(
                     ParamID::Param(descriptor.id.ae_id()),

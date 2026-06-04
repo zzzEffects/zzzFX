@@ -65,8 +65,8 @@ impl super::Repeater {
         let layer_params: Vec<((f32, f32), (f32, f32))> = layers
             .iter()
             .map(|layer| {
-                let offset_x = (layer.position_x - 0.5) * w;
-                let offset_y = (layer.position_y - 0.5) * h;
+                let offset_x = ((layer.position_x - 0.5) * w).clamp(-w * 10.0, w * 10.0);
+                let offset_y = ((layer.position_y - 0.5) * h).clamp(-h * 10.0, h * 10.0);
                 let angle_rad = (-layer.rotation_deg).to_radians();
                 // H5: Use sin_cos() for simultaneous computation (single FPU instruction)
                 let (sin_a, cos_a) = angle_rad.sin_cos();

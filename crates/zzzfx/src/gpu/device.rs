@@ -58,7 +58,14 @@ pub fn get_or_init_shared_device() -> Result<(&'static wgpu::Device, &'static wg
     let _ = SHARED_DEVICE.set(device);
     let _ = SHARED_QUEUE.set(queue);
 
-    Ok((SHARED_DEVICE.get().unwrap(), SHARED_QUEUE.get().unwrap()))
+    Ok((
+        SHARED_DEVICE
+            .get()
+            .ok_or_else(|| "device init race".to_string())?,
+        SHARED_QUEUE
+            .get()
+            .ok_or_else(|| "queue init race".to_string())?,
+    ))
 }
 
 /// Check if the shared GPU device is already initialized WITHOUT attempting to create one.

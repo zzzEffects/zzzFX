@@ -475,10 +475,9 @@ fn parse_expression(
                 if let Some(&ch) = symbol_map.get(cmd.as_str()) {
                     state.push_glyph(ch, super_fs, super_y, color);
                 }
-            } else {
-                let ch = parser.peek().unwrap() as char;
+            } else if let Some(ch) = parser.peek() {
                 parser.advance();
-                state.push_glyph(ch, super_fs, super_y, color);
+                state.push_glyph(ch as char, super_fs, super_y, color);
             }
             continue;
         }
@@ -495,18 +494,18 @@ fn parse_expression(
                 if let Some(&ch) = symbol_map.get(cmd.as_str()) {
                     state.push_glyph(ch, sub_fs, sub_y, color);
                 }
-            } else {
-                let ch = parser.peek().unwrap() as char;
+            } else if let Some(ch) = parser.peek() {
                 parser.advance();
-                state.push_glyph(ch, sub_fs, sub_y, color);
+                state.push_glyph(ch as char, sub_fs, sub_y, color);
             }
             continue;
         }
 
         // Check for group: {...}
         if parser.peek() == Some(b'{') {
-            let group = parser.try_read_group().unwrap();
-            parse_expression(&mut Parser::new(&group), state, font_size, y_offset, color, is_math_mode);
+            if let Some(group) = parser.try_read_group() {
+                parse_expression(&mut Parser::new(&group), state, font_size, y_offset, color, is_math_mode);
+            }
             continue;
         }
 
@@ -517,9 +516,10 @@ fn parse_expression(
         }
 
         // Ordinary character
-        let ch = parser.peek().unwrap() as char;
-        parser.advance();
-        state.push_glyph(ch, font_size, y_offset, color);
+        if let Some(ch) = parser.peek() {
+            parser.advance();
+            state.push_glyph(ch as char, font_size, y_offset, color);
+        }
     }
 }
 
@@ -706,7 +706,7 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
 
     write!(
         svg,
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.1}" height="{h:.1}" viewBox="0 0 {w:.1} {h:.1}">"#
     )
     .unwrap();
 
@@ -983,38 +983,5 @@ fn composite_svg_over_bg(
     output_w: usize,
     output_h: usize,
 ) {
-    let br = (bg[0] * 255.0).round() as u8;
-    let bbg = (bg[1] * 255.0).round() as u8;
-    let bb = (bg[2] * 255.0).round() as u8;
-    let ba_f = bg[3];
-
-    // Initialize dst with background color first, then blend SVG on top.
-    // This ensures pixels outside the SVG region get the background color.
-    for chunk in dst.chunks_exact_mut(4) {
-        chunk[0] = br;
-        chunk[1] = bbg;
-        chunk[2] = bb;
-        chunk[3] = (ba_f * 255.0).round() as u8;
-    }
-
-    let n = (output_w * output_h * 4).min(svg_pixels.len());
-    let overlap = &svg_pixels[..n];
-
-    for (dst_chunk, svg_chunk) in dst[..n].chunks_exact_mut(4).zip(overlap.chunks_exact(4)) {
-        let sr = svg_chunk[0] as f32 / 255.0;
-        let sg = svg_chunk[1] as f32 / 255.0;
-        let sb = svg_chunk[2] as f32 / 255.0;
-        let sa = (svg_chunk[3] as f32 / 255.0) * opacity;
-
-        if sa <= 0.0 {
-            continue;
-        }
-
-        let out_a = sa + ba_f * (1.0 - sa);
-        let inv_a = 1.0 / out_a;
-        dst_chunk[0] = ((sr * sa + br as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-        dst_chunk[1] = ((sg * sa + bbg as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-        dst_chunk[2] = ((sb * sa + bb as f32 / 255.0 * ba_f * (1.0 - sa)) * inv_a * 255.0).round() as u8;
-        dst_chunk[3] = (out_a * 255.0).round() as u8;
-    }
+    crate::blend::composite_over_bg(svg_pixels, dst, opacity, bg, output_w, output_h);
 }
