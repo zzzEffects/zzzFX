@@ -114,7 +114,7 @@ fn main() {
                 ),
                 Property::AE_Effect_Match_Name(match_name),
                 Property::AE_Reserved_Info(8),
-                Property::AE_Effect_Support_URL("https://example.com/plugin"),
+                Property::AE_Effect_Support_URL("https://github.com/zzzEffects/zzzFX"),
             ]).unwrap();
             all_pipls.push((16000 + idx as i16, pipl));
         }
