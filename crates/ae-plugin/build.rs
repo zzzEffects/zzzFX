@@ -55,7 +55,7 @@ fn main() {
         ),
         Property::AE_Effect_Match_Name("zzzfx-stroke"),
         Property::AE_Reserved_Info(8),
-        Property::AE_Effect_Support_URL("https://github.com/zzzEffect/zzzFX"),
+        Property::AE_Effect_Support_URL("https://github.com/zzzEffects/zzzFX"),
     ]);
 
     // ── Additional effects — PiPL resources at IDs 16001+ ─────────────────

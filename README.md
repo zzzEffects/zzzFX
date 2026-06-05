@@ -2,7 +2,7 @@
 
 zzzFX is an open-source and free series of video effect plugins for After Effects, Premiere, AviUtl2, and OpenFX hosts (such as VEGAS Pro, DaVinci Resolve, etc.).
 
-The plugin framework is based on [VideoFX-rs](https://github.com/zzzEffect/VideoFX-rs) (MIT licensed), with modifications and extensions for zzzFX's effect system.
+The plugin framework is based on [VideoFX-rs](https://github.com/zzzEffects/VideoFX-rs) (MIT licensed), with modifications and extensions for zzzFX's effect system.
 
 ## License
 
@@ -79,7 +79,7 @@ If you're not building the OpenFX plugin, you can ignore this part.
 Make sure to include submodules when cloning the repository if you want the OpenFX plugin to build properly:
 
 ```bash
-git clone --recurse-submodules https://github.com/zzzEffect/zzzFX.git
+git clone --recurse-submodules https://github.com/zzzEffects/zzzFX.git
 cd zzzFX
 ```
 

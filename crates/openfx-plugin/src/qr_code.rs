@@ -70,7 +70,7 @@ pub fn get_plugin() -> *const OfxPlugin {
     let pi = PLUGIN_INFO.get_or_init(|| OfxPlugin {
         pluginApi: kOfxImageEffectPluginApi.as_ptr(),
         apiVersion: 1,
-        pluginIdentifier: c"io.github.zzzEffect:QrCode".as_ptr(),
+        pluginIdentifier: c"io.github.zzzEffects:QrCode".as_ptr(),
         pluginVersionMajor: 0,
         pluginVersionMinor: 1,
         setHost: Some(set_host_info),
