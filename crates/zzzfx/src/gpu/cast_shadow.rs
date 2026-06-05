@@ -567,6 +567,7 @@ pub fn try_cast_shadow_gpu_render(
                 Ok(true)
             }
             _ => {
+                ctx.bufs.staging.unmap();
                 GPU_AVAILABLE.store(false, Ordering::Relaxed);
                 Err("staging map failed".to_string())
             }
@@ -577,7 +578,6 @@ pub fn try_cast_shadow_gpu_render(
         Ok(true) => Ok(true),
         Ok(false) => Ok(false),
         Err(_) => {
-            GPU_AVAILABLE.store(false, Ordering::Relaxed);
             Ok(false)
         }
     }

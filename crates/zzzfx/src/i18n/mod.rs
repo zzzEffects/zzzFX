@@ -136,6 +136,9 @@ pub fn lang_from_locale_tag(tag: &str) -> Option<Lang> {
 
 #[cfg(target_os = "windows")]
 unsafe fn windows_locale_name(buf: &mut [u16]) -> u32 {
+    // SAFETY: GetUserDefaultLocaleName is a standard Win32 API. The buffer must be
+    // non-empty (LOCALE_NAME_MAX_LENGTH = 85 WCHARs minimum). Callers ensure this.
+    debug_assert!(!buf.is_empty(), "locale name buffer must be non-empty");
     unsafe extern "system" {
         fn GetUserDefaultLocaleName(lpLocaleName: *mut u16, cchLocaleName: i32) -> i32;
     }

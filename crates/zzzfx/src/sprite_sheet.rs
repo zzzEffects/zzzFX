@@ -594,13 +594,17 @@ impl SpriteSheet {
         let gpu_ok = {
             let dx = offset_x as f32 - (dst_w as i32 - out_w as i32) as f32 / 2.0;
             let dy = offset_y as f32 - (dst_h as i32 - out_h as i32) as f32 / 2.0;
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 crate::gpu::sprite_sheet::try_selection_mode_gpu_render(
                     sheet_rgba, sheet_w, sheet_h, fit_scale,
                     dx, dy,
                     dst, dst_w as u32, dst_h as u32,
                 )
-            })).unwrap_or(Err("panic".into())).unwrap_or(false)
+            })) {
+                Ok(Ok(true)) => true,
+                Ok(Ok(false)) | Ok(Err(_)) => false,
+                Err(_) => false,
+            }
         };
 
         if !gpu_ok {

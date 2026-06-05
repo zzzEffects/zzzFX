@@ -129,7 +129,9 @@ pub fn luminance(r: f32, g: f32, b: f32) -> f32 {
 /// Uses bit manipulation instead of float division.
 #[inline]
 pub fn fast_u32_to_f32(input: u32) -> f32 {
-    f32::from_bits((input >> 9) | 0x3F800000) - 1.0
+    // Produces a value in [0, 1). The subtraction may round to exactly 1.0
+    // under non-default rounding modes, so clamp defensively.
+    (f32::from_bits((input >> 9) | 0x3F800000) - 1.0).min(1.0 - f32::EPSILON)
 }
 
 /// Composite RGBA8888 SVG/overlay pixels over a solid background color with opacity.

@@ -93,7 +93,10 @@ impl GenericPlugin for ZzzFxPlugin {
 // ── Helper: Japanese filter name from TrKey ───────────────────────
 
 fn ja_tr(key: TrKey) -> String {
-    ja::translate_cstr(key).to_str().unwrap().to_string()
+    ja::translate_cstr(key)
+        .to_str()
+        .unwrap_or_else(|_| key.en()) // fall back to English if UTF-8 conversion fails
+        .to_string()
 }
 
 // ── Macro: apply_effect-based FilterPlugin ────────────────────────
@@ -135,11 +138,22 @@ macro_rules! apply_effect_filter {
                     return Ok(());
                 }
                 let len = w * h * 4;
-                let mut src = vec![0u8; len];
-                let mut dst = vec![0u8; len];
+                thread_local! {
+                    static RENDER_BUFS: std::cell::RefCell<(Vec<u8>, Vec<u8>)> =
+                        std::cell::RefCell::new((Vec::new(), Vec::new()));
+                }
+                let (mut src, mut dst) = RENDER_BUFS.with(|c| {
+                    let (ref mut s, ref mut d) = *c.borrow_mut();
+                    s.resize(len, 0);
+                    d.resize(len, 0);
+                    (std::mem::take(s), std::mem::take(d))
+                });
                 video.get_image_data(&mut src);
                 effect.apply_effect(&src, &mut dst, w, h);
                 video.set_image_data(&dst, video.video_object.width, video.video_object.height);
+                RENDER_BUFS.with(|c| {
+                    *c.borrow_mut() = (src, dst);
+                });
                 Ok(())
             }
         }

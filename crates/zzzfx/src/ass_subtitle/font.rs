@@ -307,7 +307,10 @@ impl FontCache {
                     _ => {}
                 }
         }
-        // Safety: entry pointers point into the static GLOBAL_FONT_ENTRIES slice.
+        // SAFETY: `ptr` was obtained via `entry as *const FontEntry` where `entry` is
+        // a reference into GLOBAL_FONT_ENTRIES (a static OnceLock<Vec<FontEntry>>). Once
+        // initialized, GLOBAL_FONT_ENTRIES is never mutated or deallocated, so the pointer
+        // remains valid for the lifetime of the process.
         best.and_then(|(ptr, _)| self.load_font_data(unsafe { &*ptr }))
     }
 

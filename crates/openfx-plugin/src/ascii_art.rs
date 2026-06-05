@@ -504,9 +504,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         }
 
         if let SettingKind::Group { children } = &desc.kind {
-            let ds = d.strings.get(&desc.id).unwrap();
+            let ds = d.strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
             let id_cstr = ds.0.as_c_str();
-            let gnc = ds.3.as_ref().expect("group name").as_c_str();
+            let gnc = ds.3.as_ref().ok_or(OfxStat::kOfxStatFailed)?.as_c_str();
             let dv = defaults
                 .get_field::<bool>(&desc.id)
                 .map_err(|_| OfxStat::kOfxStatFailed)?;

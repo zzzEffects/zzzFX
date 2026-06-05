@@ -153,7 +153,10 @@ pub fn try_ambient_light_gpu_render(
             g.bufs.staging_buf.unmap();
             Ok(true)
         }
-        _ => Err("staging map failed".to_string()),
+        _ => {
+            g.bufs.staging_buf.unmap();
+            Err("staging map failed".to_string())
+        }
     }
 }
 

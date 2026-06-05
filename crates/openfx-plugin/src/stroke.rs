@@ -205,7 +205,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
         if is_position_component(desc.id.name) { continue; }
         if let zzzfx::settings::SettingKind::Group { .. } = &desc.kind {
             // Manual gradient group with Double2D position params for better UX
-            let ds = d.strings.get(&desc.id).unwrap();
+            let ds = d.strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
             let id_cstr = ds.0.as_c_str();
             let dv = defaults.get_field::<bool>(&desc.id).map_err(|_| OfxStat::kOfxStatFailed)?;
             let mut gp_h: OfxPropertySetHandle = ptr::null_mut();
@@ -412,13 +412,13 @@ unsafe fn apply_params(
         if is_position_component(desc.id.name) { continue; }
         if let zzzfx::settings::SettingKind::Group { children } = &desc.kind {
             // Read Group enable checkbox
-            let ds = d.strings.get(&desc.id).unwrap();
+            let ds = d.strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
             let id_cstr = ds.0.as_c_str();
             let mut p: OfxParamHandle = ptr::null_mut();
             pgh(param_set, id_cstr.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
-            dst.set_field::<bool>(&desc.id, v != 0).unwrap();
+            dst.set_field::<bool>(&desc.id, v != 0).map_err(|_| OfxStat::kOfxStatFailed)?;
 
             // Read Group children via read_generic_param (handles ColorRGBA children)
             for child in children.iter() {
@@ -434,8 +434,8 @@ unsafe fn apply_params(
                 pgv(p, time, &mut x, &mut y).ofx_ok()?;
                 for child in children.iter() {
                     match child.id.name {
-                        "gradient_start_x" => { dst.set_field::<f32>(&child.id, x as f32).unwrap(); }
-                        "gradient_start_y" => { dst.set_field::<f32>(&child.id, y as f32).unwrap(); }
+                        "gradient_start_x" => { dst.set_field::<f32>(&child.id, x as f32).map_err(|_| OfxStat::kOfxStatFailed)?; }
+                        "gradient_start_y" => { dst.set_field::<f32>(&child.id, y as f32).map_err(|_| OfxStat::kOfxStatFailed)?; }
                         _ => {}
                     }
                 }
@@ -448,8 +448,8 @@ unsafe fn apply_params(
                 pgv(p, time, &mut x, &mut y).ofx_ok()?;
                 for child in children.iter() {
                     match child.id.name {
-                        "gradient_end_x" => { dst.set_field::<f32>(&child.id, x as f32).unwrap(); }
-                        "gradient_end_y" => { dst.set_field::<f32>(&child.id, y as f32).unwrap(); }
+                        "gradient_end_x" => { dst.set_field::<f32>(&child.id, x as f32).map_err(|_| OfxStat::kOfxStatFailed)?; }
+                        "gradient_end_y" => { dst.set_field::<f32>(&child.id, y as f32).map_err(|_| OfxStat::kOfxStatFailed)?; }
                         _ => {}
                     }
                 }

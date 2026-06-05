@@ -294,7 +294,7 @@ unsafe fn action_is_identity(
     let mut settings = RepeaterFullSettings::default();
     apply_params(param_set, time, &mut settings)?;
 
-    let ds = d.strings.iter().find(|(k, _)| k.name == "time_offset").unwrap();
+    let ds = d.strings.iter().find(|(k, _)| k.name == "time_offset").ok_or(OfxStat::kOfxStatFailed)?;
     let id_cstr = ds.1.0.as_c_str();
     let mut p: OfxParamHandle = ptr::null_mut();
     pgh(param_set, id_cstr.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
@@ -362,12 +362,12 @@ unsafe fn action_render(effect: OfxImageEffectHandle, inArgs: OfxPropertySetHand
     cgh(effect, c"Output".as_ptr(), &mut dc, ptr::null_mut()).ofx_ok()?;
 
     // --- Build layer list ---
-    let to_ds = d.strings.iter().find(|(k, _)| k.name == "time_offset").unwrap();
+    let to_ds = d.strings.iter().find(|(k, _)| k.name == "time_offset").ok_or(OfxStat::kOfxStatFailed)?;
     let to_id_cstr = to_ds.1.0.as_c_str();
     let mut to_p: OfxParamHandle = ptr::null_mut();
     pgh(param_set, to_id_cstr.as_ptr(), &mut to_p, ptr::null_mut()).ofx_ok()?;
 
-    let rot_ds = d.strings.iter().find(|(k, _)| k.name == "rotation").unwrap();
+    let rot_ds = d.strings.iter().find(|(k, _)| k.name == "rotation").ok_or(OfxStat::kOfxStatFailed)?;
     let rot_id_cstr = rot_ds.1.0.as_c_str();
 
     struct LayerInfo {
@@ -517,24 +517,24 @@ unsafe fn apply_params(
         pgh(param_set, POSITION_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        let find_id = |name: &str| -> SettingID<RepeaterFullSettings> {
-            d.settings_list.setting_descriptors.iter().find(|d| d.id.name == name).unwrap().id.clone()
+        let find_id = |name: &str| -> OfxResult<SettingID<RepeaterFullSettings>> {
+            d.settings_list.setting_descriptors.iter().find(|d| d.id.name == name).map(|d| d.id.clone()).ok_or(OfxStat::kOfxStatFailed)
         };
-        dst.set_field::<f32>(&find_id("position_x"), x.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("position_y"), y.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("position_x")?, x.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&find_id("position_y")?, y.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Read remaining generic params ---
     for desc in d.settings_list.setting_descriptors.iter() {
         if is_native_grouped_name(desc.id.name) { continue; }
         if let SettingKind::Group { .. } = &desc.kind {
-            let ds = d.strings.get(&desc.id).unwrap();
+            let ds = d.strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
             let id_cstr = ds.0.as_c_str();
             let mut p: OfxParamHandle = ptr::null_mut();
             pgh(param_set, id_cstr.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
-            dst.set_field::<bool>(&desc.id, v != 0).unwrap();
+            dst.set_field::<bool>(&desc.id, v != 0).map_err(|_| OfxStat::kOfxStatFailed)?;
         } else {
             read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
         }

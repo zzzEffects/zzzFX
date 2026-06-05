@@ -24,7 +24,7 @@ fn add_descriptor<T: Settings<Key = zzzfx::TrKey> + Clone>(
     // AviUtl2 built-in language is Japanese — use ja labels for FilterConfigItem names.
     let label = ja::translate_cstr(descriptor.label_key)
         .to_str()
-        .unwrap()
+        .unwrap_or_else(|_| descriptor.label_key.en())
         .to_string();
 
     match &descriptor.kind {
@@ -79,7 +79,7 @@ fn add_descriptor<T: Settings<Key = zzzfx::TrKey> + Clone>(
                 .map(|option| FilterConfigSelectItem {
                     name: ja::translate_cstr(option.label_key)
                         .to_str()
-                        .unwrap()
+                        .unwrap_or_else(|_| option.label_key.en())
                         .to_string(),
                     value: option.index as i32,
                 })

@@ -14,7 +14,7 @@ fn collect_labels<T: Settings<Key = zzzfx::TrKey> + Clone>(
     for desc in descriptors {
         let ja_key = ja::translate_cstr(desc.label_key)
             .to_str()
-            .unwrap()
+            .unwrap_or_else(|_| desc.label_key.en())
             .to_string();
         let val = translate(desc.label_key);
         entries.push((ja_key, val));
@@ -62,85 +62,99 @@ fn generate_effect_section<T: Settings<Key = zzzfx::TrKey> + Clone>(
 fn ja_stroke_name() -> String {
     ja::translate_cstr(TrKey::EffectStrokeName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_repeater_name() -> String {
     ja::translate_cstr(TrKey::EffectRepeaterName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_spritesheet_name() -> String {
     ja::translate_cstr(TrKey::EffectSpritesheetName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_ass_subtitle_name() -> String {
     ja::translate_cstr(TrKey::EffectAssSubtitleName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_ascii_art_name() -> String {
     ja::translate_cstr(TrKey::EffectAsciiArtName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_pixel_art_name() -> String {
     ja::translate_cstr(TrKey::EffectPixelArtName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_long_shadow_name() -> String {
     ja::translate_cstr(TrKey::EffectLongShadowName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_cast_shadow_name() -> String {
     ja::translate_cstr(TrKey::EffectCastShadowName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_ambient_light_name() -> String {
     ja::translate_cstr(TrKey::EffectAmbientLightName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_chroma_key_name() -> String {
     ja::translate_cstr(TrKey::EffectChromaKeyName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_midi_display_name() -> String {
     ja::translate_cstr(TrKey::EffectMidiDisplayName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_svg_display_name() -> String {
     ja::translate_cstr(TrKey::EffectSvgDisplayName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_latex_display_name() -> String {
     ja::translate_cstr(TrKey::EffectLaTeXDisplayName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 fn ja_qr_code_name() -> String {
     ja::translate_cstr(TrKey::EffectQrCodeName)
         .to_str()
-        .unwrap()
+        // SAFETY: all translation strings use c"…" literal syntax and are valid UTF-8
+        .unwrap_or("")
         .to_string()
 }
 
@@ -212,7 +226,7 @@ pub fn generate_aul2_en() -> String {
 // ── Chinese .aul2: Japanese keys → Chinese values ──
 
 pub fn generate_aul2_zh_cn() -> String {
-    let translate = |k: TrKey| zh_cn::translate_cstr(k).to_str().unwrap().to_string();
+    let translate = |k: TrKey| zh_cn::translate_cstr(k).to_str().unwrap_or_else(|_| k.en()).to_string();
     let mut out = String::new();
     use zzzfx::*;
     out.push_str(&generate_effect_section::<StrokeFullSettings>(
@@ -277,7 +291,7 @@ pub fn generate_aul2_zh_cn() -> String {
 // ── Korean .aul2: Japanese keys → Korean values ──
 
 pub fn generate_aul2_ko() -> String {
-    let translate = |k: TrKey| ko::translate_cstr(k).to_str().unwrap().to_string();
+    let translate = |k: TrKey| ko::translate_cstr(k).to_str().unwrap_or_else(|_| k.en()).to_string();
     let mut out = String::new();
     use zzzfx::*;
     out.push_str(&generate_effect_section::<StrokeFullSettings>(

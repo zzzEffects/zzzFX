@@ -326,6 +326,18 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     gp(effect, &mut ep).ofx_ok()?;
 
+    {
+        let gph = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
+        let mut existing: *mut c_void = ptr::null_mut();
+        let _ = gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut existing);
+        if !existing.is_null() {
+            let p = &*(existing as *const InstanceData);
+            if p.magic == INSTANCE_MAGIC {
+                let _ = Box::from_raw(existing as *mut InstanceData);
+            }
+        }
+    }
+
     let idata = Box::new(InstanceData {
         magic: INSTANCE_MAGIC,
         midi_data: None,
@@ -691,10 +703,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&setting_id::NOTE_COLOR_R, r.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::NOTE_COLOR_G, g.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::NOTE_COLOR_B, b.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::NOTE_COLOR_A, a.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_R, r.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_G, g.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_B, b.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::NOTE_COLOR_A, a.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Native RGBA: noteBorderColor ---
@@ -704,10 +716,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_R, r.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_G, g.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_B, b.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_A, a.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_R, r.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_G, g.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_B, b.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::NOTE_BORDER_COLOR_A, a.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Native RGBA: backgroundColor ---
@@ -717,10 +729,10 @@ unsafe fn apply_params(
         let mut r: f64 = 0.0; let mut g: f64 = 0.0;
         let mut b: f64 = 0.0; let mut a: f64 = 0.0;
         pgv(p, time, &mut r, &mut g, &mut b, &mut a).ofx_ok()?;
-        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_R, r.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_G, g.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_B, b.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_A, a.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_R, r.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_G, g.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_B, b.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&setting_id::BACKGROUND_COLOR_A, a.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Read generic params ---

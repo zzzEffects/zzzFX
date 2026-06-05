@@ -7,8 +7,7 @@ const RCP_255: f32 = 1.0 / 255.0;
 impl CastShadow {
     pub fn is_identity(&self) -> bool {
         let shadow_a = self.shadow_color_a.clamp(0.0, 1.0);
-        let scale = self.scale.clamp(0.1, 3.0);
-        shadow_a <= 0.0 || scale < 0.001
+        shadow_a <= 0.0
     }
 
     pub fn apply_effect(&self, src: &[u8], dst: &mut [u8], width: usize, height: usize) {

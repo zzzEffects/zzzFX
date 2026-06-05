@@ -329,6 +329,18 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     gp(effect, &mut ep).ofx_ok()?;
 
+    {
+        let gph = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
+        let mut existing: *mut c_void = ptr::null_mut();
+        let _ = gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut existing);
+        if !existing.is_null() {
+            let p = &*(existing as *const InstanceData);
+            if p.magic == INSTANCE_MAGIC {
+                let _ = Box::from_raw(existing as *mut InstanceData);
+            }
+        }
+    }
+
     let idata = Box::new(InstanceData {
         magic: INSTANCE_MAGIC,
         file_path: String::new(), decoded_rgba: Vec::new(),
@@ -888,8 +900,8 @@ unsafe fn apply_params(
         pgh(param_set, SPRITE_RANGE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: c_int = 0; let mut y: c_int = 0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("sprite_range_start")?, x.clamp(0, 1000)).unwrap();
-        dst.set_field::<i32>(&find_id("sprite_range_end")?, y.clamp(0, 1000)).unwrap();
+        dst.set_field::<i32>(&find_id("sprite_range_start")?, x.clamp(0, 1000)).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<i32>(&find_id("sprite_range_end")?, y.clamp(0, 1000)).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Native Integer2D: repeatRange ---
@@ -898,8 +910,8 @@ unsafe fn apply_params(
         pgh(param_set, REPEAT_RANGE_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: c_int = 0; let mut y: c_int = 0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<i32>(&find_id("repeat_range_start")?, x.clamp(0, 1000)).unwrap();
-        dst.set_field::<i32>(&find_id("repeat_range_end")?, y.clamp(0, 1000)).unwrap();
+        dst.set_field::<i32>(&find_id("repeat_range_start")?, x.clamp(0, 1000)).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<i32>(&find_id("repeat_range_end")?, y.clamp(0, 1000)).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Native Double2D: displacement ---
@@ -908,21 +920,21 @@ unsafe fn apply_params(
         pgh(param_set, DISPLACEMENT_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.0; let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("displacement_x")?, x.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("displacement_y")?, y.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("displacement_x")?, x.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&find_id("displacement_y")?, y.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Read generic params ---
     for desc in d.settings_list.all_descriptors() {
         if is_native_grouped_name(desc.id.name) { continue; }
         if let SettingKind::Group { .. } = &desc.kind {
-            let ds = d.strings.get(&desc.id).unwrap();
+            let ds = d.strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
             let id_cstr = ds.0.as_c_str();
             let mut p: OfxParamHandle = ptr::null_mut();
             pgh(param_set, id_cstr.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
-            dst.set_field::<bool>(&desc.id, v != 0).unwrap();
+            dst.set_field::<bool>(&desc.id, v != 0).map_err(|_| OfxStat::kOfxStatFailed)?;
         } else {
             read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
         }

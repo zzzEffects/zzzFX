@@ -397,6 +397,20 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
     let mut ep: OfxPropertySetHandle = ptr::null_mut();
     gp(effect, &mut ep).ofx_ok()?;
 
+    // Defensive: if the host incorrectly calls CreateInstance twice without a
+    // matching DestroyInstance, clean up the previous instance data to avoid a leak.
+    {
+        let gph = su.property_suite.propGetPointer.ok_or(OfxStat::kOfxStatFailed)?;
+        let mut existing: *mut c_void = ptr::null_mut();
+        let _ = gph(ep, kOfxPropInstanceData.as_ptr(), 0, &mut existing);
+        if !existing.is_null() {
+            let p = &*(existing as *const InstanceData);
+            if p.magic == INSTANCE_MAGIC {
+                let _ = Box::from_raw(existing as *mut InstanceData);
+            }
+        }
+    }
+
     let idata = Box::new(InstanceData {
         magic: INSTANCE_MAGIC,
         ass_script: None,
@@ -837,13 +851,13 @@ unsafe fn apply_params(
         if let SettingKind::Group { .. } = &desc.kind {
             let pgh = su.parameter_suite.paramGetHandle.ok_or(OfxStat::kOfxStatFailed)?;
             let pgv = su.parameter_suite.paramGetValueAtTime.ok_or(OfxStat::kOfxStatFailed)?;
-            let ds = d.strings.get(&desc.id).unwrap();
+            let ds = d.strings.get(&desc.id).ok_or(OfxStat::kOfxStatFailed)?;
             let id_cstr = ds.0.as_c_str();
             let mut p: OfxParamHandle = ptr::null_mut();
             pgh(param_set, id_cstr.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
             let mut v: c_int = 0;
             pgv(p, time, &mut v).ofx_ok()?;
-            dst.set_field::<bool>(&desc.id, v != 0).unwrap();
+            dst.set_field::<bool>(&desc.id, v != 0).map_err(|_| OfxStat::kOfxStatFailed)?;
         } else {
             read_generic_param(su, param_set, time, desc, dst, &d.strings)?;
         }
@@ -858,8 +872,8 @@ unsafe fn apply_params(
         let mut x: f64 = 0.5;
         let mut y: f64 = 0.5;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("position_x")?, x.clamp(0.0, 1.0) as f32).unwrap();
-        dst.set_field::<f32>(&find_id("position_y")?, y.clamp(0.0, 1.0) as f32).unwrap();
+        dst.set_field::<f32>(&find_id("position_x")?, x.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&find_id("position_y")?, y.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Native Double2D: Font Scale ---
@@ -871,8 +885,8 @@ unsafe fn apply_params(
         let mut x: f64 = 1.0;
         let mut y: f64 = 1.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        dst.set_field::<f32>(&find_id("font_scale_x")?, (x as f32).clamp(0.01, 5.0)).unwrap();
-        dst.set_field::<f32>(&find_id("font_scale_y")?, (y as f32).clamp(0.01, 5.0)).unwrap();
+        dst.set_field::<f32>(&find_id("font_scale_x")?, (x as f32).clamp(0.01, 5.0)).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&find_id("font_scale_y")?, (y as f32).clamp(0.01, 5.0)).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     Ok(())

@@ -111,6 +111,8 @@ pub fn main(args: &clap::ArgMatches) -> Result<(), Box<dyn Error>> {
         let x86_64_path = build_plugin_for_target(x86_64_target, release_mode)?;
         let aarch64_path = build_plugin_for_target(aarch64_target, release_mode)?;
 
+        // A system clock set before 1970 would cause this unwrap to panic, but
+        // this is only called during builds, so a correct system clock is assumed.
         let dst_path = std::env::temp_dir().plus(format!(
             "zzzfx-ofx-{}",
             std::time::SystemTime::now()

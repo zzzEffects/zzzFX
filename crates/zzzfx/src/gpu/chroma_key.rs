@@ -259,7 +259,13 @@ pub fn try_chroma_key_gpu_render(
             guard.bufs.staging_buf.unmap();
             Ok(true)
         }
-        _ => Err("staging map failed".to_string()),
+        _ => {
+            // Defensive: ensure buffer is unmapped on failure. In wgpu, a failed
+            // map_async leaves the buffer unmapped, but calling unmap() is a safe
+            // no-op in that state and protects against unexpected partial-map states.
+            guard.bufs.staging_buf.unmap();
+            Err("staging map failed".to_string())
+        }
     }
 }
 

@@ -13,7 +13,12 @@ use zzzfx::settings::{
 
 use crate::bindings::*;
 
-// SAFETY
+// SAFETY: OfxPlugin is stored in a OnceLock and initialized once at plugin load
+// time, before any concurrent access from the host. The contained function pointers
+// and `*const c_char` are valid for the lifetime of the plugin (the host guarantees
+// suites and string literals remain valid until the plugin is unloaded).
+// Send: the plugin descriptor is safe to transfer between threads after init.
+// Sync: all access to OfxPlugin fields is read-only after initialization.
 unsafe impl Send for OfxPlugin {}
 unsafe impl Sync for OfxPlugin {}
 
