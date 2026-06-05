@@ -26,8 +26,8 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "after-effects"
-version = "0.3.0"
-source = "git+https://github.com/virtualritz/after-effects?rev=0e0b197#0e0b197850f28c1bb24e8c82fce2e3d4c120d1e9"
+version = "0.4.0"
+source = "git+https://github.com/zzzEffect/after-effects?branch=master#e5f7b2a774893c8903e4430dc15583662ff75acb"
 dependencies = [
  "after-effects-sys",
  "bincode",
@@ -51,9 +51,9 @@ dependencies = [
 
 [[package]]
 name = "after-effects-sys"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ec61a1cf15ebdf997b5f5c14dbb0af64ece085464bc7f4c6206ecd307e2ba42"
+checksum = "9a588fadd80fd7ed09cc0a335c8a3169f632cdb90acc757c8e238880fa964950"
 dependencies = [
  "bindgen 0.72.1",
 ]
@@ -2530,7 +2530,7 @@ dependencies = [
 [[package]]
 name = "pipl"
 version = "0.1.1"
-source = "git+https://github.com/virtualritz/after-effects?rev=0e0b197#0e0b197850f28c1bb24e8c82fce2e3d4c120d1e9"
+source = "git+https://github.com/zzzEffect/after-effects?branch=master#e5f7b2a774893c8903e4430dc15583662ff75acb"
 dependencies = [
  "bitflags 2.11.1",
  "byteorder",
@@ -2654,8 +2654,8 @@ dependencies = [
 
 [[package]]
 name = "premiere"
-version = "0.2.1"
-source = "git+https://github.com/virtualritz/after-effects?rev=0e0b197#0e0b197850f28c1bb24e8c82fce2e3d4c120d1e9"
+version = "0.4.0"
+source = "git+https://github.com/zzzEffect/after-effects?branch=master#e5f7b2a774893c8903e4430dc15583662ff75acb"
 dependencies = [
  "base64",
  "bincode",
@@ -2669,9 +2669,9 @@ dependencies = [
 
 [[package]]
 name = "premiere-sys"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69943aea4b12d05212ca6598cd9059fac392f3cc7a17d7036b9f264d1b39925a"
+checksum = "d72137a20644f594a996b90c3508a8304b09c2c4572815c76976da2de5656fb0"
 dependencies = [
  "bindgen 0.72.1",
 ]

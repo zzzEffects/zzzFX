@@ -128,11 +128,12 @@ cargo xtask build-ofx-plugin --release
 
 ### OpenFX
 
-Copy the built `.ofx.bundle/` from `crates/openfx-plugin/build/` to your OFX host's plugins directory:
+Copy the built `.ofx.bundle/` from `crates/openfx-plugin/build/` to the common OFX path:
+- **Common OFX Path**: `C:\Program Files\Common Files\OFX\Plugins\`
 
+In addition to the common path, some hosts will also have their specific OFX paths:
+- **VEGAS Pro**: `...<VEGAS install path>\OFX Video Plug-Ins\` (such as `C:\Program Files\VEGAS\VEGAS Pro 22.0\OFX Video Plug-Ins\`)
 - **DaVinci Resolve**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\OFXPlugins\`
-- **Natron**: `C:\Program Files\Common Files\OFX\Plugins\`
-- **VEGAS Pro**: `C:\Program Files\VEGAS\VEGAS Pro\OFX Video Plug-Ins\`
 
 ### AviUtl2
 

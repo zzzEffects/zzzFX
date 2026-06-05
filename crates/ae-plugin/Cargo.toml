@@ -8,12 +8,14 @@ license = "GPL-3.0-only"
 crate-type = ["cdylib"]
 
 [target.'cfg(any(windows, target_os="macos"))'.dependencies]
-after-effects = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
-premiere = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
+after-effects = { git = "https://github.com/zzzEffect/after-effects", branch = "master" }
+premiere = { git = "https://github.com/zzzEffect/after-effects", branch = "master" }
 zzzfx = { path = "../zzzfx" }
 
 [build-dependencies]
-pipl = {git = "https://github.com/virtualritz/after-effects", rev = "0e0b197"}
+pipl = { git = "https://github.com/zzzEffect/after-effects", branch = "master" }
+
+[target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
 [lints]
