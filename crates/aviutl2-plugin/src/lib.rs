@@ -469,6 +469,22 @@ fn read_descriptors<T: Settings>(
                 }
                 *idx += 1;
             }
+            SettingKind::String { .. } => {
+                match config.get(*idx) {
+                    Some(FilterConfigItem::String(s)) => {
+                        let _ = settings.set_field::<String>(&desc.id, s.value.clone());
+                    }
+                    Some(FilterConfigItem::Text(t)) => {
+                        let _ = settings.set_field::<String>(&desc.id, t.value.clone());
+                    }
+                    _ => {}
+                }
+                *idx += 1;
+            }
+            SettingKind::PushButton { .. } => {
+                // PushButton has no stored value
+                *idx += 1;
+            }
             SettingKind::Enumeration { .. } => {
                 if let Some(FilterConfigItem::Select(select)) = config.get(*idx)
                     && let Some(item) = select.items.get(select.value as usize)

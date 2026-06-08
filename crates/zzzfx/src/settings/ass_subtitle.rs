@@ -1,4 +1,3 @@
-use zzzfx_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
@@ -23,8 +22,10 @@ impl SettingsEnum for AssBlendMode {}
 // Main settings struct
 // ---------------------------------------------------------------------------
 
-#[derive(FullSettings, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AssSubtitle {
+    pub file_path: String,
+    pub file_data: String,
     pub time_offset_s: f32,
     pub scale: f32,
     pub position_x: f32,
@@ -38,6 +39,8 @@ pub struct AssSubtitle {
 impl Default for AssSubtitle {
     fn default() -> Self {
         Self {
+            file_path: String::new(),
+            file_data: String::new(),
             time_offset_s: 0.0,
             scale: 1.0,
             position_x: 0.5,
@@ -51,6 +54,48 @@ impl Default for AssSubtitle {
 }
 
 // ---------------------------------------------------------------------------
+// FullSettings struct (manual — derive macro doesn't support String)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssSubtitleFullSettings {
+    pub file_path: String,
+    pub file_data: String,
+    pub time_offset_s: f32,
+    pub scale: f32,
+    pub position_x: f32,
+    pub position_y: f32,
+    pub blend_mode: AssBlendMode,
+    pub font_scale_x: f32,
+    pub font_scale_y: f32,
+    pub use_native_size: bool,
+}
+
+impl Default for AssSubtitleFullSettings {
+    fn default() -> Self { Self::from(AssSubtitle::default()) }
+}
+impl From<&AssSubtitle> for AssSubtitleFullSettings {
+    fn from(v: &AssSubtitle) -> Self {
+        Self { file_path: v.file_path.clone(), file_data: v.file_data.clone(), time_offset_s: v.time_offset_s, scale: v.scale, position_x: v.position_x, position_y: v.position_y, blend_mode: v.blend_mode, font_scale_x: v.font_scale_x, font_scale_y: v.font_scale_y, use_native_size: v.use_native_size }
+    }
+}
+impl From<AssSubtitle> for AssSubtitleFullSettings {
+    fn from(v: AssSubtitle) -> Self {
+        Self { file_path: v.file_path, file_data: v.file_data, time_offset_s: v.time_offset_s, scale: v.scale, position_x: v.position_x, position_y: v.position_y, blend_mode: v.blend_mode, font_scale_x: v.font_scale_x, font_scale_y: v.font_scale_y, use_native_size: v.use_native_size }
+    }
+}
+impl From<&AssSubtitleFullSettings> for AssSubtitle {
+    fn from(v: &AssSubtitleFullSettings) -> Self {
+        Self { file_path: v.file_path.clone(), file_data: v.file_data.clone(), time_offset_s: v.time_offset_s, scale: v.scale, position_x: v.position_x, position_y: v.position_y, blend_mode: v.blend_mode, font_scale_x: v.font_scale_x, font_scale_y: v.font_scale_y, use_native_size: v.use_native_size }
+    }
+}
+impl From<AssSubtitleFullSettings> for AssSubtitle {
+    fn from(v: AssSubtitleFullSettings) -> Self {
+        Self { file_path: v.file_path, file_data: v.file_data, time_offset_s: v.time_offset_s, scale: v.scale, position_x: v.position_x, position_y: v.position_y, blend_mode: v.blend_mode, font_scale_x: v.font_scale_x, font_scale_y: v.font_scale_y, use_native_size: v.use_native_size }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Setting IDs
 // ---------------------------------------------------------------------------
 
@@ -60,6 +105,8 @@ pub mod setting_id {
     use super::AssSubtitleFullSettings;
     type SID = SettingID<AssSubtitleFullSettings>;
 
+    pub const FILE_PATH:     SID = setting_id!("file_path", file_path);
+    pub const FILE_DATA:     SID = setting_id!("file_data", file_data);
     pub const TIME_OFFSET_S: SID = setting_id!("time_offset_s", time_offset_s);
     pub const SCALE:         SID = setting_id!("scale", scale);
     pub const POSITION_X:    SID = setting_id!("position_x", position_x);
@@ -79,6 +126,18 @@ impl Settings for AssSubtitleFullSettings {
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
+            SettingDescriptor {
+                label_key: TrKey::NativeFilePath,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FILE_PATH,
+            },
+            SettingDescriptor {
+                label_key: TrKey::NativeFilePath,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FILE_DATA,
+            },
             SettingDescriptor {
                 label_key: TrKey::ParamAssTimeOffsetS,
                 description_key: Some(TrKey::ParamAssTimeOffsetSDesc),

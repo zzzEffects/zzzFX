@@ -311,7 +311,7 @@ fn compute_axis(
 
             let rad = pivot_angle.to_radians();
             let dx = rad.sin();
-            let dy = -rad.cos();
+            let dy = rad.cos();
             let tx = if dx.abs() < 1e-6 {
                 f32::MAX
             } else if dx > 0.0 {
@@ -357,7 +357,7 @@ fn axis_at_center(
 ) -> Option<AxisData> {
     let rad = pivot_angle.to_radians();
     let dx = rad.sin();
-    let dy = -rad.cos();
+    let dy = rad.cos();
     let enx = -dx;
     let eny = -dy;
     let eax = eny;

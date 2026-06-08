@@ -83,12 +83,13 @@ impl<T: Default> Default for SettingsBlock<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EnumValue(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AnySetting {
     Enum(u32),
     Int(i32),
     Float(f32),
     Bool(bool),
+    String(String),
 }
 
 impl AnySetting {
@@ -98,6 +99,7 @@ impl AnySetting {
             AnySetting::Int(_) => "i32 or u32",
             AnySetting::Float(_) => "f32",
             AnySetting::Bool(_) => "bool",
+            AnySetting::String(_) => "string",
         }
     }
 }
@@ -174,6 +176,19 @@ impl SettingField for bool {
     }
 }
 
+impl SettingField for String {
+    fn downcast(value: &AnySetting) -> Option<Self> {
+        match value {
+            AnySetting::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn upcast(self) -> AnySetting {
+        AnySetting::String(self)
+    }
+}
+
 pub trait SettingsEnum {}
 
 /// A fixed identifier that points to a given setting.
@@ -213,7 +228,7 @@ macro_rules! setting_id {
     ($name:expr, $($field_path:ident).+) => {
         $crate::settings::framework::SettingID::new(
             $name,
-            |settings| $crate::settings::framework::SettingField::upcast(settings.$($field_path).+),
+            |settings| $crate::settings::framework::SettingField::upcast(settings.$($field_path).+.clone()),
             |settings, value| {
                 settings.$($field_path).+ = $crate::settings::framework::SettingField::downcast(&value).ok_or_else(|| $crate::settings::framework::GetSetFieldError::TypeMismatch {
                     actual_type: value.type_name(),
@@ -244,6 +259,14 @@ pub enum SettingKind<T: Settings> {
         logarithmic: bool,
     },
     Boolean,
+    String {
+        secret: bool,
+        multiline: bool,
+        animates: bool,
+    },
+    PushButton {
+        secret: bool,
+    },
     Group { children: Vec<SettingDescriptor<T>> },
     ColorRGBA {
         r_id: SettingID<T>,
@@ -400,6 +423,12 @@ impl FromValue for f32 {
                 },
             )),
             JsonValue::Number(n) => Ok(n.parse()?),
+            JsonValue::String(_) => Err(ParseSettingsError::GetSetField(
+                GetSetFieldError::TypeMismatch {
+                    actual_type: "string",
+                    requested_type: "number",
+                },
+            )),
         }
     }
 }
@@ -416,6 +445,12 @@ impl FromValue for i32 {
             JsonValue::Number(n) => Ok(n
                 .parse::<i32>()
                 .or_else(|_| n.parse::<f64>().map(|n| n as i32))?),
+            JsonValue::String(_) => Err(ParseSettingsError::GetSetField(
+                GetSetFieldError::TypeMismatch {
+                    actual_type: "string",
+                    requested_type: "number",
+                },
+            )),
         }
     }
 }
@@ -432,6 +467,12 @@ impl FromValue for u32 {
             JsonValue::Number(n) => {
                 Ok(n.parse().or_else(|_| n.parse::<f64>().map(|n| n as u32))?)
             }
+            JsonValue::String(_) => Err(ParseSettingsError::GetSetField(
+                GetSetFieldError::TypeMismatch {
+                    actual_type: "string",
+                    requested_type: "number",
+                },
+            )),
         }
     }
 }
@@ -446,6 +487,27 @@ impl FromValue for bool {
                     requested_type: "boolean",
                 },
             )),
+            JsonValue::String(_) => Err(ParseSettingsError::GetSetField(
+                GetSetFieldError::TypeMismatch {
+                    actual_type: "string",
+                    requested_type: "boolean",
+                },
+            )),
+        }
+    }
+}
+
+impl FromValue for String {
+    fn from_value(value: &JsonValue<'_>) -> Result<Self, ParseSettingsError> {
+        match value {
+            JsonValue::String(s) => Ok(s.clone().into_owned()),
+            JsonValue::Bool(_) => Err(ParseSettingsError::GetSetField(
+                GetSetFieldError::TypeMismatch {
+                    actual_type: "boolean",
+                    requested_type: "string",
+                },
+            )),
+            JsonValue::Number(n) => Ok(n.to_string()),
         }
     }
 }
@@ -514,6 +576,10 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
                     emit_color_f32(stream, b_id, self.settings)?;
                     continue;
                 }
+                SettingKind::PushButton { .. } => {
+                    // PushButton has no stored value — skip key and value
+                    continue;
+                }
                 _ => {}
             }
 
@@ -549,6 +615,17 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
                     stream.bool(self.settings.get_field::<bool>(&descriptor.id).unwrap_or(false))?;
                     stream.map_value_end()?;
                 }
+                SettingKind::String { .. } => {
+                    let s = self.settings.get_field::<String>(&descriptor.id).unwrap_or_default();
+                    stream.map_value_begin()?;
+                    stream.text_begin(Some(s.len()))?;
+                    stream.text_fragment_computed(&s)?;
+                    stream.text_end()?;
+                    stream.map_value_end()?;
+                }
+                SettingKind::PushButton { .. } => {
+                    // PushButton has no stored value — skip
+                }
                 // ColorRGBA/ColorRGB handled above before key emission — unreachable here
                 SettingKind::ColorRGBA { .. } | SettingKind::ColorRGB { .. } => {}
             }
@@ -572,6 +649,7 @@ impl<T: Settings> sval::Value for SettingsAndList<'_, '_, T> {
 pub(crate) enum JsonValue<'a> {
     Bool(bool),
     Number(&'a str),
+    String(std::borrow::Cow<'a, str>),
 }
 
 fn parse<'a>(
@@ -583,8 +661,8 @@ fn parse<'a>(
         b'a'..=b'z' => Ok(lexer.null_or_bool().map(nob).ok_or(Expect::Value)?),
         b'0'..=b'9' | b'-' => Ok(Some(JsonValue::Number(lexer.num_string().validated()?.0))),
         b'"' => Ok({
-            lexer.str_ignore().map_err(hifijson::Error::Str)?;
-            None
+            let s = lexer.str_string().map_err(hifijson::Error::Str)?;
+            Some(JsonValue::String(s))
         }),
         b'[' => Ok({
             lexer
@@ -716,6 +794,13 @@ impl<T: Settings> SettingsList<T> {
                 SettingKind::Boolean => {
                     json.get_and_expect::<bool>(key)?
                         .map(|b| settings.set_field::<bool>(&descriptor.id, b));
+                }
+                SettingKind::String { .. } => {
+                    json.get_and_expect::<String>(key)?
+                        .map(|s| settings.set_field::<String>(&descriptor.id, s));
+                }
+                SettingKind::PushButton { .. } => {
+                    // PushButton has no stored value
                 }
                 SettingKind::Group { children, .. } => {
                     json.get_and_expect::<bool>(key)?

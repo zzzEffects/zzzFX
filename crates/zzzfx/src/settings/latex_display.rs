@@ -1,4 +1,3 @@
-use zzzfx_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
@@ -21,8 +20,10 @@ impl SettingsEnum for MathStyle {}
 // Main settings struct
 // ---------------------------------------------------------------------------
 
-#[derive(FullSettings, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LaTeXDisplay {
+    pub formula: String,
+    pub font_name: String,
     pub font_size: f32,
     pub scale: f32,
     pub position_x: f32,
@@ -31,11 +32,21 @@ pub struct LaTeXDisplay {
     pub opacity: f32,
     pub dpi: f32,
     pub math_style: MathStyle,
+    pub text_color_r: f32,
+    pub text_color_g: f32,
+    pub text_color_b: f32,
+    pub text_color_a: f32,
+    pub background_color_r: f32,
+    pub background_color_g: f32,
+    pub background_color_b: f32,
+    pub background_color_a: f32,
 }
 
 impl Default for LaTeXDisplay {
     fn default() -> Self {
         Self {
+            formula: String::new(),
+            font_name: String::new(),
             font_size: 10.0,
             scale: 1.0,
             position_x: 0.5,
@@ -44,6 +55,146 @@ impl Default for LaTeXDisplay {
             opacity: 1.0,
             dpi: 96.0,
             math_style: MathStyle::Display,
+            text_color_r: 1.0,
+            text_color_g: 1.0,
+            text_color_b: 1.0,
+            text_color_a: 1.0,
+            background_color_r: 0.0,
+            background_color_g: 0.0,
+            background_color_b: 0.0,
+            background_color_a: 0.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FullSettings struct (manual — derive macro doesn't support String)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaTeXDisplayFullSettings {
+    pub formula: String,
+    pub font_name: String,
+    pub font_size: f32,
+    pub scale: f32,
+    pub position_x: f32,
+    pub position_y: f32,
+    pub rotation: f32,
+    pub opacity: f32,
+    pub dpi: f32,
+    pub math_style: MathStyle,
+    pub text_color_r: f32,
+    pub text_color_g: f32,
+    pub text_color_b: f32,
+    pub text_color_a: f32,
+    pub background_color_r: f32,
+    pub background_color_g: f32,
+    pub background_color_b: f32,
+    pub background_color_a: f32,
+}
+
+impl Default for LaTeXDisplayFullSettings {
+    fn default() -> Self {
+        Self::from(LaTeXDisplay::default())
+    }
+}
+
+impl From<&LaTeXDisplay> for LaTeXDisplayFullSettings {
+    fn from(value: &LaTeXDisplay) -> Self {
+        Self {
+            formula: value.formula.clone(),
+            font_name: value.font_name.clone(),
+            font_size: value.font_size,
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            dpi: value.dpi,
+            math_style: value.math_style,
+            text_color_r: value.text_color_r,
+            text_color_g: value.text_color_g,
+            text_color_b: value.text_color_b,
+            text_color_a: value.text_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
+        }
+    }
+}
+
+impl From<LaTeXDisplay> for LaTeXDisplayFullSettings {
+    fn from(value: LaTeXDisplay) -> Self {
+        Self {
+            formula: value.formula,
+            font_name: value.font_name,
+            font_size: value.font_size,
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            dpi: value.dpi,
+            math_style: value.math_style,
+            text_color_r: value.text_color_r,
+            text_color_g: value.text_color_g,
+            text_color_b: value.text_color_b,
+            text_color_a: value.text_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
+        }
+    }
+}
+
+impl From<&LaTeXDisplayFullSettings> for LaTeXDisplay {
+    fn from(value: &LaTeXDisplayFullSettings) -> Self {
+        Self {
+            formula: value.formula.clone(),
+            font_name: value.font_name.clone(),
+            font_size: value.font_size,
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            dpi: value.dpi,
+            math_style: value.math_style,
+            text_color_r: value.text_color_r,
+            text_color_g: value.text_color_g,
+            text_color_b: value.text_color_b,
+            text_color_a: value.text_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
+        }
+    }
+}
+
+impl From<LaTeXDisplayFullSettings> for LaTeXDisplay {
+    fn from(value: LaTeXDisplayFullSettings) -> Self {
+        Self {
+            formula: value.formula,
+            font_name: value.font_name,
+            font_size: value.font_size,
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            dpi: value.dpi,
+            math_style: value.math_style,
+            text_color_r: value.text_color_r,
+            text_color_g: value.text_color_g,
+            text_color_b: value.text_color_b,
+            text_color_a: value.text_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
         }
     }
 }
@@ -59,6 +210,8 @@ pub mod setting_id {
     use super::LaTeXDisplayFullSettings;
     type SID = SettingID<LaTeXDisplayFullSettings>;
 
+    pub const FORMULA:     SID = setting_id!("formula", formula);
+    pub const FONT_NAME:   SID = setting_id!("font_name", font_name);
     pub const FONT_SIZE:   SID = setting_id!("font_size", font_size);
     pub const SCALE:       SID = setting_id!("scale", scale);
     pub const POSITION_X:  SID = setting_id!("position_x", position_x);
@@ -79,10 +232,22 @@ impl Settings for LaTeXDisplayFullSettings {
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
             SettingDescriptor {
+                label_key: TrKey::NativeLaTeXFormula,
+                description_key: Some(TrKey::NativeLaTeXFormulaHint),
+                kind: SettingKind::String { secret: false, multiline: true, animates: false },
+                id: setting_id::FORMULA,
+            },
+            SettingDescriptor {
                 label_key: TrKey::ParamLaTeXFontSize,
                 description_key: Some(TrKey::ParamLaTeXFontSizeDesc),
                 kind: SettingKind::FloatRange { range: 1.0..=512.0, logarithmic: false },
                 id: setting_id::FONT_SIZE,
+            },
+            SettingDescriptor {
+                label_key: TrKey::NativeLaTeXFontChoice,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FONT_NAME,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamLaTeXScale,

@@ -1,4 +1,3 @@
-use zzzfx_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
@@ -40,8 +39,9 @@ impl SettingsEnum for ModuleShape {}
 // Main settings struct
 // ---------------------------------------------------------------------------
 
-#[derive(FullSettings, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QrCode {
+    pub content: String,
     pub scale: f32,
     pub position_x: f32,
     pub position_y: f32,
@@ -50,11 +50,24 @@ pub struct QrCode {
     pub margin: f32,
     pub ecl: Ecl,
     pub module_shape: ModuleShape,
+    pub module_color_r: f32,
+    pub module_color_g: f32,
+    pub module_color_b: f32,
+    pub module_color_a: f32,
+    pub light_module_color_r: f32,
+    pub light_module_color_g: f32,
+    pub light_module_color_b: f32,
+    pub light_module_color_a: f32,
+    pub background_color_r: f32,
+    pub background_color_g: f32,
+    pub background_color_b: f32,
+    pub background_color_a: f32,
 }
 
 impl Default for QrCode {
     fn default() -> Self {
         Self {
+            content: String::new(),
             scale: 1.0,
             position_x: 0.5,
             position_y: 0.5,
@@ -63,6 +76,165 @@ impl Default for QrCode {
             margin: 4.0,
             ecl: Ecl::M,
             module_shape: ModuleShape::Square,
+            module_color_r: 0.0,
+            module_color_g: 0.0,
+            module_color_b: 0.0,
+            module_color_a: 1.0,
+            light_module_color_r: 1.0,
+            light_module_color_g: 1.0,
+            light_module_color_b: 1.0,
+            light_module_color_a: 1.0,
+            background_color_r: 0.0,
+            background_color_g: 0.0,
+            background_color_b: 0.0,
+            background_color_a: 0.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FullSettings struct (manual — derive macro doesn't support String)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QrCodeFullSettings {
+    pub content: String,
+    pub scale: f32,
+    pub position_x: f32,
+    pub position_y: f32,
+    pub rotation: f32,
+    pub opacity: f32,
+    pub margin: f32,
+    pub ecl: Ecl,
+    pub module_shape: ModuleShape,
+    pub module_color_r: f32,
+    pub module_color_g: f32,
+    pub module_color_b: f32,
+    pub module_color_a: f32,
+    pub light_module_color_r: f32,
+    pub light_module_color_g: f32,
+    pub light_module_color_b: f32,
+    pub light_module_color_a: f32,
+    pub background_color_r: f32,
+    pub background_color_g: f32,
+    pub background_color_b: f32,
+    pub background_color_a: f32,
+}
+
+impl Default for QrCodeFullSettings {
+    fn default() -> Self {
+        Self::from(QrCode::default())
+    }
+}
+
+impl From<&QrCode> for QrCodeFullSettings {
+    fn from(value: &QrCode) -> Self {
+        Self {
+            content: value.content.clone(),
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            margin: value.margin,
+            ecl: value.ecl,
+            module_shape: value.module_shape,
+            module_color_r: value.module_color_r,
+            module_color_g: value.module_color_g,
+            module_color_b: value.module_color_b,
+            module_color_a: value.module_color_a,
+            light_module_color_r: value.light_module_color_r,
+            light_module_color_g: value.light_module_color_g,
+            light_module_color_b: value.light_module_color_b,
+            light_module_color_a: value.light_module_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
+        }
+    }
+}
+
+impl From<QrCode> for QrCodeFullSettings {
+    fn from(value: QrCode) -> Self {
+        Self {
+            content: value.content,
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            margin: value.margin,
+            ecl: value.ecl,
+            module_shape: value.module_shape,
+            module_color_r: value.module_color_r,
+            module_color_g: value.module_color_g,
+            module_color_b: value.module_color_b,
+            module_color_a: value.module_color_a,
+            light_module_color_r: value.light_module_color_r,
+            light_module_color_g: value.light_module_color_g,
+            light_module_color_b: value.light_module_color_b,
+            light_module_color_a: value.light_module_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
+        }
+    }
+}
+
+impl From<&QrCodeFullSettings> for QrCode {
+    fn from(value: &QrCodeFullSettings) -> Self {
+        Self {
+            content: value.content.clone(),
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            margin: value.margin,
+            ecl: value.ecl,
+            module_shape: value.module_shape,
+            module_color_r: value.module_color_r,
+            module_color_g: value.module_color_g,
+            module_color_b: value.module_color_b,
+            module_color_a: value.module_color_a,
+            light_module_color_r: value.light_module_color_r,
+            light_module_color_g: value.light_module_color_g,
+            light_module_color_b: value.light_module_color_b,
+            light_module_color_a: value.light_module_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
+        }
+    }
+}
+
+impl From<QrCodeFullSettings> for QrCode {
+    fn from(value: QrCodeFullSettings) -> Self {
+        Self {
+            content: value.content,
+            scale: value.scale,
+            position_x: value.position_x,
+            position_y: value.position_y,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            margin: value.margin,
+            ecl: value.ecl,
+            module_shape: value.module_shape,
+            module_color_r: value.module_color_r,
+            module_color_g: value.module_color_g,
+            module_color_b: value.module_color_b,
+            module_color_a: value.module_color_a,
+            light_module_color_r: value.light_module_color_r,
+            light_module_color_g: value.light_module_color_g,
+            light_module_color_b: value.light_module_color_b,
+            light_module_color_a: value.light_module_color_a,
+            background_color_r: value.background_color_r,
+            background_color_g: value.background_color_g,
+            background_color_b: value.background_color_b,
+            background_color_a: value.background_color_a,
         }
     }
 }
@@ -78,6 +250,7 @@ pub mod setting_id {
     use super::QrCodeFullSettings;
     type SID = SettingID<QrCodeFullSettings>;
 
+    pub const CONTENT:      SID = setting_id!("content", content);
     pub const SCALE:        SID = setting_id!("scale", scale);
     pub const POSITION_X:   SID = setting_id!("position_x", position_x);
     pub const POSITION_Y:   SID = setting_id!("position_y", position_y);
@@ -97,6 +270,12 @@ impl Settings for QrCodeFullSettings {
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
+            SettingDescriptor {
+                label_key: TrKey::NativeQrCodeContent,
+                description_key: Some(TrKey::NativeQrCodeContentHint),
+                kind: SettingKind::String { secret: false, multiline: true, animates: false },
+                id: setting_id::CONTENT,
+            },
             SettingDescriptor {
                 label_key: TrKey::ParamQrCodeScale,
                 description_key: Some(TrKey::ParamQrCodeScaleDesc),

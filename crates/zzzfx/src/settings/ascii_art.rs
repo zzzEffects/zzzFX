@@ -81,39 +81,45 @@ pub struct AsciiArt {
 }
 
 impl AsciiArt {
+    /// Build a character set string with monotonic dense→sparse density order.
+    ///
+    /// When multiple character sets are enabled, we interleave them by rank
+    /// (round-robin: char 0 from set 0, char 0 from set 1, ..., char 1 from
+    /// set 0, ...). This preserves the monotonic density property across the
+    /// combined set instead of resetting density at each set boundary.
     pub fn resolve_charset(&self) -> String {
-        let mut chars = String::new();
-        if self.use_symbols {
-            chars.push_str(CHARS_SYMBOLS);
+        let sets: [Option<&str>; 8] = [
+            self.use_symbols.then_some(CHARS_SYMBOLS),
+            self.use_latin.then_some(CHARS_LATIN),
+            self.use_numbers.then_some(CHARS_NUMBERS),
+            self.use_blocks.then_some(CHARS_BLOCKS),
+            self.use_chinese.then_some(CHARS_CHINESE),
+            self.use_katakana.then_some(CHARS_KATAKANA),
+            self.use_hiragana.then_some(CHARS_HIRAGANA),
+            self.use_korean.then_some(CHARS_KOREAN),
+        ];
+        let custom = (self.use_custom && !self.custom_chars.is_empty())
+            .then(|| self.custom_chars.as_str());
+        let active: Vec<&str> = sets.into_iter()
+            .flatten()
+            .chain(custom)
+            .collect();
+        if active.is_empty() {
+            return CHARS_SYMBOLS.to_owned();
         }
-        if self.use_latin {
-            chars.push_str(CHARS_LATIN);
+        let max_len = active.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+        let char_vecs: Vec<Vec<char>> = active.iter()
+            .map(|s| s.chars().collect())
+            .collect();
+        let mut out = String::with_capacity(max_len * active.len());
+        for i in 0..max_len {
+            for chars in &char_vecs {
+                if let Some(&c) = chars.get(i) {
+                    out.push(c);
+                }
+            }
         }
-        if self.use_numbers {
-            chars.push_str(CHARS_NUMBERS);
-        }
-        if self.use_blocks {
-            chars.push_str(CHARS_BLOCKS);
-        }
-        if self.use_chinese {
-            chars.push_str(CHARS_CHINESE);
-        }
-        if self.use_katakana {
-            chars.push_str(CHARS_KATAKANA);
-        }
-        if self.use_hiragana {
-            chars.push_str(CHARS_HIRAGANA);
-        }
-        if self.use_korean {
-            chars.push_str(CHARS_KOREAN);
-        }
-        if self.use_custom && !self.custom_chars.is_empty() {
-            chars.push_str(&self.custom_chars);
-        }
-        if chars.is_empty() {
-            chars.push_str(CHARS_SYMBOLS);
-        }
-        chars
+        out
     }
 }
 
@@ -429,6 +435,8 @@ pub mod setting_id {
     pub const BG_COLOR_G: SID = setting_id!("bg_color_g", bg_color_g);
     pub const BG_COLOR_B: SID = setting_id!("bg_color_b", bg_color_b);
     pub const BG_COLOR_A: SID = setting_id!("bg_color_a", bg_color_a);
+    pub const CUSTOM_CHARS: SID = setting_id!("custom_chars", custom_chars);
+    pub const FONT_NAME:    SID = setting_id!("font_name", font_name);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +476,12 @@ impl Settings for AsciiArtFullSettings {
                         desc_bool(TrKey::ParamAsciiUseHiragana, TrKey::ParamAsciiUseHiraganaDesc, setting_id::USE_HIRAGANA),
                         desc_bool(TrKey::ParamAsciiUseKorean, TrKey::ParamAsciiUseKoreanDesc, setting_id::USE_KOREAN),
                         desc_bool(TrKey::ParamAsciiUseCustom, TrKey::ParamAsciiUseCustomDesc, setting_id::USE_CUSTOM),
+                        SettingDescriptor {
+                            label_key: TrKey::NativeAsciiCustomChars,
+                            description_key: Some(TrKey::NativeAsciiCustomCharsHint),
+                            kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                            id: setting_id::CUSTOM_CHARS,
+                        },
                     ],
                 },
                 id: setting_id::CHAR_SET_ENABLED,
@@ -513,6 +527,12 @@ impl Settings for AsciiArtFullSettings {
                 description_key: Some(TrKey::ParamAsciiFontRotationDesc),
                 kind: SettingKind::FloatRange { range: -360.0..=360.0, logarithmic: false },
                 id: setting_id::FONT_ROTATION,
+            },
+            SettingDescriptor {
+                label_key: TrKey::NativeAsciiFontChoice,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FONT_NAME,
             },
             SettingDescriptor {
                 label_key: TrKey::ParamAsciiColorMode,

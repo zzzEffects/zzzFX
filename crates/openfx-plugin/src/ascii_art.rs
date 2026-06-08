@@ -17,7 +17,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache, build_string_cache,
     define_single_param, read_generic_param, copy_source_to_u8, copy_u8_to_output,
     detect_pixel_depth, action_load_common, action_get_clip_preferences_common,
-    action_get_regions_of_interest_common,
+    action_get_regions_of_interest_common, ofx_y_to_renderer, ofx_angle_to_renderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -539,6 +539,9 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
             pi(cb, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
             // Children inside group
             for child in children {
+                if is_native_grouped_name(child.id.name) {
+                    continue;
+                }
                 define_single_param(
                     su,
                     param_set,
@@ -777,7 +780,8 @@ unsafe fn action_render(
 
     let mut settings = AsciiArtFullSettings::default();
     apply_params(param_set, time, &mut settings)?;
-    let ascii_art: AsciiArt = (&settings).into();
+    let mut ascii_art: AsciiArt = (&settings).into();
+    ascii_art.font_rotation = ofx_angle_to_renderer(ascii_art.font_rotation as f64) as f32;
 
     let mut sc: OfxImageClipHandle = ptr::null_mut();
     cgh(effect, c"Source".as_ptr(), &mut sc, ptr::null_mut()).ofx_ok()?;
@@ -871,7 +875,7 @@ unsafe fn apply_params(
         let mut y: f64 = 0.0;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
         dst.pos_x = x as f32;
-        dst.pos_y = y as f32;
+        dst.pos_y = ofx_y_to_renderer(y) as f32;  // OFX bottom-up → renderer top-down
     }
 
     // --- Native RGBA: Font Color ---

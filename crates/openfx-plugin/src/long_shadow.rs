@@ -16,7 +16,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache, build_string_cache,
     define_single_param, read_generic_param, copy_source_to_u8, copy_u8_to_output,
     detect_pixel_depth, action_load_common, action_get_clip_preferences_common,
-    action_get_regions_of_interest_common,
+    action_get_regions_of_interest_common, ofx_angle_to_renderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -438,6 +438,7 @@ unsafe fn action_is_identity(
 
     let mut settings = LongShadowFullSettings::default();
     apply_params(param_set, time, &mut settings)?;
+    settings.angle = ofx_angle_to_renderer(settings.angle as f64) as f32;
     let shadow: LongShadow = (&settings).into();
 
     if shadow.is_identity() {

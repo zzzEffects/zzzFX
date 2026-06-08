@@ -18,6 +18,7 @@ use crate::shared::{
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
     action_get_region_of_definition_generator,
+    ofx_angle_to_renderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,7 @@ fn is_native_grouped_name(name: &str) -> bool {
         "sprite_range_start" | "sprite_range_end"
         | "repeat_range_start" | "repeat_range_end"
         | "displacement_x" | "displacement_y"
+        | "file_path" | "file_data"
     )
 }
 
@@ -60,6 +62,9 @@ struct InstanceData {
     cached_crop_h: u32,
     cached_scale: f32,
     cached_filter: u32,
+    cached_rotation: f32,
+    cached_displacement_x: f32,
+    cached_displacement_y: f32,
     cached_output_w: usize,
     cached_output_h: usize,
     cached_file_path: String,
@@ -348,6 +353,8 @@ unsafe fn action_create_instance(effect: OfxImageEffectHandle) -> OfxResult<()> 
         cached_dst: Vec::new(), cache_valid: false,
         cached_crop_x: 0, cached_crop_y: 0, cached_crop_w: 0, cached_crop_h: 0,
         cached_scale: 0.0, cached_filter: 0,
+        cached_rotation: 0.0,
+        cached_displacement_x: 0.0, cached_displacement_y: 0.0,
         cached_output_w: 0, cached_output_h: 0,
         cached_file_path: String::new(),
         first_click_frame: None,
@@ -694,6 +701,9 @@ unsafe fn action_render(
                 || idata_ref.cached_output_h != height
                 || idata_ref.cached_scale != ss.scale
                 || idata_ref.cached_filter != filter_discriminant
+                || idata_ref.cached_rotation != ss.rotation
+                || idata_ref.cached_displacement_x != ss.displacement_x
+                || idata_ref.cached_displacement_y != ss.displacement_y
                 || idata_ref.cached_file_path != idata_ref.file_path
             { break 'cache false; }
             if let Some(crop_rect) = ss.get_crop_rect(time, frame_rate, idata_ref.sheet_width, idata_ref.sheet_height, None) {
@@ -733,6 +743,9 @@ unsafe fn action_render(
                         idata_inner.cached_crop_h = crop_rect.3;
                         idata_inner.cached_scale = ss.scale;
                         idata_inner.cached_filter = filter_discriminant;
+                        idata_inner.cached_rotation = ss.rotation;
+                        idata_inner.cached_displacement_x = ss.displacement_x;
+                        idata_inner.cached_displacement_y = ss.displacement_y;
                         idata_inner.cached_output_w = width;
                         idata_inner.cached_output_h = height;
                         idata_inner.cached_file_path = cache_file_path;
@@ -1030,6 +1043,7 @@ unsafe fn interact_pen_down(
     gps(effect, &mut param_set).ofx_ok()?;
     let mut settings = SpriteSheetFullSettings::default();
     let _ = apply_params(param_set, 0.0, &mut settings);
+    settings.rotation = ofx_angle_to_renderer(settings.rotation as f64) as f32;
     let ss: SpriteSheet = (&settings).into();
 
     if !ss.selection_mode {

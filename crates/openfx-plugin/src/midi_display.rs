@@ -38,6 +38,7 @@ fn is_native_grouped_name(name: &str) -> bool {
         "note_color_r" | "note_color_g" | "note_color_b" | "note_color_a"
         | "note_border_color_r" | "note_border_color_g" | "note_border_color_b" | "note_border_color_a"
         | "background_color_r" | "background_color_g" | "background_color_b" | "background_color_a"
+        | "file_path" | "file_data"
     )
 }
 

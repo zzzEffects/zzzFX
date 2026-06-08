@@ -19,6 +19,7 @@ use crate::shared::{
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
     action_get_region_of_definition_generator,
+    ofx_y_to_renderer, ofx_angle_to_renderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ const POSITION_PARAM: &CStr = c"position";
 const PAGE_NAME: &CStr = c"Controls";
 
 fn is_native_grouped_name(name: &str) -> bool {
-    matches!(name, "position_x" | "position_y" | "font_choice" | "font_name")
+    matches!(name, "position_x" | "position_y" | "font_choice" | "font_name" | "formula")
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +533,7 @@ unsafe fn action_render(
     let mut settings = LaTeXDisplayFullSettings::default();
     let (formula, font_name, bg_r, bg_g, bg_b, bg_a, text_r, text_g, text_b, text_a, pos_x, pos_y) =
         apply_params(param_set, time, &mut settings)?;
+    settings.rotation = ofx_angle_to_renderer(settings.rotation as f64) as f32;
     let core_settings: LaTeXDisplay = (&settings).into();
 
     // Retrieve instance data
@@ -808,10 +810,10 @@ unsafe fn apply_params(
         pgh(param_set, POSITION_PARAM.as_ptr(), &mut p, ptr::null_mut()).ofx_ok()?;
         let mut x: f64 = 0.5; let mut y: f64 = 0.5;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
-        let y_flipped = 1.0 - y;
+        let y = ofx_y_to_renderer(y);
         dst.set_field::<f32>(&find_id("position_x")?, x.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
-        dst.set_field::<f32>(&find_id("position_y")?, y_flipped.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
-        (x as f32, y_flipped as f32)
+        dst.set_field::<f32>(&find_id("position_y")?, y.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        (x as f32, y as f32)
     };
 
     // Read generic params

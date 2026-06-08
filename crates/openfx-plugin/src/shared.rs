@@ -13,6 +13,21 @@ use zzzfx::settings::{
 
 use crate::bindings::*;
 
+// ---------------------------------------------------------------------------
+// OFX → renderer coordinate conversion helpers
+// ---------------------------------------------------------------------------
+// OFX uses bottom-up coordinates (Y=0 at bottom, +Y=up) and CCW angles.
+// The internal pixel buffer is top-down (Y=0 at top, +Y=down) with CW angles.
+// These helpers centralize the conversion so every effect stays consistent.
+
+/// Convert OFX Y position (0=bottom, 1=top) to pixel-buffer Y (0=top, 1=bottom).
+#[inline]
+pub fn ofx_y_to_renderer(ofx_y: f64) -> f64 { 1.0 - ofx_y }
+
+/// Convert OFX angle in degrees (+=CCW, Y-up) to pixel-buffer angle (+=CW, Y-down).
+#[inline]
+pub fn ofx_angle_to_renderer(ofx_deg: f64) -> f64 { -ofx_deg }
+
 // SAFETY: OfxPlugin is stored in a OnceLock and initialized once at plugin load
 // time, before any concurrent access from the host. The contained function pointers
 // and `*const c_char` are valid for the lifetime of the plugin (the host guarantees
@@ -289,6 +304,41 @@ pub unsafe fn define_single_param<T: Settings<Key = TrKey> + Clone>(
             .ofx_ok()?;
             pi(pp, kOfxParamPropDefault.as_ptr(), 0, dv as i32).ofx_ok()?;
         }
+        SettingKind::String { secret, multiline, animates } => {
+            let dv = default_settings
+                .get_field::<String>(&descriptor.id)
+                .map_err(|_| OfxStat::kOfxStatFailed)?;
+            pdef(
+                param_set,
+                kOfxParamTypeString.as_ptr(),
+                id_cstr.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            let dv_cstr = CString::new(dv.as_str()).unwrap_or_else(|_| CString::new("").unwrap());
+            ps(pp, kOfxParamPropDefault.as_ptr(), 0, dv_cstr.as_ptr()).ofx_ok()?;
+            if *multiline {
+                ps(pp, kOfxParamPropStringMode.as_ptr(), 0, kOfxParamStringIsMultiLine.as_ptr()).ofx_ok()?;
+            }
+            if *secret {
+                pi(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
+            }
+            if !animates {
+                pi(pp, kOfxParamPropAnimates.as_ptr(), 0, 0).ofx_ok()?;
+            }
+        }
+        SettingKind::PushButton { secret } => {
+            pdef(
+                param_set,
+                kOfxParamTypePushButton.as_ptr(),
+                id_cstr.as_ptr(),
+                &mut pp,
+            )
+            .ofx_ok()?;
+            if *secret {
+                pi(pp, kOfxParamPropSecret.as_ptr(), 0, 1).ofx_ok()?;
+            }
+        }
         SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
             let dv_r = default_settings
                 .get_field::<f32>(r_id)
@@ -446,6 +496,17 @@ pub unsafe fn read_generic_param<T: Settings<Key = TrKey> + Clone>(
             pgv(p, time, &mut v).ofx_ok()?;
             dst.set_field::<bool>(&desc.id, v != 0).ok();
         }
+        SettingKind::String { .. } => {
+            let mut s_ptr: *mut c_char = ptr::null_mut();
+            pgv(p, time, &mut s_ptr).ofx_ok()?;
+            let s = if s_ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(s_ptr).to_string_lossy().into_owned()
+            };
+            dst.set_field::<String>(&desc.id, s).ok();
+        }
+        SettingKind::PushButton { .. } => {}
         SettingKind::ColorRGBA { r_id, g_id, b_id, a_id } => {
             let mut r: f64 = 0.0;
             let mut g: f64 = 0.0;
@@ -523,7 +584,7 @@ pub unsafe fn copy_source_to_u8(
             for y in 0..height {
                 ptr::copy_nonoverlapping(
                     (sp as *const u8).add(y * src_stride),
-                    dst.as_mut_ptr().add(y * row_bytes_u8),
+                    dst.as_mut_ptr().add((height - 1 - y) * row_bytes_u8),
                     row_bytes_u8,
                 );
             }
@@ -531,7 +592,7 @@ pub unsafe fn copy_source_to_u8(
         8 => {
             for y in 0..height {
                 let host_row = (sp as *const u8).add(y * src_stride) as *const u16;
-                let u8_row = dst.as_mut_ptr().add(y * row_bytes_u8);
+                let u8_row = dst.as_mut_ptr().add((height - 1 - y) * row_bytes_u8);
                 for x in 0..(width * 4) {
                     let v = *host_row.add(x) as u32;
                     *u8_row.add(x) = ((v * 255 + 32767) / 65535) as u8;
@@ -541,7 +602,7 @@ pub unsafe fn copy_source_to_u8(
         _ => {
             for y in 0..height {
                 let host_row = (sp as *const u8).add(y * src_stride) as *const f32;
-                let u8_row = dst.as_mut_ptr().add(y * row_bytes_u8);
+                let u8_row = dst.as_mut_ptr().add((height - 1 - y) * row_bytes_u8);
                 for x in 0..(width * 4) {
                     let v = *host_row.add(x);
                     *u8_row.add(x) = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -569,7 +630,7 @@ pub unsafe fn copy_u8_to_output(
             for y in 0..height {
                 ptr::copy_nonoverlapping(
                     src.as_ptr().add(y * row_bytes_u8),
-                    (dp as *mut u8).add(y * dst_stride),
+                    (dp as *mut u8).add((height - 1 - y) * dst_stride),
                     row_bytes_u8,
                 );
             }
@@ -577,7 +638,7 @@ pub unsafe fn copy_u8_to_output(
         8 => {
             for y in 0..height {
                 let u8_row = src.as_ptr().add(y * row_bytes_u8);
-                let host_row = (dp as *mut u8).add(y * dst_stride) as *mut u16;
+                let host_row = (dp as *mut u8).add((height - 1 - y) * dst_stride) as *mut u16;
                 for x in 0..(width * 4) {
                     let v = *u8_row.add(x) as u16;
                     *host_row.add(x) = (v << 8) | v;
@@ -587,7 +648,7 @@ pub unsafe fn copy_u8_to_output(
         _ => {
             for y in 0..height {
                 let u8_row = src.as_ptr().add(y * row_bytes_u8);
-                let host_row = (dp as *mut u8).add(y * dst_stride) as *mut f32;
+                let host_row = (dp as *mut u8).add((height - 1 - y) * dst_stride) as *mut f32;
                 for x in 0..(width * 4) {
                     *host_row.add(x) = *u8_row.add(x) as f32 * RECIP_255;
                 }

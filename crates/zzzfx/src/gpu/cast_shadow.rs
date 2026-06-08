@@ -671,7 +671,7 @@ fn compute_single_axis(
 
             let rad = pivot_angle.to_radians();
             let dx = rad.sin();
-            let dy = -rad.cos();
+            let dy = rad.cos();
             let tx = if dx.abs() < 1e-6 { f32::MAX } else if dx > 0.0 { hw / dx } else { -hw / dx };
             let ty = if dy.abs() < 1e-6 { f32::MAX } else if dy > 0.0 { hh / dy } else { -hh / dy };
             let t = tx.min(ty);
@@ -705,7 +705,7 @@ fn compute_axis_manual(
 ) -> Option<GpuAxis> {
     let rad = pivot_angle.to_radians();
     let dx = rad.sin();
-    let dy = -rad.cos();
+    let dy = rad.cos();
     let nx = -dx;
     let ny = -dy;
     let ax = ny;

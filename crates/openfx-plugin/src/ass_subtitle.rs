@@ -17,7 +17,7 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache,
     build_string_cache, define_single_param, read_generic_param,
     action_load_common, action_get_clip_preferences_common,
-    action_get_region_of_definition_generator,
+    action_get_region_of_definition_generator, ofx_y_to_renderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,10 @@ const FILE_PATH_PARAM: &CStr = c"file_path";
 const FONT_OVERRIDE_CHOICE_PARAM: &CStr = c"font_override_choice";
 const FONT_OVERRIDE_STRING_PARAM: &CStr = c"font_override_name";
 const PAGE_NAME: &CStr = c"Controls";
+
+fn is_native_grouped_name(name: &str) -> bool {
+    matches!(name, "file_path" | "file_data")
+}
 
 /// Global cache of installed font names, built lazily on first access.
 fn cached_font_names() -> &'static Vec<String> {
@@ -297,6 +301,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     // --- Block A: Generic params before Position (time_offset_s, scale) ---
     for desc in d.settings_list.setting_descriptors.iter() {
         if desc.id.name == "position_x" { break; }
+        if is_native_grouped_name(desc.id.name) { continue; }
         define_single_param(su, param_set, desc, &defaults, PAGE_NAME, &d.strings, &d.menu_item_strings)?;
     }
 
@@ -845,7 +850,7 @@ unsafe fn apply_params(
 
     // Read all generic params, skipping those handled by native Double2D controls
     for desc in d.settings_list.setting_descriptors.iter() {
-        if matches!(desc.id.name, "position_x" | "position_y" | "font_scale_x" | "font_scale_y") {
+        if matches!(desc.id.name, "file_path" | "file_data" | "position_x" | "position_y" | "font_scale_x" | "font_scale_y") {
             continue;
         }
         if let SettingKind::Group { .. } = &desc.kind {
@@ -873,7 +878,7 @@ unsafe fn apply_params(
         let mut y: f64 = 0.5;
         pgv(p, time, &mut x, &mut y).ofx_ok()?;
         dst.set_field::<f32>(&find_id("position_x")?, x.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
-        dst.set_field::<f32>(&find_id("position_y")?, y.clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
+        dst.set_field::<f32>(&find_id("position_y")?, ofx_y_to_renderer(y).clamp(0.0, 1.0) as f32).map_err(|_| OfxStat::kOfxStatFailed)?;
     }
 
     // --- Native Double2D: Font Scale ---

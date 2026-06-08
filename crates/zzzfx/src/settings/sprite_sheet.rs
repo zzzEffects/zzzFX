@@ -1,4 +1,3 @@
-use zzzfx_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
@@ -54,8 +53,10 @@ impl SettingsEnum for ScaleAlgorithm {}
 // Main settings struct
 // ---------------------------------------------------------------------------
 
-#[derive(FullSettings, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpriteSheet {
+    pub file_path: String,
+    pub file_data: String,
     pub sprite_columns: i32,
     pub sprite_rows: i32,
     pub sprite_range_start: i32,
@@ -86,6 +87,8 @@ pub struct SpriteSheet {
 impl Default for SpriteSheet {
     fn default() -> Self {
         Self {
+            file_path: String::new(),
+            file_data: String::new(),
             sprite_columns: 1,
             sprite_rows: 1,
             sprite_range_start: 0,
@@ -116,6 +119,63 @@ impl Default for SpriteSheet {
 }
 
 // ---------------------------------------------------------------------------
+// FullSettings struct (manual — derive macro doesn't support String)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpriteSheetFullSettings {
+    pub file_path: String,
+    pub file_data: String,
+    pub sprite_columns: i32,
+    pub sprite_rows: i32,
+    pub sprite_range_start: i32,
+    pub sprite_range_end: i32,
+    pub frame_offset: f32,
+    pub play_count: i32,
+    pub speed: f32,
+    pub reading_direction: ReadingDirection,
+    pub playback_mode: PlaybackMode,
+    pub loop_offset: f32,
+    pub repeat_range_start: i32,
+    pub repeat_range_end: i32,
+    pub repeat_count: i32,
+    pub sprites_cut_x: i32,
+    pub sprites_cut_y: i32,
+    pub scale: f32,
+    pub scale_algorithm: ScaleAlgorithm,
+    pub displacement_x: f32,
+    pub displacement_y: f32,
+    pub rotation: f32,
+    pub displacement_pixel_based: bool,
+    pub rotation_pixel_based: bool,
+    pub selection_mode: bool,
+    pub fit_sprite_sheet_to_output: bool,
+    pub grid_overlay_opacity: f32,
+}
+
+impl Default for SpriteSheetFullSettings { fn default() -> Self { Self::from(SpriteSheet::default()) } }
+impl From<&SpriteSheet> for SpriteSheetFullSettings {
+    fn from(v: &SpriteSheet) -> Self {
+        Self { file_path: v.file_path.clone(), file_data: v.file_data.clone(), sprite_columns: v.sprite_columns, sprite_rows: v.sprite_rows, sprite_range_start: v.sprite_range_start, sprite_range_end: v.sprite_range_end, frame_offset: v.frame_offset, play_count: v.play_count, speed: v.speed, reading_direction: v.reading_direction, playback_mode: v.playback_mode, loop_offset: v.loop_offset, repeat_range_start: v.repeat_range_start, repeat_range_end: v.repeat_range_end, repeat_count: v.repeat_count, sprites_cut_x: v.sprites_cut_x, sprites_cut_y: v.sprites_cut_y, scale: v.scale, scale_algorithm: v.scale_algorithm, displacement_x: v.displacement_x, displacement_y: v.displacement_y, rotation: v.rotation, displacement_pixel_based: v.displacement_pixel_based, rotation_pixel_based: v.rotation_pixel_based, selection_mode: v.selection_mode, fit_sprite_sheet_to_output: v.fit_sprite_sheet_to_output, grid_overlay_opacity: v.grid_overlay_opacity }
+    }
+}
+impl From<SpriteSheet> for SpriteSheetFullSettings {
+    fn from(v: SpriteSheet) -> Self {
+        Self { file_path: v.file_path, file_data: v.file_data, sprite_columns: v.sprite_columns, sprite_rows: v.sprite_rows, sprite_range_start: v.sprite_range_start, sprite_range_end: v.sprite_range_end, frame_offset: v.frame_offset, play_count: v.play_count, speed: v.speed, reading_direction: v.reading_direction, playback_mode: v.playback_mode, loop_offset: v.loop_offset, repeat_range_start: v.repeat_range_start, repeat_range_end: v.repeat_range_end, repeat_count: v.repeat_count, sprites_cut_x: v.sprites_cut_x, sprites_cut_y: v.sprites_cut_y, scale: v.scale, scale_algorithm: v.scale_algorithm, displacement_x: v.displacement_x, displacement_y: v.displacement_y, rotation: v.rotation, displacement_pixel_based: v.displacement_pixel_based, rotation_pixel_based: v.rotation_pixel_based, selection_mode: v.selection_mode, fit_sprite_sheet_to_output: v.fit_sprite_sheet_to_output, grid_overlay_opacity: v.grid_overlay_opacity }
+    }
+}
+impl From<&SpriteSheetFullSettings> for SpriteSheet {
+    fn from(v: &SpriteSheetFullSettings) -> Self {
+        Self { file_path: v.file_path.clone(), file_data: v.file_data.clone(), sprite_columns: v.sprite_columns, sprite_rows: v.sprite_rows, sprite_range_start: v.sprite_range_start, sprite_range_end: v.sprite_range_end, frame_offset: v.frame_offset, play_count: v.play_count, speed: v.speed, reading_direction: v.reading_direction, playback_mode: v.playback_mode, loop_offset: v.loop_offset, repeat_range_start: v.repeat_range_start, repeat_range_end: v.repeat_range_end, repeat_count: v.repeat_count, sprites_cut_x: v.sprites_cut_x, sprites_cut_y: v.sprites_cut_y, scale: v.scale, scale_algorithm: v.scale_algorithm, displacement_x: v.displacement_x, displacement_y: v.displacement_y, rotation: v.rotation, displacement_pixel_based: v.displacement_pixel_based, rotation_pixel_based: v.rotation_pixel_based, selection_mode: v.selection_mode, fit_sprite_sheet_to_output: v.fit_sprite_sheet_to_output, grid_overlay_opacity: v.grid_overlay_opacity }
+    }
+}
+impl From<SpriteSheetFullSettings> for SpriteSheet {
+    fn from(v: SpriteSheetFullSettings) -> Self {
+        Self { file_path: v.file_path, file_data: v.file_data, sprite_columns: v.sprite_columns, sprite_rows: v.sprite_rows, sprite_range_start: v.sprite_range_start, sprite_range_end: v.sprite_range_end, frame_offset: v.frame_offset, play_count: v.play_count, speed: v.speed, reading_direction: v.reading_direction, playback_mode: v.playback_mode, loop_offset: v.loop_offset, repeat_range_start: v.repeat_range_start, repeat_range_end: v.repeat_range_end, repeat_count: v.repeat_count, sprites_cut_x: v.sprites_cut_x, sprites_cut_y: v.sprites_cut_y, scale: v.scale, scale_algorithm: v.scale_algorithm, displacement_x: v.displacement_x, displacement_y: v.displacement_y, rotation: v.rotation, displacement_pixel_based: v.displacement_pixel_based, rotation_pixel_based: v.rotation_pixel_based, selection_mode: v.selection_mode, fit_sprite_sheet_to_output: v.fit_sprite_sheet_to_output, grid_overlay_opacity: v.grid_overlay_opacity }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Setting IDs
 // ---------------------------------------------------------------------------
 
@@ -125,6 +185,8 @@ pub mod setting_id {
     use super::SpriteSheetFullSettings;
     type SID = SettingID<SpriteSheetFullSettings>;
 
+    pub const FILE_PATH:          SID = setting_id!("file_path", file_path);
+    pub const FILE_DATA:          SID = setting_id!("file_data", file_data);
     pub const SPRITE_COLUMNS:     SID = setting_id!("sprite_columns", sprite_columns);
     pub const SPRITE_ROWS:        SID = setting_id!("sprite_rows", sprite_rows);
     pub const SPRITE_RANGE_START: SID = setting_id!("sprite_range_start", sprite_range_start);
@@ -161,6 +223,18 @@ impl Settings for SpriteSheetFullSettings {
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
+            SettingDescriptor {
+                label_key: TrKey::NativeFilePath,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FILE_PATH,
+            },
+            SettingDescriptor {
+                label_key: TrKey::NativeFilePath,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FILE_DATA,
+            },
             SettingDescriptor {
                 label_key: TrKey::ParamColumns,
                 description_key: Some(TrKey::ParamColumnsDesc),

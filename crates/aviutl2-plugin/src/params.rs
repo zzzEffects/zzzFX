@@ -1,7 +1,7 @@
 use aviutl2::filter::{
-    FilterConfigCheckSection, FilterConfigCheckbox, FilterConfigColor, FilterConfigColorValue,
-    FilterConfigGroup, FilterConfigItem, FilterConfigSelect, FilterConfigSelectItem,
-    FilterConfigTrack,
+    FilterConfigButton, FilterConfigCheckSection, FilterConfigCheckbox, FilterConfigColor,
+    FilterConfigColorValue, FilterConfigGroup, FilterConfigItem, FilterConfigSelect,
+    FilterConfigSelectItem, FilterConfigString, FilterConfigText, FilterConfigTrack,
 };
 use zzzfx::i18n::ja;
 use zzzfx::settings::{EnumValue, SettingDescriptor, SettingKind, Settings};
@@ -71,6 +71,27 @@ fn add_descriptor<T: Settings<Key = zzzfx::TrKey> + Clone>(
             items.push(FilterConfigItem::Checkbox(FilterConfigCheckbox {
                 name: label,
                 value,
+            }));
+        }
+        SettingKind::String { multiline, .. } => {
+            let value = defaults.get_field::<String>(&descriptor.id).unwrap_or_default();
+            if *multiline {
+                items.push(FilterConfigItem::Text(FilterConfigText {
+                    name: label,
+                    value,
+                }));
+            } else {
+                items.push(FilterConfigItem::String(FilterConfigString {
+                    name: label,
+                    value,
+                }));
+            }
+        }
+        SettingKind::PushButton { .. } => {
+            extern "C" fn noop_cb(_: *mut aviutl2::sys::plugin2::EDIT_SECTION) {}
+            items.push(FilterConfigItem::Button(FilterConfigButton {
+                name: label,
+                callback: noop_cb,
             }));
         }
         SettingKind::Enumeration { options } => {

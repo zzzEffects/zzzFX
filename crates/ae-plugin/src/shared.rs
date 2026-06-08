@@ -228,6 +228,9 @@ pub fn map_params<T: Settings<Key = TrKey> + 'static>(
                     },
                 )?;
             }
+            SettingKind::String { .. } | SettingKind::PushButton { .. } => {
+                // String/PushButton not yet wired for AE (ArbitraryDef/Handle lifecycle issues)
+            }
             SettingKind::Group { children } => {
                 let descriptor_id = descriptor.id.ae_id();
                 let [default_value, legacy_default_value] = get_defaults::<bool, T>(
@@ -369,6 +372,9 @@ pub fn apply_settings_list<T: Settings>(
                         .as_checkbox()?
                         .value(),
                 ).map_err(|_| Error::BadCallbackParameter)?;
+            }
+            SettingKind::String { .. } | SettingKind::PushButton { .. } => {
+                // String/PushButton not yet wired for AE
             }
             SettingKind::Group { children, .. } => {
                 settings.set_field::<bool>(

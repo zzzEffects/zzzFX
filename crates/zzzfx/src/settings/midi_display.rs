@@ -1,4 +1,3 @@
-use zzzfx_macros::FullSettings;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use super::{MenuItem, SettingDescriptor, SettingKind, Settings, SettingsEnum};
@@ -59,8 +58,10 @@ impl SettingsEnum for MidiTrackFilterMode {}
 // Main settings struct
 // ---------------------------------------------------------------------------
 
-#[derive(FullSettings, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MidiDisplay {
+    pub file_path: String,
+    pub file_data: String,
     // Timing
     pub time_offset: f32,
     pub bpm_source: MidiBpmSource,
@@ -109,6 +110,8 @@ pub struct MidiDisplay {
 impl Default for MidiDisplay {
     fn default() -> Self {
         Self {
+            file_path: String::new(),
+            file_data: String::new(),
             time_offset: 0.0,
             bpm_source: MidiBpmSource::FromMidi,
             user_bpm: 120.0,
@@ -150,6 +153,66 @@ impl Default for MidiDisplay {
 }
 
 // ---------------------------------------------------------------------------
+// FullSettings struct (manual — derive macro doesn't support String)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MidiDisplayFullSettings {
+    pub file_path: String,
+    pub file_data: String,
+    pub time_offset: f32,
+    pub bpm_source: MidiBpmSource,
+    pub user_bpm: f32,
+    pub speed: f32,
+    pub orientation: MidiOrientation,
+    pub note_height_min: f32,
+    pub key_range_min: i32,
+    pub key_range_max: i32,
+    pub show_keyboard: bool,
+    pub keyboard_width: f32,
+    pub note_color_mode: MidiNoteColorMode,
+    pub note_color_r: f32,
+    pub note_color_g: f32,
+    pub note_color_b: f32,
+    pub note_color_a: f32,
+    pub note_opacity: f32,
+    pub note_border_thickness: f32,
+    pub note_border_color_r: f32,
+    pub note_border_color_g: f32,
+    pub note_border_color_b: f32,
+    pub note_border_color_a: f32,
+    pub note_border_opacity: f32,
+    pub note_corner_radius: f32,
+    pub velocity_affects_opacity: bool,
+    pub velocity_affects_brightness: bool,
+    pub minimum_velocity: i32,
+    pub background_color_r: f32,
+    pub background_color_g: f32,
+    pub background_color_b: f32,
+    pub background_color_a: f32,
+    pub background_opacity: f32,
+    pub track_filter_mode: MidiTrackFilterMode,
+    pub track_number: i32,
+    pub loop_playback: bool,
+    pub quantize_display: bool,
+    pub show_velocity_as_height: bool,
+}
+
+impl Default for MidiDisplayFullSettings { fn default() -> Self { Self::from(MidiDisplay::default()) } }
+impl From<&MidiDisplay> for MidiDisplayFullSettings {
+    fn from(v: &MidiDisplay) -> Self { Self { file_path: v.file_path.clone(), file_data: v.file_data.clone(), time_offset: v.time_offset, bpm_source: v.bpm_source, user_bpm: v.user_bpm, speed: v.speed, orientation: v.orientation, note_height_min: v.note_height_min, key_range_min: v.key_range_min, key_range_max: v.key_range_max, show_keyboard: v.show_keyboard, keyboard_width: v.keyboard_width, note_color_mode: v.note_color_mode, note_color_r: v.note_color_r, note_color_g: v.note_color_g, note_color_b: v.note_color_b, note_color_a: v.note_color_a, note_opacity: v.note_opacity, note_border_thickness: v.note_border_thickness, note_border_color_r: v.note_border_color_r, note_border_color_g: v.note_border_color_g, note_border_color_b: v.note_border_color_b, note_border_color_a: v.note_border_color_a, note_border_opacity: v.note_border_opacity, note_corner_radius: v.note_corner_radius, velocity_affects_opacity: v.velocity_affects_opacity, velocity_affects_brightness: v.velocity_affects_brightness, minimum_velocity: v.minimum_velocity, background_color_r: v.background_color_r, background_color_g: v.background_color_g, background_color_b: v.background_color_b, background_color_a: v.background_color_a, background_opacity: v.background_opacity, track_filter_mode: v.track_filter_mode, track_number: v.track_number, loop_playback: v.loop_playback, quantize_display: v.quantize_display, show_velocity_as_height: v.show_velocity_as_height } }
+}
+impl From<MidiDisplay> for MidiDisplayFullSettings {
+    fn from(v: MidiDisplay) -> Self { Self { file_path: v.file_path, file_data: v.file_data, time_offset: v.time_offset, bpm_source: v.bpm_source, user_bpm: v.user_bpm, speed: v.speed, orientation: v.orientation, note_height_min: v.note_height_min, key_range_min: v.key_range_min, key_range_max: v.key_range_max, show_keyboard: v.show_keyboard, keyboard_width: v.keyboard_width, note_color_mode: v.note_color_mode, note_color_r: v.note_color_r, note_color_g: v.note_color_g, note_color_b: v.note_color_b, note_color_a: v.note_color_a, note_opacity: v.note_opacity, note_border_thickness: v.note_border_thickness, note_border_color_r: v.note_border_color_r, note_border_color_g: v.note_border_color_g, note_border_color_b: v.note_border_color_b, note_border_color_a: v.note_border_color_a, note_border_opacity: v.note_border_opacity, note_corner_radius: v.note_corner_radius, velocity_affects_opacity: v.velocity_affects_opacity, velocity_affects_brightness: v.velocity_affects_brightness, minimum_velocity: v.minimum_velocity, background_color_r: v.background_color_r, background_color_g: v.background_color_g, background_color_b: v.background_color_b, background_color_a: v.background_color_a, background_opacity: v.background_opacity, track_filter_mode: v.track_filter_mode, track_number: v.track_number, loop_playback: v.loop_playback, quantize_display: v.quantize_display, show_velocity_as_height: v.show_velocity_as_height } }
+}
+impl From<&MidiDisplayFullSettings> for MidiDisplay {
+    fn from(v: &MidiDisplayFullSettings) -> Self { Self { file_path: v.file_path.clone(), file_data: v.file_data.clone(), time_offset: v.time_offset, bpm_source: v.bpm_source, user_bpm: v.user_bpm, speed: v.speed, orientation: v.orientation, note_height_min: v.note_height_min, key_range_min: v.key_range_min, key_range_max: v.key_range_max, show_keyboard: v.show_keyboard, keyboard_width: v.keyboard_width, note_color_mode: v.note_color_mode, note_color_r: v.note_color_r, note_color_g: v.note_color_g, note_color_b: v.note_color_b, note_color_a: v.note_color_a, note_opacity: v.note_opacity, note_border_thickness: v.note_border_thickness, note_border_color_r: v.note_border_color_r, note_border_color_g: v.note_border_color_g, note_border_color_b: v.note_border_color_b, note_border_color_a: v.note_border_color_a, note_border_opacity: v.note_border_opacity, note_corner_radius: v.note_corner_radius, velocity_affects_opacity: v.velocity_affects_opacity, velocity_affects_brightness: v.velocity_affects_brightness, minimum_velocity: v.minimum_velocity, background_color_r: v.background_color_r, background_color_g: v.background_color_g, background_color_b: v.background_color_b, background_color_a: v.background_color_a, background_opacity: v.background_opacity, track_filter_mode: v.track_filter_mode, track_number: v.track_number, loop_playback: v.loop_playback, quantize_display: v.quantize_display, show_velocity_as_height: v.show_velocity_as_height } }
+}
+impl From<MidiDisplayFullSettings> for MidiDisplay {
+    fn from(v: MidiDisplayFullSettings) -> Self { Self { file_path: v.file_path, file_data: v.file_data, time_offset: v.time_offset, bpm_source: v.bpm_source, user_bpm: v.user_bpm, speed: v.speed, orientation: v.orientation, note_height_min: v.note_height_min, key_range_min: v.key_range_min, key_range_max: v.key_range_max, show_keyboard: v.show_keyboard, keyboard_width: v.keyboard_width, note_color_mode: v.note_color_mode, note_color_r: v.note_color_r, note_color_g: v.note_color_g, note_color_b: v.note_color_b, note_color_a: v.note_color_a, note_opacity: v.note_opacity, note_border_thickness: v.note_border_thickness, note_border_color_r: v.note_border_color_r, note_border_color_g: v.note_border_color_g, note_border_color_b: v.note_border_color_b, note_border_color_a: v.note_border_color_a, note_border_opacity: v.note_border_opacity, note_corner_radius: v.note_corner_radius, velocity_affects_opacity: v.velocity_affects_opacity, velocity_affects_brightness: v.velocity_affects_brightness, minimum_velocity: v.minimum_velocity, background_color_r: v.background_color_r, background_color_g: v.background_color_g, background_color_b: v.background_color_b, background_color_a: v.background_color_a, background_opacity: v.background_opacity, track_filter_mode: v.track_filter_mode, track_number: v.track_number, loop_playback: v.loop_playback, quantize_display: v.quantize_display, show_velocity_as_height: v.show_velocity_as_height } }
+}
+
+// ---------------------------------------------------------------------------
 // Setting IDs
 // ---------------------------------------------------------------------------
 
@@ -159,6 +222,8 @@ pub mod setting_id {
     use super::MidiDisplayFullSettings;
     type SID = SettingID<MidiDisplayFullSettings>;
 
+    pub const FILE_PATH:              SID = setting_id!("file_path", file_path);
+    pub const FILE_DATA:              SID = setting_id!("file_data", file_data);
     // Timing
     pub const TIME_OFFSET:            SID = setting_id!("time_offset", time_offset);
     pub const BPM_SOURCE:             SID = setting_id!("bpm_source", bpm_source);
@@ -216,6 +281,18 @@ impl Settings for MidiDisplayFullSettings {
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]> {
         vec![
+            SettingDescriptor {
+                label_key: TrKey::NativeFilePath,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FILE_PATH,
+            },
+            SettingDescriptor {
+                label_key: TrKey::NativeFilePath,
+                description_key: None,
+                kind: SettingKind::String { secret: true, multiline: false, animates: false },
+                id: setting_id::FILE_DATA,
+            },
             // ── Timing ──────────────────────────────────────────
             SettingDescriptor {
                 label_key: TrKey::ParamMidiTimeOffsetS,

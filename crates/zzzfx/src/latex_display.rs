@@ -710,6 +710,7 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
     )
     .unwrap();
 
+    let mut first_glyph = true;
     for item in &dl.items {
         match item {
             DisplayItem::GlyphPath {
@@ -720,12 +721,21 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
                 let fs = *scale as f32;
                 let ch = char::from_u32(*char_code).unwrap_or('?');
                 let fill = apply_text_color(color, text_color);
+                if first_glyph {
+                    first_glyph = false;
+                    write!(
+                        svg,
+                        r#"<text x="{sx}" y="{sy}" font-family="{font_family}" font-size="{fs}px" fill="{fill}">"#
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        svg,
+                        r#"</text><text x="{sx}" y="{sy}" font-family="{font_family}" font-size="{fs}px" fill="{fill}">"#
+                    )
+                    .unwrap();
+                }
                 write_escaped_char(&mut svg, ch);
-                write!(
-                    svg,
-                    r#"</text><text x="{sx}" y="{sy}" font-family="{font_family}" font-size="{fs}px" fill="{fill}">"#
-                )
-                .unwrap();
             }
             DisplayItem::Line {
                 x, y, width, thickness, color, dashed,
@@ -788,6 +798,9 @@ fn display_list_to_svg(dl: &DisplayList, font_family: &str, text_color: [f32; 4]
         }
     }
 
+    if !first_glyph {
+        svg.push_str("</text>");
+    }
     svg.push_str("</svg>");
     svg
 }

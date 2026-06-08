@@ -217,18 +217,11 @@ fn build_glyph_cache(font_name: &str, font_size: f32, charset: &str) -> Option<G
     let mut bitmaps: Vec<GlyphBitmap> = Vec::with_capacity(charset.chars().count());
     for ch in charset.chars() {
         let (metrics, coverage) = font.rasterize(ch, font_size as f32);
-        let row_bytes = metrics.width;
-        let mut flipped = vec![0u8; coverage.len()];
-        for y in 0..metrics.height {
-            let src_row = y * row_bytes;
-            let dst_row = (metrics.height - 1 - y) * row_bytes;
-            flipped[dst_row..dst_row + row_bytes]
-                .copy_from_slice(&coverage[src_row..src_row + row_bytes]);
-        }
+        // fontdue returns coverage starting at top-left. Use directly.
         bitmaps.push(GlyphBitmap {
             width: metrics.width as u32,
             height: metrics.height as u32,
-            data: flipped.into(),
+            data: coverage.into(),
         });
     }
 
@@ -357,6 +350,8 @@ impl AsciiArt {
 
         // ── CPU path ───────────────────────────────────────────────
 
+        // luma=0 (dark/transparent) → sparse char (low index), luma=1 (bright/opaque) → dense char (high index)
+        // invert_luma flips to traditional "dark-ink" mode: dark→dense, bright→sparse
         let brightness = self.brightness.clamp(0.0, 1.0) as f64;
         let contrast = self.contrast.clamp(0.0, 1.0) as f64;
         let invert = self.invert_luma;
@@ -390,6 +385,7 @@ impl AsciiArt {
             avg_r: f32,
             avg_g: f32,
             avg_b: f32,
+            avg_a: f32,
         }
 
         let all_cells: Vec<Vec<CellData>> = (0..rows)
@@ -413,6 +409,7 @@ impl AsciiArt {
                     let mut sum_r = 0.0f64;
                     let mut sum_g = 0.0f64;
                     let mut sum_b = 0.0f64;
+                    let mut sum_a = 0.0f64;
                     let mut total_weight = 0.0f64;
 
                     for iy in iy0..iy1 {
@@ -431,10 +428,12 @@ impl AsciiArt {
                             let r = src[idx] as f64;
                             let g = src[idx + 1] as f64;
                             let b = src[idx + 2] as f64;
+                            let a = src[idx + 3] as f64;
                             sum_luma += (0.2126 * r + 0.7152 * g + 0.0722 * b) * w;
                             sum_r += r * w;
                             sum_g += g * w;
                             sum_b += b * w;
+                            sum_a += a * w;
                             total_weight += w;
                         }
                     }
@@ -444,17 +443,18 @@ impl AsciiArt {
                     let avg_r = (sum_r * RCP_255 * inv) as f32;
                     let avg_g = (sum_g * RCP_255 * inv) as f32;
                     let avg_b = (sum_b * RCP_255 * inv) as f32;
+                    let avg_a = (sum_a * RCP_255 * inv) as f32;
 
                     let adjusted = ((avg_luma - 0.5) * contrast_factor + 0.5
                         + (brightness - 0.5))
                     .clamp(0.0, 1.0);
 
-                    let luma = if invert { 1.0 - adjusted } else { adjusted };
+                    let luma = if invert { adjusted } else { 1.0 - adjusted };
                     let raw = ((luma * (charset_len - 1) as f64).round() as usize)
                         .min(charset_len.saturating_sub(1));
-                    let char_idx = charset_len.saturating_sub(1).saturating_sub(raw);
+                    let char_idx = raw;
 
-                    row_cells.push(CellData { char_idx, avg_r, avg_g, avg_b });
+                    row_cells.push(CellData { char_idx, avg_r, avg_g, avg_b, avg_a });
                 }
                 row_cells
             })
@@ -513,7 +513,8 @@ impl AsciiArt {
                         if bm_x >= bm_w { continue; }
                         let glyph_alpha = bitmap.data[bm_y as usize * bm_w as usize + bm_x as usize] as f32 / 255.0;
 
-                        let mut fa = glyph_alpha;
+                        // Modulate by source cell alpha so transparent areas pass through
+                        let mut fa = glyph_alpha * cell.avg_a;
                         if color_mode == ColorMode::Solid {
                             fa *= self.font_color_a.clamp(0.0, 1.0);
                         }
