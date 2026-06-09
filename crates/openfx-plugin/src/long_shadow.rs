@@ -17,26 +17,8 @@ use crate::shared::{
     define_single_param, read_generic_param, copy_source_to_u8, copy_u8_to_output,
     detect_pixel_depth, action_load_common, action_get_clip_preferences_common,
     action_get_regions_of_interest_common, ofx_angle_to_renderer,
+    ClipImageGuard,
 };
-
-// ---------------------------------------------------------------------------
-// RAII guard for host image handles
-// ---------------------------------------------------------------------------
-
-struct ClipImageGuard {
-    img: OfxPropertySetHandle,
-    release_fn: unsafe extern "C" fn(OfxPropertySetHandle) -> OfxStatus,
-}
-
-impl Drop for ClipImageGuard {
-    fn drop(&mut self) {
-        if !self.img.is_null() {
-            unsafe {
-                let _ = (self.release_fn)(self.img);
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Native OFX parameter names

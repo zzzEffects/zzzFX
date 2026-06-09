@@ -176,7 +176,4 @@ impl Settings for SvgDisplayFullSettings {
         .into_boxed_slice()
     }
 
-    fn legacy_value() -> Self {
-        Default::default()
-    }
 }

@@ -19,7 +19,7 @@ use crate::settings::stroke::Stroke;
 // Shared GPU device — from crate::gpu::device.
 // ---------------------------------------------------------------------------
 
-pub use crate::gpu::device::{get_or_init_shared_device, is_shared_device_ready};
+pub use crate::gpu::device::{get_or_init_shared_device, is_shared_device_ready, blocking_readback};
 use crate::gpu::device::SHARED_GPU_AVAILABLE;
 
 /// Load a WGSL shader by prepending the shared function definitions.
@@ -266,17 +266,7 @@ pub fn try_gpu_render(
     }
 
     // Map staging buffer and copy to CPU dst
-    let staging_slice = guard.bufs.staging_buf.slice(..buf_size);
-    staging_slice.map_async(wgpu::MapMode::Read, |_| {});
-    let _ = guard.device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: None,
-    });
-    let mapped = staging_slice.get_mapped_range();
-    dst[..buf_size as usize].copy_from_slice(&mapped);
-    drop(mapped);
-    guard.bufs.staging_buf.unmap();
-
+    blocking_readback(guard.device, &guard.bufs.staging_buf, buf_size, &mut dst[..buf_size as usize])?;
     Ok(true)
 }
 

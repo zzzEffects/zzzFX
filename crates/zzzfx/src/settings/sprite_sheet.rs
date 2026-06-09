@@ -439,7 +439,4 @@ impl Settings for SpriteSheetFullSettings {
         .into_boxed_slice()
     }
 
-    fn legacy_value() -> Self {
-        Default::default()
-    }
 }

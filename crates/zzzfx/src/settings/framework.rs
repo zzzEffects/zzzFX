@@ -332,7 +332,12 @@ pub trait Settings: Default {
 
     /// Returns settings which new presets can be applied on top of without any newly-added
     /// settings having an additional effect on the result.
-    fn legacy_value() -> Self;
+    fn legacy_value() -> Self
+    where
+        Self: Default,
+    {
+        Self::default()
+    }
 
     fn setting_descriptors() -> Box<[SettingDescriptor<Self>]>;
 }

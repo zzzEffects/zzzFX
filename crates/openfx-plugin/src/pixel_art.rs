@@ -16,28 +16,8 @@ use crate::shared::{
     HostInfo, SuiteCache, StringCache, MenuItemCache, build_string_cache,
     define_single_param, read_generic_param, copy_source_to_u8, copy_u8_to_output,
     detect_pixel_depth, action_load_common, action_get_clip_preferences_common,
-    action_get_regions_of_interest_common,
+    action_get_regions_of_interest_common, ClipImageGuard,
 };
-
-// ---------------------------------------------------------------------------
-// RAII guard for host image handles — ensures clipReleaseImage is called
-// even if a panic unwinds past the render function
-// ---------------------------------------------------------------------------
-
-struct ClipImageGuard {
-    img: OfxPropertySetHandle,
-    release_fn: unsafe extern "C" fn(OfxPropertySetHandle) -> OfxStatus,
-}
-
-impl Drop for ClipImageGuard {
-    fn drop(&mut self) {
-        if !self.img.is_null() {
-            unsafe {
-                let _ = (self.release_fn)(self.img);
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Native OFX parameter names (for pixel_size_v enable/disable via square)

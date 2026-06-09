@@ -4,6 +4,11 @@ use crate::settings::cast_shadow::CastShadow;
 
 use super::get_or_init_shared_device;
 
+thread_local! {
+    static PACKED_BUF: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
+    static ZERO_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::new());
+}
+
 // ---------------------------------------------------------------------------
 // Uniforms (must match WGSL struct layout exactly)
 // ---------------------------------------------------------------------------
@@ -333,14 +338,16 @@ pub fn try_cast_shadow_gpu_render(
         let dev = ctx.device;
         let queue = ctx.queue;
 
-        // Upload source (RGBA8 → packed u32)
-        let src_u32: Vec<u32> = src
-            .chunks_exact(4)
-            .map(|p| {
-                (p[0] as u32) | ((p[1] as u32) << 8) | ((p[2] as u32) << 16) | ((p[3] as u32) << 24)
-            })
-            .collect();
-        queue.write_buffer(&ctx.bufs.src, 0, bytemuck::cast_slice(&src_u32));
+        // Upload source (RGBA8 → packed u32), reuse thread-local buffer
+        PACKED_BUF.with(|buf_cell| {
+            let buf = &mut *buf_cell.borrow_mut();
+            buf.clear();
+            buf.reserve(src.len() / 4);
+            for p in src.chunks_exact(4) {
+                buf.push((p[0] as u32) | ((p[1] as u32) << 8) | ((p[2] as u32) << 16) | ((p[3] as u32) << 24));
+            }
+            queue.write_buffer(&ctx.bufs.src, 0, bytemuck::cast_slice(buf));
+        });
 
         // Compute all axes based on pivot mode
         let axes = compute_axes(shadow, src, width, height);
@@ -436,11 +443,18 @@ pub fn try_cast_shadow_gpu_render(
         let wx = (w + 15) / 16;
         let wy = (h + 15) / 16;
 
-        // Zero alpha_a before accumulation (for multi-axis modes)
-        let alpha_size = (w * h * 4) as u64;
+        // Zero alpha_a before accumulation (for multi-axis modes), reuse thread-local
+        let alpha_size = (w * h * 4) as usize;
         {
-            let zeros = vec![0u8; alpha_size as usize];
-            queue.write_buffer(&ctx.bufs.alpha_a, 0, &zeros);
+            ZERO_BUF.with(|buf_cell| {
+                let buf = &mut *buf_cell.borrow_mut();
+                if buf.len() < alpha_size {
+                    buf.resize(alpha_size, 0);
+                } else {
+                    buf[..alpha_size].fill(0);
+                }
+                queue.write_buffer(&ctx.bufs.alpha_a, 0, &buf[..alpha_size]);
+            });
         }
 
         // Pass 1: project (once per axis, accumulating via max)

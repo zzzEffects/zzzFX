@@ -411,16 +411,10 @@ fn try_update(
     neighbor: usize,
     weight: f32,
 ) {
-    // SAFETY: idx and neighbor are both proven in-bounds by the loop structure
-    // (y in 0..height, x in 0..width with neighbor guards checking edge conditions).
-    debug_assert!(idx < dists.len() && neighbor < dists.len());
-    debug_assert!(idx < nearest_cols.len() && neighbor < nearest_cols.len());
-    unsafe {
-        let new_dist = dists.get_unchecked(neighbor) + weight;
-        if new_dist < *dists.get_unchecked(idx) {
-            *dists.get_unchecked_mut(idx) = new_dist;
-            *nearest_cols.get_unchecked_mut(idx) = *nearest_cols.get_unchecked(neighbor);
-        }
+    let new_dist = dists[neighbor] + weight;
+    if new_dist < dists[idx] {
+        dists[idx] = new_dist;
+        nearest_cols[idx] = nearest_cols[neighbor];
     }
 }
 

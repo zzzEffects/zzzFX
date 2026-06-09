@@ -173,7 +173,4 @@ impl Settings for RepeaterFullSettings {
         .into_boxed_slice()
     }
 
-    fn legacy_value() -> Self {
-        Default::default()
-    }
 }

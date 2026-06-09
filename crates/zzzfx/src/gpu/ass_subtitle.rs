@@ -168,17 +168,27 @@ pub fn try_ass_subtitle_gpu_composite(
     }
 
     let staging_slice = guard.bufs.staging_buf.slice(..src_size);
-    staging_slice.map_async(wgpu::MapMode::Read, |_| {});
+    let (tx, rx) = std::sync::mpsc::channel();
+    staging_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
     let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
-        timeout: None,
+        timeout: Some(std::time::Duration::from_secs(5)),
     });
-    let mapped = staging_slice.get_mapped_range();
-    dst[..src_size as usize].copy_from_slice(&mapped);
-    drop(mapped);
-    guard.bufs.staging_buf.unmap();
-
-    Ok(true)
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(())) => {
+            let mapped = staging_slice.get_mapped_range();
+            dst[..src_size as usize].copy_from_slice(&mapped);
+            drop(mapped);
+            guard.bufs.staging_buf.unmap();
+            Ok(true)
+        }
+        _ => {
+            guard.bufs.staging_buf.unmap();
+            Err("staging map failed".to_string())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

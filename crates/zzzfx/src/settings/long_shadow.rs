@@ -134,7 +134,4 @@ impl Settings for LongShadowFullSettings {
         .into_boxed_slice()
     }
 
-    fn legacy_value() -> Self {
-        Default::default()
-    }
 }

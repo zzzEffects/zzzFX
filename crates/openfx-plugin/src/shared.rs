@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     ffi::{CStr, CString, c_char, c_int, c_void},
     ptr,
@@ -12,6 +13,63 @@ use zzzfx::settings::{
 };
 
 use crate::bindings::*;
+
+// ---------------------------------------------------------------------------
+// Per-frame buffer pool
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static RENDER_POOL: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+}
+
+/// RAII buffer that reuses a thread-local allocation.
+///
+/// On construction, takes the buffer from a per-thread pool (resizing as needed)
+/// or allocates fresh if the pool is re-entrantly borrowed. On drop, returns the
+/// buffer to the pool so the next frame reuses the allocation.
+pub struct ScopedBuffer {
+    buf: Option<Vec<u8>>,
+}
+
+impl ScopedBuffer {
+    pub fn new(size: usize) -> Self {
+        let buf = RENDER_POOL.with(|cell| {
+            cell.try_borrow_mut()
+                .map(|mut guard| {
+                    let mut old = std::mem::replace(&mut *guard, Vec::new());
+                    old.resize(size, 0);
+                    old
+                })
+                .unwrap_or_else(|_| vec![0u8; size])
+        });
+        ScopedBuffer { buf: Some(buf) }
+    }
+}
+
+impl Drop for ScopedBuffer {
+    fn drop(&mut self) {
+        if let Some(buf) = self.buf.take() {
+            RENDER_POOL.with(|cell| {
+                if let Ok(mut guard) = cell.try_borrow_mut() {
+                    let _ = std::mem::replace(&mut *guard, buf);
+                }
+            });
+        }
+    }
+}
+
+impl std::ops::Deref for ScopedBuffer {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> {
+        self.buf.as_ref().expect("ScopedBuffer accessed after drop")
+    }
+}
+
+impl std::ops::DerefMut for ScopedBuffer {
+    fn deref_mut(&mut self) -> &mut Vec<u8> {
+        self.buf.as_mut().expect("ScopedBuffer accessed after drop")
+    }
+}
 
 // ---------------------------------------------------------------------------
 // OFX → renderer coordinate conversion helpers
@@ -800,5 +858,172 @@ pub unsafe fn action_get_region_of_definition_generator(
         ptr::addr_of_mut!(rod) as *mut _,
     )
     .ofx_ok()?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Shared render helpers — functions consolidated from per-effect files
+// ---------------------------------------------------------------------------
+
+/// Fill a u8 RGBA buffer with a solid color ([f32; 4] straight alpha, 0..1 range).
+pub fn fill_buf_bg(buf: &mut [u8], bg: [f32; 4]) {
+    let rb = (bg[0] * 255.0).round() as u8;
+    let gb = (bg[1] * 255.0).round() as u8;
+    let bb = (bg[2] * 255.0).round() as u8;
+    let ab = (bg[3] * 255.0).round() as u8;
+    for chunk in buf.chunks_exact_mut(4) {
+        chunk[0] = rb;
+        chunk[1] = gb;
+        chunk[2] = bb;
+        chunk[3] = ab;
+    }
+}
+
+/// RAII guard that calls clipReleaseImage on drop.
+pub struct ClipImageGuard {
+    pub img: OfxPropertySetHandle,
+    pub release_fn: unsafe extern "C" fn(OfxPropertySetHandle) -> OfxStatus,
+}
+
+impl Drop for ClipImageGuard {
+    fn drop(&mut self) {
+        if !self.img.is_null() {
+            unsafe {
+                let _ = (self.release_fn)(self.img);
+            }
+        }
+    }
+}
+
+/// Detect the number of color components (3=RGB, 4=RGBA) from an image property set.
+/// Defaults to 4 if the property is unavailable.
+pub unsafe fn detect_num_components(
+    suites: &SuiteCache,
+    image_props: OfxPropertySetHandle,
+) -> usize {
+    let mut comp_ptr: *mut c_char = ptr::null_mut();
+    if suites.property_suite.propGetString
+        .and_then(|pgs| pgs(image_props, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr).ofx_ok().ok())
+        .is_some()
+        && !comp_ptr.is_null()
+    {
+        if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 }
+    } else {
+        4
+    }
+}
+
+/// Pre-multiply alpha in-place on a u8 RGBA buffer (straight → premultiplied).
+pub fn premultiply_alpha(buf: &mut [u8]) {
+    for pixel in buf.chunks_exact_mut(4) {
+        let a = pixel[3] as f32 / 255.0;
+        pixel[0] = (pixel[0] as f32 * a).round() as u8;
+        pixel[1] = (pixel[1] as f32 * a).round() as u8;
+        pixel[2] = (pixel[2] as f32 * a).round() as u8;
+    }
+}
+
+/// Read pixel bounds from an image property set and validate dimensions.
+/// Returns (width, height, left, bottom, right, top).
+pub unsafe fn read_render_bounds(
+    suites: &SuiteCache,
+    image_props: OfxPropertySetHandle,
+) -> OfxResult<(usize, usize, c_int, c_int, c_int, c_int)> {
+    let pgi = suites.property_suite.propGetInt.ok_or(OfxStat::kOfxStatFailed)?;
+    let mut l: c_int = 0;
+    let mut b: c_int = 0;
+    let mut r: c_int = 0;
+    let mut t: c_int = 0;
+    pgi(image_props, kOfxImagePropBounds.as_ptr(), 0, &mut l).ofx_ok()?;
+    pgi(image_props, kOfxImagePropBounds.as_ptr(), 1, &mut b).ofx_ok()?;
+    pgi(image_props, kOfxImagePropBounds.as_ptr(), 2, &mut r).ofx_ok()?;
+    pgi(image_props, kOfxImagePropBounds.as_ptr(), 3, &mut t).ofx_ok()?;
+    let width = (r - l).max(0) as usize;
+    let height = (t - b).max(0) as usize;
+    if width == 0 || height == 0 { return Err(OfxStat::kOfxStatFailed); }
+    if width > 16384 || height > 16384 { return Err(OfxStat::kOfxStatErrFormat); }
+    Ok((width, height, l, b, r, t))
+}
+
+/// Copy a u8 RGBA source buffer to host output, respecting num_components (3 or 4).
+pub unsafe fn copy_u8_to_output_nc(
+    src: &[u8],
+    src_row_bytes: usize,
+    dp: *mut c_void,
+    dst_stride: usize,
+    width: usize,
+    height: usize,
+    num_components: usize,
+    depth: usize,
+) {
+    if dst_stride < width * num_components {
+        return;
+    }
+    match depth {
+        4 => {
+            for y in 0..height {
+                let src_row = (height - 1 - y) * src_row_bytes;
+                let host_row = (dp as *mut u8).add(y * dst_stride);
+                for x in 0..width {
+                    let si = src_row + x * 4;
+                    host_row.add(x * num_components)
+                        .copy_from_nonoverlapping(src.as_ptr().add(si), num_components);
+                }
+            }
+        }
+        8 => {
+            for y in 0..height {
+                let src_row = (height - 1 - y) * src_row_bytes;
+                let host_row = (dp as *mut u8).add(y * dst_stride) as *mut u16;
+                for x in 0..width {
+                    for c in 0..num_components {
+                        let v = *src.as_ptr().add(src_row + x * 4 + c) as u16;
+                        *host_row.add(x * num_components + c) = (v << 8) | v;
+                    }
+                }
+            }
+        }
+        _ => {
+            for y in 0..height {
+                let src_row = (height - 1 - y) * src_row_bytes;
+                let host_row = (dp as *mut u8).add(y * dst_stride) as *mut f32;
+                for x in 0..width {
+                    for c in 0..num_components {
+                        let v = *src.as_ptr().add(src_row + x * 4 + c) as f32 * RECIP_255;
+                        *host_row.add(x * num_components + c) = v;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Define a native OFX Double2D parameter (X/Y pair, range constrained).
+pub unsafe fn define_native_double2d(
+    suites: &SuiteCache,
+    param_set: OfxParamSetHandle,
+    name: &CStr,
+    label: &CStr,
+    hint: &CStr,
+    default_x: f64,
+    default_y: f64,
+    min: f64,
+    max: f64,
+    parent: &CStr,
+) -> OfxResult<()> {
+    let pdef = suites.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
+    let pd = suites.property_suite.propSetDouble.ok_or(OfxStat::kOfxStatFailed)?;
+    let ps = suites.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
+    let mut pp: OfxPropertySetHandle = ptr::null_mut();
+    pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), name.as_ptr(), &mut pp).ofx_ok()?;
+    ps(pp, kOfxPropLabel.as_ptr(), 0, label.as_ptr()).ofx_ok()?;
+    ps(pp, kOfxParamPropHint.as_ptr(), 0, hint.as_ptr()).ofx_ok()?;
+    pd(pp, kOfxParamPropDefault.as_ptr(), 0, default_x).ofx_ok()?;
+    pd(pp, kOfxParamPropDefault.as_ptr(), 1, default_y).ofx_ok()?;
+    pd(pp, kOfxParamPropMin.as_ptr(), 0, min).ofx_ok()?;
+    pd(pp, kOfxParamPropMin.as_ptr(), 1, min).ofx_ok()?;
+    pd(pp, kOfxParamPropMax.as_ptr(), 0, max).ofx_ok()?;
+    pd(pp, kOfxParamPropMax.as_ptr(), 1, max).ofx_ok()?;
+    ps(pp, kOfxParamPropParent.as_ptr(), 0, parent.as_ptr()).ofx_ok()?;
     Ok(())
 }

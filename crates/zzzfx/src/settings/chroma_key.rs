@@ -122,7 +122,4 @@ impl Settings for ChromaKeyFullSettings {
         .into_boxed_slice()
     }
 
-    fn legacy_value() -> Self {
-        Default::default()
-    }
 }

@@ -20,6 +20,9 @@ use crate::shared::{
     action_load_common, action_get_clip_preferences_common,
     action_get_region_of_definition_generator,
     ofx_y_to_renderer, ofx_angle_to_renderer,
+    ScopedBuffer, fill_buf_bg, detect_num_components, premultiply_alpha,
+    read_render_bounds, copy_u8_to_output_nc, DEPTH_BYTE,
+    detect_pixel_depth, define_native_double2d,
 };
 
 // ---------------------------------------------------------------------------
@@ -260,6 +263,7 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
                 i18n::tr_cstr(TrKey::NativeSvgPositionHint),
                 defaults.position_x as f64, defaults.position_y as f64,
                 0.0, 1.0,
+                PAGE_NAME,
             )?;
             defined_position = true;
         }
@@ -281,38 +285,6 @@ unsafe fn action_describe_in_context(desc: OfxImageEffectHandle) -> OfxResult<()
     // --- String param (hidden): fileData (persisted as base64) ---
     file_param::define_file_data_string_param(su, param_set, PAGE_NAME)?;
 
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Native Double2D helper
-// ---------------------------------------------------------------------------
-
-unsafe fn define_native_double2d(
-    suites: &SuiteCache,
-    param_set: OfxParamSetHandle,
-    name: &CStr,
-    label: &CStr,
-    hint: &CStr,
-    default_x: f64,
-    default_y: f64,
-    min: f64,
-    max: f64,
-) -> OfxResult<()> {
-    let pdef = suites.parameter_suite.paramDefine.ok_or(OfxStat::kOfxStatFailed)?;
-    let ps = suites.property_suite.propSetString.ok_or(OfxStat::kOfxStatFailed)?;
-    let pd = suites.property_suite.propSetDouble.ok_or(OfxStat::kOfxStatFailed)?;
-    let mut pp: OfxPropertySetHandle = ptr::null_mut();
-    pdef(param_set, kOfxParamTypeDouble2D.as_ptr(), name.as_ptr(), &mut pp).ofx_ok()?;
-    ps(pp, kOfxPropLabel.as_ptr(), 0, label.as_ptr()).ofx_ok()?;
-    ps(pp, kOfxParamPropHint.as_ptr(), 0, hint.as_ptr()).ofx_ok()?;
-    pd(pp, kOfxParamPropDefault.as_ptr(), 0, default_x).ofx_ok()?;
-    pd(pp, kOfxParamPropDefault.as_ptr(), 1, default_y).ofx_ok()?;
-    pd(pp, kOfxParamPropMin.as_ptr(), 0, min).ofx_ok()?;
-    pd(pp, kOfxParamPropMin.as_ptr(), 1, min).ofx_ok()?;
-    pd(pp, kOfxParamPropMax.as_ptr(), 0, max).ofx_ok()?;
-    pd(pp, kOfxParamPropMax.as_ptr(), 1, max).ofx_ok()?;
-    ps(pp, kOfxParamPropParent.as_ptr(), 0, PAGE_NAME.as_ptr()).ofx_ok()?;
     Ok(())
 }
 
@@ -515,31 +487,11 @@ unsafe fn action_render(
     let mut di: OfxPropertySetHandle = ptr::null_mut();
     cgi(dc, time, ptr::null(), &mut di).ofx_ok()?;
 
-    let mut l: c_int = 0; let mut b: c_int = 0;
-    let mut r: c_int = 0; let mut t: c_int = 0;
-    pgi(di, kOfxImagePropBounds.as_ptr(), 0, &mut l).ofx_ok()?;
-    pgi(di, kOfxImagePropBounds.as_ptr(), 1, &mut b).ofx_ok()?;
-    pgi(di, kOfxImagePropBounds.as_ptr(), 2, &mut r).ofx_ok()?;
-    pgi(di, kOfxImagePropBounds.as_ptr(), 3, &mut t).ofx_ok()?;
+    let (width, height, ..) = read_render_bounds(su, di)?;
 
-    let width = (r - l).max(0) as usize;
-    let height = (t - b).max(0) as usize;
-    if width == 0 || height == 0 { return Err(OfxStat::kOfxStatFailed); }
-    if width > 16384 || height > 16384 { return Err(OfxStat::kOfxStatErrFormat); }
+    let num_components = detect_num_components(su, di);
 
-    let num_components = {
-        let mut comp_ptr: *mut c_char = ptr::null_mut();
-        if su.property_suite.propGetString
-            .and_then(|pgs| pgs(di, kOfxImageEffectPropComponents.as_ptr(), 0, &mut comp_ptr).ofx_ok().ok())
-            .is_some() && !comp_ptr.is_null()
-        {
-            if CStr::from_ptr(comp_ptr) == kOfxImageComponentRGB { 3 } else { 4 }
-        } else {
-            4
-        }
-    };
-
-    let mut dst_buf = vec![0u8; width * height * 4];
+    let mut dst_buf = ScopedBuffer::new(width * height * 4);
     let bg = [bg_r, bg_g, bg_b, bg_a];
 
     if let Some(idata) = idata {
@@ -577,12 +529,7 @@ unsafe fn action_render(
 
     // Pre-multiply alpha
     if num_components == 4 {
-        for pixel in dst_buf.chunks_exact_mut(4) {
-            let a = pixel[3] as f32 / 255.0;
-            pixel[0] = (pixel[0] as f32 * a).round() as u8;
-            pixel[1] = (pixel[1] as f32 * a).round() as u8;
-            pixel[2] = (pixel[2] as f32 * a).round() as u8;
-        }
+        premultiply_alpha(&mut dst_buf);
     }
 
     let mut dp: *mut c_void = ptr::null_mut();
@@ -591,72 +538,11 @@ unsafe fn action_render(
     pgi(di, kOfxImagePropRowBytes.as_ptr(), 0, &mut drb).ofx_ok()?;
     let d_stride = drb.max(0) as usize;
 
-    let depth_str = {
-        let mut depth_ptr: *mut c_char = ptr::null_mut();
-        if su.property_suite.propGetString
-            .and_then(|pgs| pgs(di, kOfxImageEffectPropPixelDepth.as_ptr(), 0, &mut depth_ptr).ofx_ok().ok())
-            .is_some() && !depth_ptr.is_null()
-        {
-            CStr::from_ptr(depth_ptr)
-        } else {
-            kOfxBitDepthByte
-        }
-    };
-
-    let src_row_bytes = width * 4;
-    if depth_str == kOfxBitDepthByte {
-        for y in 0..height {
-            let src_row = (height - 1 - y) * src_row_bytes;
-            let host_row = (dp as *mut u8).add(y * d_stride);
-            for x in 0..width {
-                let si = src_row + x * 4;
-                let di = x * num_components;
-                host_row.add(di).copy_from_nonoverlapping(dst_buf.as_ptr().add(si), num_components);
-            }
-        }
-    } else if depth_str == kOfxBitDepthShort {
-        for y in 0..height {
-            let src_row = (height - 1 - y) * src_row_bytes;
-            let host_row = (dp as *mut u8).add(y * d_stride) as *mut u16;
-            for x in 0..width {
-                for c in 0..num_components {
-                    let v = *dst_buf.as_ptr().add(src_row + x * 4 + c) as u16;
-                    *host_row.add(x * num_components + c) = (v << 8) | v;
-                }
-            }
-        }
-    } else {
-        for y in 0..height {
-            let src_row = (height - 1 - y) * src_row_bytes;
-            let host_row = (dp as *mut u8).add(y * d_stride) as *mut f32;
-            for x in 0..width {
-                for c in 0..num_components {
-                    let v = *dst_buf.as_ptr().add(src_row + x * 4 + c) as f32 / 255.0;
-                    *host_row.add(x * num_components + c) = v;
-                }
-            }
-        }
-    }
+    let depth = detect_pixel_depth(su, di).unwrap_or(DEPTH_BYTE);
+    copy_u8_to_output_nc(&dst_buf, width * 4, dp, d_stride, width, height, num_components, depth);
 
     cri(di).ofx_ok()?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Background fill helper
-// ---------------------------------------------------------------------------
-
-fn fill_buf_bg(buf: &mut [u8], bg: [f32; 4]) {
-    let rb = (bg[0] * 255.0).round() as u8;
-    let gb = (bg[1] * 255.0).round() as u8;
-    let bb = (bg[2] * 255.0).round() as u8;
-    let ab = (bg[3] * 255.0).round() as u8;
-    for chunk in buf.chunks_exact_mut(4) {
-        chunk[0] = rb;
-        chunk[1] = gb;
-        chunk[2] = bb;
-        chunk[3] = ab;
-    }
 }
 
 // ---------------------------------------------------------------------------

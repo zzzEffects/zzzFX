@@ -23,7 +23,7 @@ fn collect_labels<T: Settings<Key = zzzfx::TrKey> + Clone>(
             for opt in options {
                 let ja_key = ja::translate_cstr(opt.label_key)
                     .to_str()
-                    .unwrap()
+                    .unwrap_or_else(|_| opt.label_key.en())
                     .to_string();
                 let val = translate(opt.label_key);
                 entries.push((ja_key, val));

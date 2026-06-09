@@ -97,7 +97,11 @@ pub fn render_qr(
     // Pass 1: background rect with smooth margin
     {
         let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_rect(tiny_skia::Rect::from_xywh(0.0, 0.0, total_svg_size, total_svg_size).unwrap());
+        let rect = match tiny_skia::Rect::from_xywh(0.0, 0.0, total_svg_size, total_svg_size) {
+            Some(r) => r,
+            None => return false,
+        };
+        pb.push_rect(rect);
         if let Some(path) = pb.finish() {
             let mut paint = tiny_skia::Paint::default();
             paint.set_color_rgba8(lmc[0], lmc[1], lmc[2], lmc[3]);

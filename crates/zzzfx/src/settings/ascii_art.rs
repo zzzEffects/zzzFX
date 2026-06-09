@@ -624,7 +624,4 @@ impl Settings for AsciiArtFullSettings {
         .into_boxed_slice()
     }
 
-    fn legacy_value() -> Self {
-        Default::default()
-    }
 }

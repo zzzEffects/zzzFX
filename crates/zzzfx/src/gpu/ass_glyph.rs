@@ -245,11 +245,15 @@ pub fn try_ass_glyph_gpu_composite(
         });
         let _ = guard.device.poll(wgpu::PollType::Wait {
             submission_index: None,
-            timeout: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
         });
-        let _ = rx.recv();
-        let mapped = staging_slice.get_mapped_range();
-        output[..dst_size as usize].copy_from_slice(&mapped);
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(Ok(())) => {
+                let mapped = staging_slice.get_mapped_range();
+                output[..dst_size as usize].copy_from_slice(&mapped);
+            }
+            _ => return Err("staging map failed".to_string()),
+        }
     }
     drop(guard);
 

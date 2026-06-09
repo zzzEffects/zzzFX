@@ -160,20 +160,31 @@ pub fn try_midi_display_gpu_render(
 
     // Blocking readback
     let staging = &guard.bufs.staging_buf;
-    staging.slice(..image_size).map_async(wgpu::MapMode::Read, |_| {});
+    let staging_slice = staging.slice(..image_size);
+    let (tx, rx) = std::sync::mpsc::channel();
+    staging_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
     let _ = guard.device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: Some(std::time::Duration::from_millis(100)),
     });
-    let mapped = staging.slice(..image_size).get_mapped_range();
-    let buf_size = image_size as usize;
-    if buf_size <= dst.len() {
-        dst[..buf_size].copy_from_slice(&mapped);
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(())) => {
+            let mapped = staging_slice.get_mapped_range();
+            let buf_size = image_size as usize;
+            if buf_size <= dst.len() {
+                dst[..buf_size].copy_from_slice(&mapped);
+            }
+            drop(mapped);
+            staging.unmap();
+            Ok(true)
+        }
+        _ => {
+            staging.unmap();
+            Err("staging map failed".to_string())
+        }
     }
-    drop(mapped);
-    staging.unmap();
-
-    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
