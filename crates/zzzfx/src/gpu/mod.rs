@@ -4,7 +4,11 @@ pub mod ass_glyph;
 pub mod ass_subtitle;
 pub mod chroma_key;
 pub mod device;
+#[cfg(feature = "gpu")]
+pub mod halftone;
 pub mod midi_display;
+#[cfg(feature = "gpu")]
+pub mod multitone;
 #[cfg(feature = "gpu")]
 pub mod pixel_art;
 pub mod repeater;

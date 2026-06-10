@@ -27,11 +27,13 @@ struct ZzzFxPlugin {
     ascii_art_filter: SubPlugin<AsciiArtFilter>,
     pixel_art_filter: SubPlugin<PixelArtFilter>,
     chroma_key_filter: SubPlugin<ChromaKeyFilter>,
+    halftone_filter: SubPlugin<HalfToneFilter>,
     ambient_light_filter: SubPlugin<AmbientLightFilter>,
     repeater_filter: SubPlugin<RepeaterFilter>,
     sprite_sheet_filter: SubPlugin<SpriteSheetFilter>,
     ass_subtitle_filter: SubPlugin<AssSubtitleFilter>,
     midi_display_filter: SubPlugin<MidiDisplayFilter>,
+    multitone_filter: SubPlugin<MultiToneFilter>,
     svg_display_filter: SubPlugin<SvgDisplayFilter>,
     latex_display_filter: SubPlugin<LaTeXDisplayFilter>,
     qr_code_filter: SubPlugin<QrCodeFilter>,
@@ -54,11 +56,13 @@ impl GenericPlugin for ZzzFxPlugin {
             ascii_art_filter: SubPlugin::<AsciiArtFilter>::new_filter_plugin(&info)?,
             pixel_art_filter: SubPlugin::<PixelArtFilter>::new_filter_plugin(&info)?,
             chroma_key_filter: SubPlugin::<ChromaKeyFilter>::new_filter_plugin(&info)?,
+            halftone_filter: SubPlugin::<HalfToneFilter>::new_filter_plugin(&info)?,
             ambient_light_filter: SubPlugin::<AmbientLightFilter>::new_filter_plugin(&info)?,
             repeater_filter: SubPlugin::<RepeaterFilter>::new_filter_plugin(&info)?,
             sprite_sheet_filter: SubPlugin::<SpriteSheetFilter>::new_filter_plugin(&info)?,
             ass_subtitle_filter: SubPlugin::<AssSubtitleFilter>::new_filter_plugin(&info)?,
             midi_display_filter: SubPlugin::<MidiDisplayFilter>::new_filter_plugin(&info)?,
+            multitone_filter: SubPlugin::<MultiToneFilter>::new_filter_plugin(&info)?,
             svg_display_filter: SubPlugin::<SvgDisplayFilter>::new_filter_plugin(&info)?,
             latex_display_filter: SubPlugin::<LaTeXDisplayFilter>::new_filter_plugin(&info)?,
             qr_code_filter: SubPlugin::<QrCodeFilter>::new_filter_plugin(&info)?,
@@ -79,11 +83,13 @@ impl GenericPlugin for ZzzFxPlugin {
         registry.register_filter_plugin(&self.ascii_art_filter);
         registry.register_filter_plugin(&self.pixel_art_filter);
         registry.register_filter_plugin(&self.chroma_key_filter);
+        registry.register_filter_plugin(&self.halftone_filter);
         registry.register_filter_plugin(&self.ambient_light_filter);
         registry.register_filter_plugin(&self.repeater_filter);
         registry.register_filter_plugin(&self.sprite_sheet_filter);
         registry.register_filter_plugin(&self.ass_subtitle_filter);
         registry.register_filter_plugin(&self.midi_display_filter);
+        registry.register_filter_plugin(&self.multitone_filter);
         registry.register_filter_plugin(&self.svg_display_filter);
         registry.register_filter_plugin(&self.latex_display_filter);
         registry.register_filter_plugin(&self.qr_code_filter);
@@ -181,6 +187,14 @@ apply_effect_filter!(
 apply_effect_filter!(
     PixelArtFilter, zzzfx::PixelArtFullSettings, zzzfx::PixelArt,
     TrKey::EffectPixelArtName, TrKey::EffectPixelArtDesc
+);
+apply_effect_filter!(
+    HalfToneFilter, zzzfx::HalfToneFullSettings, zzzfx::HalfTone,
+    TrKey::EffectHalfToneName, TrKey::EffectHalfToneDesc
+);
+apply_effect_filter!(
+    MultiToneFilter, zzzfx::MultiToneFullSettings, zzzfx::MultiTone,
+    TrKey::EffectMultiToneName, TrKey::EffectMultiToneDesc
 );
 
 // ── ChromaKeyFilter (single-input, but has is_identity check) ─────

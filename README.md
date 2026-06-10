@@ -44,8 +44,10 @@ All effects are implemented in `zzzfx` and bundled into both the AE and OFX plug
 | ASS Subtitle | ASS/SSA subtitle renderer with style parsing and overlay compositing |
 | Cast Shadow | Directional drop shadow with blur, scale, and color controls, GPU-accelerated |
 | Chroma Key | BT.601 YCbCr-based color keying with edge blur for clean matte extraction |
+| HalfTone | Classic halftone screen pattern with configurable dot size, shape, angle, and color modes |
 | Long Shadow | Extended directional shadow with configurable length, angle, opacity, and color |
 | MIDI Display | MIDI file visualization as piano-roll note blocks with track filtering |
+| MultiTone | Posterization and color quantization with dithering and edge softness for stylized flat-color looks |
 | Pixel Art Style | Color quantization in pixel blocks with ordered/Floyd-Steinberg dithering + grid |
 | Repeater | Keyframe-driven time-offset layer compositor with blend modes |
 | Sprite Sheet | Grid-based sprite sheet reader with animation, scaling, and rotation |
@@ -137,9 +139,15 @@ In addition to the common path, some hosts will also have their specific OFX pat
 
 ### AviUtl2
 
-Copy the built `zzzFX.au2pkg.zip` from `crates/aviutl2-plugin/build/` to the AviUtl2 `cache/` directory, then restart AviUtl2.
+Drag `zzzFX.au2pkg.zip` onto the AviUtl2 preview window, or extract the contents into the AviUtl2 ProgramData directory:
 
-The 14 effects will appear under the **zzzFX** label in the Filter menu, with Japanese as the built-in language. For other UI languages, `.aul2` localization files are included for English, Simplified Chinese, and Korean.
+- `C:\ProgramData\aviutl2\Plugin\zzzFX.aux2` — the filter plugin
+- `C:\ProgramData\aviutl2\Language\English.zzzfx_aviutl2_plugin.aul2` — English labels
+- `C:\ProgramData\aviutl2\Language\简体中文.zzzfx_aviutl2_plugin.aul2` — Chinese (Simplified) labels
+- `C:\ProgramData\aviutl2\Language\Japanese.zzzfx_aviutl2_plugin.aul2` — Japanese labels
+- `C:\ProgramData\aviutl2\Language\한국어.zzzfx_aviutl2_plugin.aul2` — Korean labels
+
+The 16 effects will appear under the **zzzFX** label in the Filter menu, with Japanese as the built-in language. For other UI languages, `.aul2` localization files are included for English, Simplified Chinese, and Korean.
 
 ### After Effects / Premiere
 

@@ -14,9 +14,11 @@ use zzzfx::{
     AssSubtitleFullSettings,
     CastShadow, CastShadowFullSettings,
     ChromaKey, ChromaKeyFullSettings,
+    HalfTone, HalfToneFullSettings,
     LaTeXDisplayFullSettings,
     LongShadow, LongShadowFullSettings,
     MidiDisplayFullSettings,
+    MultiTone, MultiToneFullSettings,
     PixelArt, PixelArtFullSettings,
     QrCodeFullSettings,
     Repeater, RepeaterFullSettings,
@@ -55,6 +57,8 @@ enum EffectType {
     LaTeXDisplay = 11,
     QrCode = 12,
     AssSubtitle = 13,
+    HalfTone = 14,
+    MultiTone = 15,
 }
 
 static ACTIVE_EFFECT: AtomicU8 = AtomicU8::new(EffectType::Stroke as u8);
@@ -74,6 +78,8 @@ fn active_effect() -> EffectType {
         11 => EffectType::LaTeXDisplay,
         12 => EffectType::QrCode,
         13 => EffectType::AssSubtitle,
+        14 => EffectType::HalfTone,
+        15 => EffectType::MultiTone,
         _ => EffectType::Stroke,
     }
 }
@@ -124,7 +130,9 @@ struct Plugin {
     long_shadow: zzzfx::settings::SettingsList<LongShadowFullSettings>,
     cast_shadow: zzzfx::settings::SettingsList<CastShadowFullSettings>,
     chroma_key: zzzfx::settings::SettingsList<ChromaKeyFullSettings>,
+    halftone: zzzfx::settings::SettingsList<HalfToneFullSettings>,
     midi_display: zzzfx::settings::SettingsList<MidiDisplayFullSettings>,
+    multitone: zzzfx::settings::SettingsList<MultiToneFullSettings>,
     svg_display: zzzfx::settings::SettingsList<SvgDisplayFullSettings>,
     latex_display: zzzfx::settings::SettingsList<LaTeXDisplayFullSettings>,
     qr_code: zzzfx::settings::SettingsList<QrCodeFullSettings>,
@@ -143,7 +151,9 @@ impl Default for Plugin {
             long_shadow: zzzfx::settings::SettingsList::<LongShadowFullSettings>::new(),
             cast_shadow: zzzfx::settings::SettingsList::<CastShadowFullSettings>::new(),
             chroma_key: zzzfx::settings::SettingsList::<ChromaKeyFullSettings>::new(),
+            halftone: zzzfx::settings::SettingsList::<HalfToneFullSettings>::new(),
             midi_display: zzzfx::settings::SettingsList::<MidiDisplayFullSettings>::new(),
+            multitone: zzzfx::settings::SettingsList::<MultiToneFullSettings>::new(),
             svg_display: zzzfx::settings::SettingsList::<SvgDisplayFullSettings>::new(),
             latex_display: zzzfx::settings::SettingsList::<LaTeXDisplayFullSettings>::new(),
             qr_code: zzzfx::settings::SettingsList::<QrCodeFullSettings>::new(),
@@ -190,6 +200,8 @@ effect_entry!(EffectMainSvgDisplay,    EffectType::SvgDisplay);
 effect_entry!(EffectMainLaTeXDisplay,  EffectType::LaTeXDisplay);
 effect_entry!(EffectMainQrCode,        EffectType::QrCode);
 effect_entry!(EffectMainAssSubtitle,   EffectType::AssSubtitle);
+effect_entry!(EffectMainHalfTone,      EffectType::HalfTone);
+effect_entry!(EffectMainMultiTone,     EffectType::MultiTone);
 
 // ---------------------------------------------------------------------------
 // AdobePluginGlobal
@@ -268,6 +280,16 @@ impl AdobePluginGlobal for Plugin {
                 let l = AssSubtitleFullSettings::legacy_value();
                 map_params(params, &self.ass_subtitle.setting_descriptors, &d, &l)
             }
+            EffectType::HalfTone => {
+                let d = HalfToneFullSettings::default();
+                let l = HalfToneFullSettings::legacy_value();
+                map_params(params, &self.halftone.setting_descriptors, &d, &l)
+            }
+            EffectType::MultiTone => {
+                let d = MultiToneFullSettings::default();
+                let l = MultiToneFullSettings::legacy_value();
+                map_params(params, &self.multitone.setting_descriptors, &d, &l)
+            }
         }
     }
 
@@ -323,6 +345,8 @@ impl Plugin {
             EffectType::LaTeXDisplay => (TrKey::EffectLaTeXDisplayName, TrKey::EffectLaTeXDisplayDesc),
             EffectType::QrCode => (TrKey::EffectQrCodeName, TrKey::EffectQrCodeDesc),
             EffectType::AssSubtitle => (TrKey::EffectAssSubtitleName, TrKey::EffectAssSubtitleDesc),
+            EffectType::HalfTone => (TrKey::EffectHalfToneName, TrKey::EffectHalfToneDesc),
+            EffectType::MultiTone => (TrKey::EffectMultiToneName, TrKey::EffectMultiToneDesc),
         };
         out.set_return_msg(&format!(
             "{} {}.{}.{}\r\r{}",
@@ -385,6 +409,12 @@ impl Plugin {
             EffectType::ChromaKey => {
                 render_filter!(ChromaKeyFullSettings, ChromaKey, &self.chroma_key.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
             }
+            EffectType::HalfTone => {
+                render_filter!(HalfToneFullSettings, HalfTone, &self.halftone.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
+            }
+            EffectType::MultiTone => {
+                render_filter!(MultiToneFullSettings, MultiTone, &self.multitone.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
+            }
             EffectType::MidiDisplay => {
                 let mut s = MidiDisplayFullSettings::default();
                 apply_settings_list(&self.midi_display.setting_descriptors, params, &mut s)?;
@@ -444,6 +474,8 @@ impl Plugin {
             EffectType::LongShadow => update_controls_disabled(params, &self.long_shadow.setting_descriptors, true),
             EffectType::CastShadow => update_controls_disabled(params, &self.cast_shadow.setting_descriptors, true),
             EffectType::ChromaKey => update_controls_disabled(params, &self.chroma_key.setting_descriptors, true),
+            EffectType::HalfTone => update_controls_disabled(params, &self.halftone.setting_descriptors, true),
+            EffectType::MultiTone => update_controls_disabled(params, &self.multitone.setting_descriptors, true),
             EffectType::MidiDisplay => update_controls_disabled(params, &self.midi_display.setting_descriptors, true),
             EffectType::SvgDisplay => update_controls_disabled(params, &self.svg_display.setting_descriptors, true),
             EffectType::LaTeXDisplay => update_controls_disabled(params, &self.latex_display.setting_descriptors, true),

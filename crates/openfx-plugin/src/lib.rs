@@ -9,6 +9,7 @@ mod shared;
 mod ambient_light;
 mod cast_shadow;
 mod chroma_key;
+mod halftone;
 mod stroke;
 mod repeater;
 mod sprite_sheet;
@@ -16,6 +17,7 @@ mod ass_subtitle;
 mod ascii_art;
 mod long_shadow;
 mod midi_display;
+mod multitone;
 mod pixel_art;
 mod latex_display;
 mod file_param;
@@ -32,7 +34,7 @@ use crate::bindings::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OfxGetNumberOfPlugins() -> c_int {
-    14
+    16
 }
 
 /// Set the global panic hook once when the DLL is first queried.
@@ -61,6 +63,8 @@ pub extern "C" fn OfxGetPlugin(nth: c_int) -> *const OfxPlugin {
         11 => cast_shadow::get_plugin(),
         12 => latex_display::get_plugin(),
         13 => qr_code::get_plugin(),
+        14 => halftone::get_plugin(),
+        15 => multitone::get_plugin(),
         _ => ptr::null(),
     }
 }

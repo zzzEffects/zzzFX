@@ -585,7 +585,11 @@ pub unsafe fn read_generic_param<T: Settings<Key = TrKey> + Clone>(
             dst.set_field::<f32>(g_id, g as f32).ok();
             dst.set_field::<f32>(b_id, b as f32).ok();
         }
-        SettingKind::Group { .. } => {}
+        SettingKind::Group { .. } => {
+            let mut v: c_int = 0;
+            pgv(p, time, &mut v).ofx_ok()?;
+            dst.set_field::<bool>(&desc.id, v != 0).ok();
+        }
     }
     Ok(())
 }

@@ -463,6 +463,10 @@ i18n_keys! {
         NativeGridColorHint = "Color of the grid lines between pixel blocks.";
         NativeGridPosition = "Grid Position";
         NativeGridPositionHint = "Anchor point for the pixel grid. (0,0) = top-left, (0.5,0.5) = center, (1,1) = bottom-right.";
+
+        // HalfTone: native param labels & hints
+        NativeDotPosition = "Dot Position";
+        NativeDotPositionHint = "Anchor point for the halftone dot grid. (0,0) = top-left, (0.5,0.5) = center, (1,1) = bottom-right.";
         ParamGridPositionX = "Grid Position X";
         ParamGridPositionXDesc = "Horizontal anchor of the pixel grid. 0 = left-aligned, 0.5 = centered, 1 = right-aligned.";
         ParamGridPositionY = "Grid Position Y";
@@ -865,5 +869,83 @@ i18n_keys! {
         MenuQrShapeHorizontalDesc = "Horizontal bar modules.";
         MenuQrShapeDiamond = "Diamond";
         MenuQrShapeDiamondDesc = "Diamond-shaped modules.";
+
+        // ── HalfTone: effect labels ──────────────────
+        EffectHalfToneName = "zzzFX HalfTone";
+        EffectHalfToneDesc = "Classic halftone screen pattern. Converts the image into dots where dot size varies with brightness.";
+
+        // ── HalfTone: generic param labels ────────────
+        ParamHalfToneDotSize = "Dot Size";
+        ParamHalfToneDotSizeDesc = "Base dot size as a fraction of the frame diagonal. Larger values produce fewer, bigger dots.";
+        ParamHalfToneAngle = "Angle";
+        ParamHalfToneAngleDesc = "Screen angle in degrees. Controls the direction of the halftone grid.";
+        ParamHalfToneDotShape = "Dot Shape";
+        ParamHalfToneDotShapeDesc = "Shape of the halftone dots.";
+        ParamHalfToneChannelMode = "Channel Mode";
+        ParamHalfToneChannelModeDesc = "Luminance: single grayscale halftone. RGB: per-channel halftone with color-angle offsets.";
+        ParamHalfToneInvert = "Invert";
+        ParamHalfToneInvertDesc = "Invert the pattern — dots appear in dark areas instead of light areas.";
+        ParamHalfToneContrast = "Contrast";
+        ParamHalfToneContrastDesc = "Pre-processing contrast adjustment. 0.5 is neutral, 0 = flat, 1 = maximum contrast.";
+        ParamHalfToneSmoothness = "Smoothness";
+        ParamHalfToneSmoothnessDesc = "Anti-aliasing at dot edges. 0 = hard edges, 1 = fully soft.";
+        ParamHalfTonePositionX = "Position X";
+        ParamHalfTonePositionXDesc = "Horizontal offset of the dot grid. 0 = left, 0.5 = center, 1 = right.";
+        ParamHalfTonePositionY = "Position Y";
+        ParamHalfTonePositionYDesc = "Vertical offset of the dot grid. 0 = top, 0.5 = center, 1 = bottom.";
+        ParamHalfToneBlendWithOriginal = "Blend With Original";
+        ParamHalfToneBlendWithOriginalDesc = "Blend the halftone result with the original image. 0 = full halftone, 1 = original image.";
+
+        // ── HalfTone: dot shape menu items ────────────
+        MenuDotShapeCircle = "Circle";
+        MenuDotShapeCircleDesc = "Round dots.";
+        MenuDotShapeSquare = "Square";
+        MenuDotShapeSquareDesc = "Square dots.";
+        MenuDotShapeDiamond = "Diamond";
+        MenuDotShapeDiamondDesc = "Diamond-shaped dots.";
+
+        // ── HalfTone: channel mode menu items ─────────
+        MenuChannelLuminance = "Luminance";
+        MenuChannelLuminanceDesc = "Single-channel halftone based on perceived brightness.";
+        MenuChannelRGB = "RGB";
+        MenuChannelRGBDesc = "Per-channel halftone with color separation angles.";
+
+        // ── MultiTone: effect labels ──────────────────
+        EffectMultiToneName = "zzzFX MultiTone";
+        EffectMultiToneDesc = "Posterization and color quantization effect. Reduces the number of tones for a stylized flat-color look.";
+
+        // ── MultiTone: generic param labels ────────────
+        ParamMultiToneLevels = "Tone Levels";
+        ParamMultiToneLevelsDesc = "Number of tone levels per channel. Lower values create fewer, more distinct color bands.";
+        ParamMultiToneMode = "Mode";
+        ParamMultiToneModeDesc = "Quantization mode: Per Channel quantizes R, G, B independently. Luminance quantizes only perceived brightness.";
+        ParamMultiToneDithering = "Dithering";
+        ParamMultiToneDitheringDesc = "Dithering algorithm to reduce banding artifacts in quantized regions.";
+        ParamMultiToneDitheringAmount = "Dithering Amount";
+        ParamMultiToneDitheringAmountDesc = "Strength of the dithering effect. 0 = no dithering, 1 = full dithering.";
+        ParamMultiToneEdgeSoftness = "Edge Softness";
+        ParamMultiToneEdgeSoftnessDesc = "Smooth transitions at tone boundaries. 0 = hard edges, 1 = fully blended.";
+        ParamMultiTonePreserveLuminosity = "Preserve Luminosity";
+        ParamMultiTonePreserveLuminosityDesc = "Adjust the quantized result to match the original perceived brightness.";
+
+        // ── MultiTone: color mapping params ────────────
+        ParamMultiToneColorMapping = "Color Mapping";
+        ParamMultiToneColorMappingDesc = "Replace quantized tones with a gradient color map. Uses the luminance of the quantized result to blend between shadow, midtone, and highlight colors.";
+        ParamMultiToneShadowColor = "Shadow Color";
+        ParamMultiToneShadowColorDesc = "Color mapped to the darkest quantized tones (luminance = 0).";
+        ParamMultiToneMidtoneColor = "Midtone Color";
+        ParamMultiToneMidtoneColorDesc = "Color mapped to the middle quantized tones (luminance = midtone position).";
+        ParamMultiToneHighlightColor = "Highlight Color";
+        ParamMultiToneHighlightColorDesc = "Color mapped to the brightest quantized tones (luminance = 1).";
+        ParamMultiToneMidtonePosition = "Midtone Position";
+        ParamMultiToneMidtonePositionDesc = "Position of the midtone in the luminance range. 0 = closer to shadow, 1 = closer to highlight.";
+        ParamMultiToneBlendWithOriginal = "Blend With Original";
+        ParamMultiToneBlendWithOriginalDesc = "Blend the color-mapped result with the original quantized colors. 0 = full color map, 1 = original posterized colors.";
+
+        // ── MultiTone: mode menu items ────────────────
+        MenuTonePerChannel = "Per Channel";
+        MenuTonePerChannelDesc = "Quantize each color channel independently.";
+        MenuToneLuminance = "Luminance";
+        MenuToneLuminanceDesc = "Quantize only luminance, preserving hue and saturation.";
     }
 }

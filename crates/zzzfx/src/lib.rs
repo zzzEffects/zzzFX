@@ -7,8 +7,10 @@ mod ambient_light;
 mod cast_shadow;
 mod ascii_art;
 mod chroma_key;
+mod halftone;
 mod long_shadow;
 pub mod midi_display;
+mod multitone;
 mod stroke;
 mod repeater;
 mod sprite_sheet;
@@ -25,6 +27,9 @@ pub use repeater::CompositorLayer;
 pub use settings::ambient_light::{AmbientLight, AmbientLightFullSettings};
 pub use settings::cast_shadow::{CastShadow, CastShadowFullSettings};
 pub use settings::chroma_key::{ChromaKey, ChromaKeyFullSettings};
+pub use settings::halftone::{
+    DotShape, ChannelMode as HalfToneChannelMode, HalfTone, HalfToneFullSettings,
+};
 pub use settings::ascii_art::{
     ColorMode as AsciiColorMode, AsciiArt, AsciiArtFullSettings,
 };
@@ -38,6 +43,9 @@ pub use settings::long_shadow::{LongShadow, LongShadowFullSettings};
 pub use settings::midi_display::{
     MidiBpmSource, MidiNoteColorMode, MidiOrientation, MidiTrackFilterMode,
     MidiDisplay, MidiDisplayFullSettings,
+};
+pub use settings::multitone::{
+    ToneMode, ToneDithering, ColorMappingSettings, MultiTone, MultiToneFullSettings,
 };
 pub use settings::ascii_art::setting_id as ascii_art_setting_id;
 pub use settings::pixel_art::setting_id as pixel_art_setting_id;

@@ -473,6 +473,10 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::NativeGridColorHint => c"像素块之间网格线的颜色。",
         TrKey::NativeGridPosition => c"像素网格位置",
         TrKey::NativeGridPositionHint => c"像素网格的锚点位置。(0,0) = 左上角，(0.5,0.5) = 居中，(1,1) = 右下角。",
+
+        // HalfTone: native param labels & hints
+        TrKey::NativeDotPosition => c"网点位置",
+        TrKey::NativeDotPositionHint => c"半色调网点网格的锚点位置。(0,0) = 左上角，(0.5,0.5) = 居中，(1,1) = 右下角。",
         TrKey::ParamGridPositionX => c"网格位置 X",
         TrKey::ParamGridPositionXDesc => c"像素网格的水平锚点位置。0 = 左侧对齐，0.5 = 居中，1 = 右侧对齐。",
         TrKey::ParamGridPositionY => c"网格位置 Y",
@@ -873,5 +877,83 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuQrShapeHorizontalDesc => c"水平条状模块。",
         TrKey::MenuQrShapeDiamond => c"菱形",
         TrKey::MenuQrShapeDiamondDesc => c"菱形模块。",
+
+        // ── HalfTone: effect labels ──────────────────
+        TrKey::EffectHalfToneName => c"zzzFX 半色调",
+        TrKey::EffectHalfToneDesc => c"经典半色调网点图案。将图像转换为随亮度变化的网点大小。",
+
+        // ── HalfTone: generic param labels ────────────
+        TrKey::ParamHalfToneDotSize => c"网点大小",
+        TrKey::ParamHalfToneDotSizeDesc => c"相对于画面对角线的基础网点大小。数值越大网点越少、越大。",
+        TrKey::ParamHalfToneAngle => c"角度",
+        TrKey::ParamHalfToneAngleDesc => c"加网角度（度）。控制半色调网格的方向。",
+        TrKey::ParamHalfToneDotShape => c"网点形状",
+        TrKey::ParamHalfToneDotShapeDesc => c"半色调网点的形状。",
+        TrKey::ParamHalfToneChannelMode => c"通道模式",
+        TrKey::ParamHalfToneChannelModeDesc => c"亮度：单通道灰度半色调。RGB：每通道半色调，各通道使用不同角度偏移。",
+        TrKey::ParamHalfToneInvert => c"反转",
+        TrKey::ParamHalfToneInvertDesc => c"反转图案——网点出现在暗部区域而非亮部区域。",
+        TrKey::ParamHalfToneContrast => c"对比度",
+        TrKey::ParamHalfToneContrastDesc => c"预处理对比度调整。0.5 为中性，0 = 平坦，1 = 最大对比度。",
+        TrKey::ParamHalfToneSmoothness => c"平滑度",
+        TrKey::ParamHalfToneSmoothnessDesc => c"网点边缘的抗锯齿。0 = 硬边缘，1 = 完全柔和。",
+        TrKey::ParamHalfTonePositionX => c"位置 X",
+        TrKey::ParamHalfTonePositionXDesc => c"网点网格的水平偏移。0 = 左，0.5 = 中，1 = 右。",
+        TrKey::ParamHalfTonePositionY => c"位置 Y",
+        TrKey::ParamHalfTonePositionYDesc => c"网点网格的垂直偏移。0 = 上，0.5 = 中，1 = 下。",
+        TrKey::ParamHalfToneBlendWithOriginal => c"与原始混合",
+        TrKey::ParamHalfToneBlendWithOriginalDesc => c"将半色调结果与原始图像混合。0 = 完全半色调，1 = 原始图像。",
+
+        // ── HalfTone: dot shape menu items ────────────
+        TrKey::MenuDotShapeCircle => c"圆形",
+        TrKey::MenuDotShapeCircleDesc => c"圆形网点。",
+        TrKey::MenuDotShapeSquare => c"方形",
+        TrKey::MenuDotShapeSquareDesc => c"方形网点。",
+        TrKey::MenuDotShapeDiamond => c"菱形",
+        TrKey::MenuDotShapeDiamondDesc => c"菱形网点。",
+
+        // ── HalfTone: channel mode menu items ─────────
+        TrKey::MenuChannelLuminance => c"亮度",
+        TrKey::MenuChannelLuminanceDesc => c"基于感知亮度的单通道半色调。",
+        TrKey::MenuChannelRGB => c"RGB",
+        TrKey::MenuChannelRGBDesc => c"每通道半色调，使用色彩分离角度。",
+
+        // ── MultiTone: effect labels ──────────────────
+        TrKey::EffectMultiToneName => c"zzzFX 多色调",
+        TrKey::EffectMultiToneDesc => c"色调分离和颜色量化效果。减少色调数量，营造风格化的平面色彩风格。",
+
+        // ── MultiTone: generic param labels ────────────
+        TrKey::ParamMultiToneLevels => c"色调层级",
+        TrKey::ParamMultiToneLevelsDesc => c"每个通道的色调层级数。数值越低，色带越少、越分明。",
+        TrKey::ParamMultiToneMode => c"模式",
+        TrKey::ParamMultiToneModeDesc => c"量化模式：逐通道分别量化 R、G、B。亮度仅量化感知亮度。",
+        TrKey::ParamMultiToneDithering => c"抖动",
+        TrKey::ParamMultiToneDitheringDesc => c"减少量化区域色带伪影的抖动算法。",
+        TrKey::ParamMultiToneDitheringAmount => c"抖动强度",
+        TrKey::ParamMultiToneDitheringAmountDesc => c"抖动效果的强度。0 = 无抖动，1 = 完全抖动。",
+        TrKey::ParamMultiToneEdgeSoftness => c"边缘柔和度",
+        TrKey::ParamMultiToneEdgeSoftnessDesc => c"色调边界的平滑过渡。0 = 硬边缘，1 = 完全混合。",
+        TrKey::ParamMultiTonePreserveLuminosity => c"保持亮度",
+        TrKey::ParamMultiTonePreserveLuminosityDesc => c"调整量化结果以匹配原始感知亮度。",
+
+        // ── MultiTone: color mapping params ────────────
+        TrKey::ParamMultiToneColorMapping => c"颜色映射",
+        TrKey::ParamMultiToneColorMappingDesc => c"使用渐变色映射替换量化的色调。利用量化结果的亮度在阴影色、中间色和高光色之间混合。",
+        TrKey::ParamMultiToneShadowColor => c"阴影色",
+        TrKey::ParamMultiToneShadowColorDesc => c"映射到最暗量化色调的颜色（亮度 = 0）。",
+        TrKey::ParamMultiToneMidtoneColor => c"中间色",
+        TrKey::ParamMultiToneMidtoneColorDesc => c"映射到中间量化色调的颜色（亮度 = 中间色位置）。",
+        TrKey::ParamMultiToneHighlightColor => c"高光色",
+        TrKey::ParamMultiToneHighlightColorDesc => c"映射到最亮量化色调的颜色（亮度 = 1）。",
+        TrKey::ParamMultiToneMidtonePosition => c"中间色位置",
+        TrKey::ParamMultiToneMidtonePositionDesc => c"中间色在亮度范围中的位置。0 = 靠近阴影，1 = 靠近高光。",
+        TrKey::ParamMultiToneBlendWithOriginal => c"与原始混合",
+        TrKey::ParamMultiToneBlendWithOriginalDesc => c"将颜色映射结果与原始量化颜色混合。0 = 完全颜色映射，1 = 原始色调分离颜色。",
+
+        // ── MultiTone: mode menu items ────────────────
+        TrKey::MenuTonePerChannel => c"逐通道",
+        TrKey::MenuTonePerChannelDesc => c"分别量化每个颜色通道。",
+        TrKey::MenuToneLuminance => c"亮度",
+        TrKey::MenuToneLuminanceDesc => c"仅量化亮度，保持色相和饱和度不变。",
     }
 }

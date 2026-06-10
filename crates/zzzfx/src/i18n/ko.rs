@@ -466,6 +466,10 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::NativeGridColorHint => c"픽셀 블록 사이 그리드 선의 색상.",
         TrKey::NativeGridPosition => c"픽셀 그리드 위치",
         TrKey::NativeGridPositionHint => c"픽셀 그리드의 앵커 위치. (0,0) = 왼쪽 위, (0.5,0.5) = 중앙, (1,1) = 오른쪽 아래.",
+
+        // HalfTone: native param labels & hints
+        TrKey::NativeDotPosition => c"도트 위치",
+        TrKey::NativeDotPositionHint => c"하프톤 도트 그리드의 앵커 위치. (0,0) = 왼쪽 위, (0.5,0.5) = 중앙, (1,1) = 오른쪽 아래.",
         TrKey::ParamGridPositionX => c"그리드 위치 X",
         TrKey::ParamGridPositionXDesc => c"픽셀 그리드의 가로 앵커 위치. 0 = 왼쪽 정렬, 0.5 = 중앙, 1 = 오른쪽 정렬.",
         TrKey::ParamGridPositionY => c"그리드 위치 Y",
@@ -866,5 +870,83 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuQrShapeHorizontalDesc => c"가로 막대 모듈.",
         TrKey::MenuQrShapeDiamond => c"마름모",
         TrKey::MenuQrShapeDiamondDesc => c"마름모 모듈.",
+
+        // ── HalfTone: effect labels ──────────────────
+        TrKey::EffectHalfToneName => c"zzzFX 하프톤",
+        TrKey::EffectHalfToneDesc => c"클래식 하프톤 스크린 패턴. 밝기에 따라 도트 크기가 변합니다.",
+
+        // ── HalfTone: generic param labels ────────────
+        TrKey::ParamHalfToneDotSize => c"도트 크기",
+        TrKey::ParamHalfToneDotSizeDesc => c"화면 대각선에 대한 기본 도트 크기. 값이 클수록 도트가 적고 커집니다.",
+        TrKey::ParamHalfToneAngle => c"각도",
+        TrKey::ParamHalfToneAngleDesc => c"스크린 각도(도). 하프톤 그리드의 방향을 제어합니다.",
+        TrKey::ParamHalfToneDotShape => c"도트 모양",
+        TrKey::ParamHalfToneDotShapeDesc => c"하프톤 도트의 모양.",
+        TrKey::ParamHalfToneChannelMode => c"채널 모드",
+        TrKey::ParamHalfToneChannelModeDesc => c"휘도: 단일 채널 그레이스케일 하프톤. RGB: 각도 오프셋으로 채널별 하프톤.",
+        TrKey::ParamHalfToneInvert => c"반전",
+        TrKey::ParamHalfToneInvertDesc => c"패턴 반전 — 밝은 영역 대신 어두운 영역에 도트가 나타납니다.",
+        TrKey::ParamHalfToneContrast => c"대비",
+        TrKey::ParamHalfToneContrastDesc => c"전처리 대비 조정. 0.5 = 중립, 0 = 평면, 1 = 최대 대비.",
+        TrKey::ParamHalfToneSmoothness => c"부드러움",
+        TrKey::ParamHalfToneSmoothnessDesc => c"도트 가장자리 안티앨리어싱. 0 = 하드 에지, 1 = 완전 부드럽게.",
+        TrKey::ParamHalfTonePositionX => c"위치 X",
+        TrKey::ParamHalfTonePositionXDesc => c"도트 그리드의 가로 오프셋. 0 = 왼쪽, 0.5 = 중앙, 1 = 오른쪽.",
+        TrKey::ParamHalfTonePositionY => c"위치 Y",
+        TrKey::ParamHalfTonePositionYDesc => c"도트 그리드의 세로 오프셋. 0 = 위, 0.5 = 중앙, 1 = 아래.",
+        TrKey::ParamHalfToneBlendWithOriginal => c"원본과 혼합",
+        TrKey::ParamHalfToneBlendWithOriginalDesc => c"하프톤 결과를 원본 이미지와 혼합합니다. 0 = 완전한 하프톤, 1 = 원본 이미지.",
+
+        // ── HalfTone: dot shape menu items ────────────
+        TrKey::MenuDotShapeCircle => c"원형",
+        TrKey::MenuDotShapeCircleDesc => c"둥근 도트.",
+        TrKey::MenuDotShapeSquare => c"사각형",
+        TrKey::MenuDotShapeSquareDesc => c"사각형 도트.",
+        TrKey::MenuDotShapeDiamond => c"마름모",
+        TrKey::MenuDotShapeDiamondDesc => c"마름모 도트.",
+
+        // ── HalfTone: channel mode menu items ─────────
+        TrKey::MenuChannelLuminance => c"휘도",
+        TrKey::MenuChannelLuminanceDesc => c"인지된 밝기에 기반한 단일 채널 하프톤.",
+        TrKey::MenuChannelRGB => c"RGB",
+        TrKey::MenuChannelRGBDesc => c"색상 분리 각도로 채널별 하프톤.",
+
+        // ── MultiTone: effect labels ──────────────────
+        TrKey::EffectMultiToneName => c"zzzFX 멀티톤",
+        TrKey::EffectMultiToneDesc => c"포스터라이제이션 및 색상 양자화 효과. 톤 수를 줄여 스타일리시한 플랫 컬러 룩을 만듭니다.",
+
+        // ── MultiTone: generic param labels ────────────
+        TrKey::ParamMultiToneLevels => c"톤 레벨",
+        TrKey::ParamMultiToneLevelsDesc => c"채널당 톤 레벨 수. 값이 낮을수록 더 적고 뚜렷한 색상 밴드가 생성됩니다.",
+        TrKey::ParamMultiToneMode => c"모드",
+        TrKey::ParamMultiToneModeDesc => c"양자화 모드: 채널별로 R, G, B를 독립적으로 양자화. 휘도는 인지된 밝기만 양자화.",
+        TrKey::ParamMultiToneDithering => c"디더링",
+        TrKey::ParamMultiToneDitheringDesc => c"양자화 영역의 밴딩 아티팩트를 줄이는 디더링 알고리즘.",
+        TrKey::ParamMultiToneDitheringAmount => c"디더링 강도",
+        TrKey::ParamMultiToneDitheringAmountDesc => c"디더링 효과의 강도. 0 = 디더링 없음, 1 = 완전한 디더링.",
+        TrKey::ParamMultiToneEdgeSoftness => c"가장자리 부드러움",
+        TrKey::ParamMultiToneEdgeSoftnessDesc => c"톤 경계의 부드러운 전환. 0 = 하드 에지, 1 = 완전히 혼합.",
+        TrKey::ParamMultiTonePreserveLuminosity => c"휘도 유지",
+        TrKey::ParamMultiTonePreserveLuminosityDesc => c"양자화 결과를 원본 인지 밝기에 맞게 조정합니다.",
+
+        // ── MultiTone: color mapping params ────────────
+        TrKey::ParamMultiToneColorMapping => c"컬러 매핑",
+        TrKey::ParamMultiToneColorMappingDesc => c"양자화된 톤을 그라데이션 컬러 맵으로 대체합니다. 양자화 결과의 휘도를 사용하여 섀도우, 미드톤, 하이라이트 색상 사이를 혼합합니다.",
+        TrKey::ParamMultiToneShadowColor => c"섀도우 색상",
+        TrKey::ParamMultiToneShadowColorDesc => c"가장 어두운 양자화 톤에 매핑되는 색상 (휘도 = 0).",
+        TrKey::ParamMultiToneMidtoneColor => c"미드톤 색상",
+        TrKey::ParamMultiToneMidtoneColorDesc => c"중간 양자화 톤에 매핑되는 색상 (휘도 = 미드톤 위치).",
+        TrKey::ParamMultiToneHighlightColor => c"하이라이트 색상",
+        TrKey::ParamMultiToneHighlightColorDesc => c"가장 밝은 양자화 톤에 매핑되는 색상 (휘도 = 1).",
+        TrKey::ParamMultiToneMidtonePosition => c"미드톤 위치",
+        TrKey::ParamMultiToneMidtonePositionDesc => c"휘도 범위에서 미드톤 위치. 0 = 섀도우 쪽, 1 = 하이라이트 쪽.",
+        TrKey::ParamMultiToneBlendWithOriginal => c"원본과 혼합",
+        TrKey::ParamMultiToneBlendWithOriginalDesc => c"컬러 매핑 결과와 원본 양자화 색상을 혼합합니다. 0 = 전체 컬러 맵, 1 = 원본 포스터라이즈 색상.",
+
+        // ── MultiTone: mode menu items ────────────────
+        TrKey::MenuTonePerChannel => c"채널별",
+        TrKey::MenuTonePerChannelDesc => c"각 색상 채널을 독립적으로 양자화합니다.",
+        TrKey::MenuToneLuminance => c"휘도",
+        TrKey::MenuToneLuminanceDesc => c"휘도만 양자화하고 색상과 채도를 유지합니다.",
     }
 }

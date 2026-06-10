@@ -466,6 +466,10 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::NativeGridColorHint => c"ピクセルブロック間のグリッド線の色。",
         TrKey::NativeGridPosition => c"ピクセルグリッド位置",
         TrKey::NativeGridPositionHint => c"ピクセルグリッドのアンカー位置。(0,0) = 左上、(0.5,0.5) = 中央、(1,1) = 右下。",
+
+        // HalfTone: native param labels & hints
+        TrKey::NativeDotPosition => c"ドット位置",
+        TrKey::NativeDotPositionHint => c"ハーフトーンドットグリッドのアンカー位置。(0,0) = 左上、(0.5,0.5) = 中央、(1,1) = 右下。",
         TrKey::ParamGridPositionX => c"グリッド位置 X",
         TrKey::ParamGridPositionXDesc => c"ピクセルグリッドの水平アンカー位置。0 = 左揃え、0.5 = 中央、1 = 右揃え。",
         TrKey::ParamGridPositionY => c"グリッド位置 Y",
@@ -866,5 +870,83 @@ pub fn translate_cstr(key: TrKey) -> &'static CStr {
         TrKey::MenuQrShapeHorizontalDesc => c"横棒モジュール。",
         TrKey::MenuQrShapeDiamond => c"菱形",
         TrKey::MenuQrShapeDiamondDesc => c"菱形モジュール。",
+
+        // ── HalfTone: effect labels ──────────────────
+        TrKey::EffectHalfToneName => c"zzzFX ハーフトーン",
+        TrKey::EffectHalfToneDesc => c"クラシックなハーフトーンスクリーンパターン。明るさに応じてドットサイズが変化します。",
+
+        // ── HalfTone: generic param labels ────────────
+        TrKey::ParamHalfToneDotSize => c"ドットサイズ",
+        TrKey::ParamHalfToneDotSizeDesc => c"画面対角線に対する基本ドットサイズ。値が大きいほどドットが少なく大きくなります。",
+        TrKey::ParamHalfToneAngle => c"角度",
+        TrKey::ParamHalfToneAngleDesc => c"スクリーン角度（度）。ハーフトーングリッドの方向を制御します。",
+        TrKey::ParamHalfToneDotShape => c"ドット形状",
+        TrKey::ParamHalfToneDotShapeDesc => c"ハーフトーンドットの形状。",
+        TrKey::ParamHalfToneChannelMode => c"チャンネルモード",
+        TrKey::ParamHalfToneChannelModeDesc => c"輝度：単一チャンネルのグレースケールハーフトーン。RGB：チャンネルごとのハーフトーン（角度オフセット付き）。",
+        TrKey::ParamHalfToneInvert => c"反転",
+        TrKey::ParamHalfToneInvertDesc => c"パターンを反転——明部ではなく暗部にドットが現れます。",
+        TrKey::ParamHalfToneContrast => c"コントラスト",
+        TrKey::ParamHalfToneContrastDesc => c"前処理コントラスト調整。0.5 = 中間、0 = フラット、1 = 最大コントラスト。",
+        TrKey::ParamHalfToneSmoothness => c"滑らかさ",
+        TrKey::ParamHalfToneSmoothnessDesc => c"ドットエッジのアンチエイリアス。0 = ハードエッジ、1 = 完全にソフト。",
+        TrKey::ParamHalfTonePositionX => c"位置 X",
+        TrKey::ParamHalfTonePositionXDesc => c"ドットグリッドの水平オフセット。0 = 左、0.5 = 中央、1 = 右。",
+        TrKey::ParamHalfTonePositionY => c"位置 Y",
+        TrKey::ParamHalfTonePositionYDesc => c"ドットグリッドの垂直オフセット。0 = 上、0.5 = 中央、1 = 下。",
+        TrKey::ParamHalfToneBlendWithOriginal => c"元画像とブレンド",
+        TrKey::ParamHalfToneBlendWithOriginalDesc => c"ハーフトーン結果を元画像とブレンドします。0 = 完全なハーフトーン、1 = 元画像。",
+
+        // ── HalfTone: dot shape menu items ────────────
+        TrKey::MenuDotShapeCircle => c"円",
+        TrKey::MenuDotShapeCircleDesc => c"丸いドット。",
+        TrKey::MenuDotShapeSquare => c"四角",
+        TrKey::MenuDotShapeSquareDesc => c"四角いドット。",
+        TrKey::MenuDotShapeDiamond => c"菱形",
+        TrKey::MenuDotShapeDiamondDesc => c"菱形のドット。",
+
+        // ── HalfTone: channel mode menu items ─────────
+        TrKey::MenuChannelLuminance => c"輝度",
+        TrKey::MenuChannelLuminanceDesc => c"知覚される明るさに基づく単一チャンネルハーフトーン。",
+        TrKey::MenuChannelRGB => c"RGB",
+        TrKey::MenuChannelRGBDesc => c"チャンネルごとのハーフトーン、色分離角度付き。",
+
+        // ── MultiTone: effect labels ──────────────────
+        TrKey::EffectMultiToneName => c"zzzFX マルチトーン",
+        TrKey::EffectMultiToneDesc => c"ポスタリゼーションと色量子化エフェクト。トーン数を減らし、スタイリッシュなフラットカラールックを実現します。",
+
+        // ── MultiTone: generic param labels ────────────
+        TrKey::ParamMultiToneLevels => c"トーンレベル",
+        TrKey::ParamMultiToneLevelsDesc => c"チャンネルあたりのトーンレベル数。値を下げると、色の帯域が少なくはっきりと分かれます。",
+        TrKey::ParamMultiToneMode => c"モード",
+        TrKey::ParamMultiToneModeDesc => c"量子化モード：チャンネル単位でR、G、Bを個別に量子化。輝度は知覚される明るさのみを量子化します。",
+        TrKey::ParamMultiToneDithering => c"ディザリング",
+        TrKey::ParamMultiToneDitheringDesc => c"量子化領域のバンディングアーティファクトを軽減するディザリングアルゴリズム。",
+        TrKey::ParamMultiToneDitheringAmount => c"ディザリング強度",
+        TrKey::ParamMultiToneDitheringAmountDesc => c"ディザリング効果の強度。0 = ディザリングなし、1 = 完全なディザリング。",
+        TrKey::ParamMultiToneEdgeSoftness => c"エッジの柔らかさ",
+        TrKey::ParamMultiToneEdgeSoftnessDesc => c"トーン境界のスムーズな遷移。0 = ハードエッジ、1 = 完全にブレンド。",
+        TrKey::ParamMultiTonePreserveLuminosity => c"輝度を保持",
+        TrKey::ParamMultiTonePreserveLuminosityDesc => c"量子化結果を元の知覚される明るさに合わせて調整します。",
+
+        // ── MultiTone: color mapping params ────────────
+        TrKey::ParamMultiToneColorMapping => c"カラーマッピング",
+        TrKey::ParamMultiToneColorMappingDesc => c"量子化されたトーンをグラデーションカラーマップで置き換えます。量子化結果の輝度を使用して、シャドウ、ミッドトーン、ハイライトの色の間をブレンドします。",
+        TrKey::ParamMultiToneShadowColor => c"シャドウ色",
+        TrKey::ParamMultiToneShadowColorDesc => c"最も暗い量子化トーンにマッピングされる色（輝度 = 0）。",
+        TrKey::ParamMultiToneMidtoneColor => c"ミッドトーン色",
+        TrKey::ParamMultiToneMidtoneColorDesc => c"中間の量子化トーンにマッピングされる色（輝度 = ミッドトーン位置）。",
+        TrKey::ParamMultiToneHighlightColor => c"ハイライト色",
+        TrKey::ParamMultiToneHighlightColorDesc => c"最も明るい量子化トーンにマッピングされる色（輝度 = 1）。",
+        TrKey::ParamMultiToneMidtonePosition => c"ミッドトーン位置",
+        TrKey::ParamMultiToneMidtonePositionDesc => c"輝度範囲におけるミッドトーンの位置。0 = シャドウ側、1 = ハイライト側。",
+        TrKey::ParamMultiToneBlendWithOriginal => c"元とブレンド",
+        TrKey::ParamMultiToneBlendWithOriginalDesc => c"カラーマッピング結果と元の量子化色をブレンドします。0 = 完全なカラーマップ、1 = 元のポスタリゼーション色。",
+
+        // ── MultiTone: mode menu items ────────────────
+        TrKey::MenuTonePerChannel => c"チャンネル単位",
+        TrKey::MenuTonePerChannelDesc => c"各色チャンネルを個別に量子化します。",
+        TrKey::MenuToneLuminance => c"輝度",
+        TrKey::MenuToneLuminanceDesc => c"輝度のみを量子化し、色相と彩度を保持します。",
     }
 }
