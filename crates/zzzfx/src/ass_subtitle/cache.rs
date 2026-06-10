@@ -59,8 +59,10 @@ pub struct RenderCache {
     pub(crate) prev_dirty: DirtyRect,
     pub(crate) first_frame: bool,
     /// Reusable per-event GPU glyph metadata buffer.
+    #[cfg(feature = "gpu")]
     pub(crate) glyph_gpu_data_buf: Vec<crate::gpu::ass_glyph::GlyphGpuData>,
     /// Reusable per-event GPU glyph bitmap buffer.
+    #[cfg(feature = "gpu")]
     pub(crate) bitmap_bytes_buf: Vec<u8>,
 }
 
@@ -74,7 +76,9 @@ impl RenderCache {
             text_layouts: HashMap::new(),
             prev_dirty: DirtyRect::default(),
             first_frame: true,
+            #[cfg(feature = "gpu")]
             glyph_gpu_data_buf: Vec::new(),
+            #[cfg(feature = "gpu")]
             bitmap_bytes_buf: Vec::new(),
         }
     }
@@ -86,8 +90,11 @@ impl RenderCache {
         self.event_cache.clear();
         self.font_engines.clear();
         self.text_layouts.clear();
-        self.glyph_gpu_data_buf.clear();
-        self.bitmap_bytes_buf.clear();
+        #[cfg(feature = "gpu")]
+        {
+            self.glyph_gpu_data_buf.clear();
+            self.bitmap_bytes_buf.clear();
+        }
     }
 
     /// Evict entries from a HashMap when it exceeds `max` and `key` is not present.

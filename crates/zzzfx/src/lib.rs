@@ -1,4 +1,5 @@
 pub mod blend;
+#[cfg(feature = "gpu")]
 pub mod gpu;
 pub mod i18n;
 pub mod settings;

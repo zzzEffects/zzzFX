@@ -138,7 +138,10 @@ pub fn render_ass_subtitle_frame(
     // Only attempt GPU paths if the shared device was ALREADY initialized
     // by another effect — never trigger GPU init from the ASS subtitle renderer
     // (creating a wgpu device inside VEGAS Pro causes D3D12 conflicts).
+    #[cfg(feature = "gpu")]
     let gpu_ready = crate::gpu::is_shared_device_ready();
+    #[cfg(not(feature = "gpu"))]
+    let gpu_ready = false;
 
     for ev in &active {
         let style = resolve_style(ass_script, ev);
@@ -502,60 +505,71 @@ pub fn render_ass_subtitle_frame(
         let has_outline = outline_radius > 0 && border_style == 1 && outline_color[3] > 0.0;
         let has_fill = fill_color[3] > 0.0;
 
+        #[cfg(feature = "gpu")]
         let sh_color = apply_fade_to_color(shadow_color, effective_alpha);
+        #[cfg(feature = "gpu")]
         let out_color = apply_fade_to_color(outline_color, effective_alpha);
+        #[cfg(feature = "gpu")]
         let fill = apply_fade_to_color(fill_color, effective_alpha);
 
-        let mut gpu_glyph_ok = false;
+        let gpu_glyph_ok;
 
-        if gpu_ready {
-            cache.glyph_gpu_data_buf.clear();
-            cache.bitmap_bytes_buf.clear();
-            let glyph_gpu_data = &mut cache.glyph_gpu_data_buf;
-            let bitmap_bytes = &mut cache.bitmap_bytes_buf;
-            for line in &layout.lines {
-                let line_ascent = line.baseline;
-                for glyph in &line.glyphs {
-                    if glyph.width == 0 || glyph.height == 0 { continue; }
-                    let gx = (base_x + glyph.x * tag_sx * fsx).round() as i32;
-                    let gy = (base_y + line_ascent + glyph.y).round() as i32;
-                    let mut flags = 0u32;
-                    if has_fill { flags |= 1; }
-                    if has_outline { flags |= 2; }
-                    if has_shadow { flags |= 4; }
-                    let offset = bitmap_bytes.len() as u32;
-                    bitmap_bytes.extend_from_slice(&glyph.bitmap);
-                    glyph_gpu_data.push(crate::gpu::ass_glyph::GlyphGpuData {
-                        glyph_offset: offset,
-                        bitmap_w: glyph.width as u32,
-                        bitmap_h: glyph.height as u32,
-                        pos_x: gx,
-                        pos_y: gy,
-                        fill_color: pack_rgba8(fill),
-                        outline_color: pack_rgba8(out_color),
-                        shadow_color: pack_rgba8(sh_color),
-                        outline_radius,
-                        shadow_dx,
-                        shadow_dy,
-                        flags,
-                    });
+        #[cfg(feature = "gpu")]
+        {
+            let mut ok = false;
+            if gpu_ready {
+                cache.glyph_gpu_data_buf.clear();
+                cache.bitmap_bytes_buf.clear();
+                let glyph_gpu_data = &mut cache.glyph_gpu_data_buf;
+                let bitmap_bytes = &mut cache.bitmap_bytes_buf;
+                for line in &layout.lines {
+                    let line_ascent = line.baseline;
+                    for glyph in &line.glyphs {
+                        if glyph.width == 0 || glyph.height == 0 { continue; }
+                        let gx = (base_x + glyph.x * tag_sx * fsx).round() as i32;
+                        let gy = (base_y + line_ascent + glyph.y).round() as i32;
+                        let mut flags = 0u32;
+                        if has_fill { flags |= 1; }
+                        if has_outline { flags |= 2; }
+                        if has_shadow { flags |= 4; }
+                        let offset = bitmap_bytes.len() as u32;
+                        bitmap_bytes.extend_from_slice(&glyph.bitmap);
+                        glyph_gpu_data.push(crate::gpu::ass_glyph::GlyphGpuData {
+                            glyph_offset: offset,
+                            bitmap_w: glyph.width as u32,
+                            bitmap_h: glyph.height as u32,
+                            pos_x: gx,
+                            pos_y: gy,
+                            fill_color: pack_rgba8(fill),
+                            outline_color: pack_rgba8(out_color),
+                            shadow_color: pack_rgba8(sh_color),
+                            outline_radius,
+                            shadow_dx,
+                            shadow_dy,
+                            flags,
+                        });
+                    }
+                }
+                ok = crate::gpu::ass_glyph::try_ass_glyph_gpu_composite(
+                    glyph_gpu_data, bitmap_bytes, temp_buf,
+                    output_width as u32, output_height as u32,
+                ).unwrap_or(false);
+                if ok {
+                    stats.pixels_written += glyph_gpu_data.iter()
+                        .map(|g| (g.bitmap_w * g.bitmap_h) as usize)
+                        .sum::<usize>();
+                    for g in glyph_gpu_data.iter() {
+                        let pad = g.outline_radius.max(g.shadow_dx.abs().ceil() as i32).max(g.shadow_dy.abs().ceil() as i32) + 1;
+                        new_dirty.expand(g.pos_x, g.pos_y, pad);
+                        new_dirty.expand(g.pos_x + g.bitmap_w as i32, g.pos_y + g.bitmap_h as i32, pad);
+                    }
                 }
             }
-            gpu_glyph_ok = crate::gpu::ass_glyph::try_ass_glyph_gpu_composite(
-                glyph_gpu_data, bitmap_bytes, temp_buf,
-                output_width as u32, output_height as u32,
-            ).unwrap_or(false);
-            if gpu_glyph_ok {
-                stats.pixels_written += glyph_gpu_data.iter()
-                    .map(|g| (g.bitmap_w * g.bitmap_h) as usize)
-                    .sum::<usize>();
-                // Expand dirty rect for CPU composite fallback path
-                for g in glyph_gpu_data.iter() {
-                    let pad = g.outline_radius.max(g.shadow_dx.abs().ceil() as i32).max(g.shadow_dy.abs().ceil() as i32) + 1;
-                    new_dirty.expand(g.pos_x, g.pos_y, pad);
-                    new_dirty.expand(g.pos_x + g.bitmap_w as i32, g.pos_y + g.bitmap_h as i32, pad);
-                }
-            }
+            gpu_glyph_ok = ok;
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            gpu_glyph_ok = false;
         }
 
         if !gpu_glyph_ok {
@@ -620,21 +634,24 @@ pub fn render_ass_subtitle_frame(
     // Phase 3: GPU-first compositing (CPU fallback if GPU unavailable)
     // Only attempt if shared device was already initialized by another effect.
     // ------------------------------------------------------------------
-    if gpu_ready {
-        match crate::gpu::ass_subtitle::try_ass_subtitle_gpu_composite(
-            temp_buf, output,
-            output_width as u32, output_height as u32,
-            blend_mode as u32,
-        ) {
-            Ok(true) => { stats.gpu_composite_used = true; }
-            _ => {
-                if let Some(dr) = new_dirty.clamp(output_width as i32, output_height as i32) {
-                    cpu_composite_dirty_rect(temp_buf, output, output_width, &dr, blend_mode);
-                }
+    let gpu_composite_ok = if gpu_ready {
+        #[cfg(feature = "gpu")]
+        {
+            match crate::gpu::ass_subtitle::try_ass_subtitle_gpu_composite(
+                temp_buf, output,
+                output_width as u32, output_height as u32,
+                blend_mode as u32,
+            ) {
+                Ok(true) => { stats.gpu_composite_used = true; true }
+                _ => false,
             }
         }
+        #[cfg(not(feature = "gpu"))]
+        false
     } else {
-        // GPU not ready — CPU compositing only
+        false
+    };
+    if !gpu_composite_ok {
         if let Some(dr) = new_dirty.clamp(output_width as i32, output_height as i32) {
             cpu_composite_dirty_rect(temp_buf, output, output_width, &dr, blend_mode);
         }
@@ -748,6 +765,7 @@ fn has_layout_affecting_transforms(transforms: &[super::types::OverrideTransform
 }
 
 /// Pack [r, g, b, a] normalized 0..1 into u32 RGBA8.
+#[cfg(feature = "gpu")]
 fn pack_rgba8(c: [f32; 4]) -> u32 {
     let r = (c[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
     let g = (c[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u32;

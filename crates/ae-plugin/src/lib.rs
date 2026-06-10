@@ -37,6 +37,41 @@ use shared::{
 };
 
 // ---------------------------------------------------------------------------
+// Per-frame buffer pool (avoids allocating fresh vecs every render)
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static RENDER_BUFS: std::cell::RefCell<(Vec<u8>, Vec<u8>)> =
+        std::cell::RefCell::new((Vec::new(), Vec::new()));
+}
+
+/// Borrow the (src, dst) buffer pair from the thread-local pool.
+/// Resizes both to `len` and returns the taken pair.
+/// Falls back to fresh allocation if the pool is re-entrantly borrowed.
+#[inline]
+fn take_render_bufs(len: usize) -> (Vec<u8>, Vec<u8>) {
+    RENDER_BUFS.with(|cell| {
+        cell.try_borrow_mut()
+            .map(|mut guard| {
+                guard.0.resize(len, 0);
+                guard.1.resize(len, 0);
+                std::mem::take(&mut *guard)
+            })
+            .unwrap_or_else(|_| (vec![0u8; len], vec![0u8; len]))
+    })
+}
+
+/// Return buffer pair to the thread-local pool (best-effort: ignores if pool is borrowed).
+#[inline]
+fn return_render_bufs(src: Vec<u8>, dst: Vec<u8>) {
+    let _ = RENDER_BUFS.try_with(|cell| {
+        if let Ok(mut guard) = cell.try_borrow_mut() {
+            let _ = std::mem::replace(&mut *guard, (src, dst));
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Effect type dispatch
 // ---------------------------------------------------------------------------
 
@@ -90,14 +125,14 @@ macro_rules! render_filter {
         let mut s = <$stype>::default();
         apply_settings_list($desc, $params, &mut s)?;
         let e: $etype = (&s).into();
-        let mut src = vec![0u8; $total];
-        let mut dst = vec![0u8; $total];
+        let (mut src, mut dst) = take_render_bufs($total);
         copy_layer_to_contiguous($in, &mut src, $w, $h);
         // AE uses ARGB; effect uses RGBA. Swap before and after.
         argb_to_rgba(&mut src);
         e.apply_effect(&src, &mut dst, $w, $h);
         rgba_to_argb(&mut dst);
         copy_contiguous_to_layer(&dst, $out, $w, $h);
+        return_render_bufs(src, dst);
     }};
 }
 
@@ -326,7 +361,15 @@ impl AdobePluginGlobal for Plugin {
 impl Plugin {
     fn global_setup(&self, in_data: InData) -> Result<(), Error> {
         i18n::set_lang(resolve_language());
-        global_setup_common(in_data)
+        global_setup_common(in_data)?;
+        #[cfg(feature = "gpu")]
+        {
+            // Eagerly warm up the shared wgpu device so the first render
+            // doesn't stall. Uses try_init so render-time can retry if
+            // this eager attempt fails.
+            zzzfx::gpu::try_init_shared_device();
+        }
+        Ok(())
     }
 
     fn about(&self, mut out: OutData) -> Result<(), Error> {
@@ -369,15 +412,15 @@ impl Plugin {
             EffectType::Repeater => {
                 let mut s = RepeaterFullSettings::default();
                 apply_settings_list(&self.repeater.setting_descriptors, params, &mut s)?;
-                let mut src = vec![0u8; total];
+                let (mut src, mut dst) = take_render_bufs(total);
                 copy_layer_to_contiguous(&in_layer, &mut src, w, h);
                 argb_to_rgba(&mut src);
                 let layers = [CompositorLayer { rgba: &src, position_x: s.position_x, position_y: s.position_y, rotation_deg: s.rotation, blend_mode: s.blend_mode }];
-                let mut dst = vec![0u8; total];
                 let r: Repeater = (&s).into();
                 r.composite_layers(&layers, &mut dst, w, h);
                 rgba_to_argb(&mut dst);
                 copy_contiguous_to_layer(&dst, &mut out_layer, w, h);
+                return_render_bufs(src, dst);
             }
             EffectType::SpriteSheet => return Err(Error::BadCallbackParameter),
             EffectType::AsciiArt => {
@@ -390,15 +433,15 @@ impl Plugin {
                 let mut s = AmbientLightFullSettings::default();
                 apply_settings_list(&self.ambient_light.setting_descriptors, params, &mut s)?;
                 let e: AmbientLight = (&s).into();
-                let mut fg = vec![0u8; total];
+                let (mut fg, mut dst) = take_render_bufs(total);
                 let mut bg = vec![0u8; total];
-                let mut dst = vec![0u8; total];
                 copy_layer_to_contiguous(&in_layer, &mut fg, w, h);
                 argb_to_rgba(&mut fg);
                 bg.copy_from_slice(&fg);
                 e.apply_effect(&fg, &bg, &mut dst, w, h);
                 rgba_to_argb(&mut dst);
                 copy_contiguous_to_layer(&dst, &mut out_layer, w, h);
+                return_render_bufs(fg, dst);
             }
             EffectType::LongShadow => {
                 render_filter!(LongShadowFullSettings, LongShadow, &self.long_shadow.setting_descriptors, &in_layer, &mut out_layer, w, h, total, params);
@@ -418,20 +461,21 @@ impl Plugin {
             EffectType::MidiDisplay => {
                 let mut s = MidiDisplayFullSettings::default();
                 apply_settings_list(&self.midi_display.setting_descriptors, params, &mut s)?;
-                let mut src = vec![0u8; total];
-                let mut dst = vec![0u8; total];
+                let (mut src, mut dst) = take_render_bufs(total);
                 copy_layer_to_contiguous(&in_layer, &mut src, w, h);
                 argb_to_rgba(&mut src);
                 // MIDI Display requires file loading + MIDI parsing — not yet wired for AE.
                 dst.copy_from_slice(&src);
                 rgba_to_argb(&mut dst);
                 copy_contiguous_to_layer(&dst, &mut out_layer, w, h);
+                return_render_bufs(src, dst);
             }
             EffectType::SvgDisplay | EffectType::LaTeXDisplay | EffectType::QrCode | EffectType::AssSubtitle => {
                 // Generator effects require file/data input — pass through source for now.
-                let mut src = vec![0u8; total];
+                let (mut src, dst) = take_render_bufs(total);
                 copy_layer_to_contiguous(&in_layer, &mut src, w, h);
                 copy_contiguous_to_layer(&src, &mut out_layer, w, h);
+                return_render_bufs(src, dst);
             }
         }
         Ok(())

@@ -4,13 +4,17 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 
+[features]
+default = ["gpu"]
+gpu = ["zzzfx/gpu"]
+
 [lib]
 crate-type = ["cdylib"]
 
 [target.'cfg(any(windows, target_os="macos"))'.dependencies]
 after-effects = { git = "https://github.com/zzzEffects/after-effects", branch = "master" }
 premiere = { git = "https://github.com/zzzEffects/after-effects", branch = "master" }
-zzzfx = { path = "../zzzfx" }
+zzzfx = { path = "../zzzfx", default-features = false }
 
 [build-dependencies]
 pipl = { git = "https://github.com/zzzEffects/after-effects", branch = "master" }

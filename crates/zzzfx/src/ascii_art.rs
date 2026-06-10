@@ -250,26 +250,6 @@ fn ensure_cache(font_name: &str, font_size: f32, charset: &str) {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// GPU path (forward declaration)
-// ---------------------------------------------------------------------------
-
-mod gpu_impl {
-    use super::*;
-    pub fn try_gpu_render(
-        _settings: &AsciiArt,
-        _src: &[u8],
-        _dst: &mut [u8],
-        _width: usize,
-        _height: usize,
-        _cache: &GlyphCache,
-    ) -> Result<bool, String> {
-        // GPU path disabled pending output verification.
-        // Re-enable: crate::gpu::ascii_art::try_render(...)
-        Ok(false)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Effect implementation
 // ---------------------------------------------------------------------------
 
@@ -342,11 +322,15 @@ impl AsciiArt {
         }
 
         // ── Try GPU first ──────────────────────────────────────────
-        match gpu_impl::try_gpu_render(self, src, dst, width, height, &cache) {
-            Ok(true) => return,
-            Ok(false) => {}
-            Err(_) => {}
-        }
+        // GPU path pending: create crate::gpu::ascii_art module and
+        // uncomment the block below when output verification passes.
+        // #[cfg(feature = "gpu")]
+        // {
+        //     match crate::gpu::ascii_art::try_render(self, src, dst, width, height, &cache) {
+        //         Ok(true) => return,
+        //         _ => {}
+        //     }
+        // }
 
         // ── CPU path ───────────────────────────────────────────────
 

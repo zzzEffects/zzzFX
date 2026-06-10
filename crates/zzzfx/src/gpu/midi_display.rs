@@ -1,5 +1,6 @@
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
 // GPU structs (must match WGSL layout exactly)
@@ -34,32 +35,117 @@ pub struct NoteGpu {
 }
 
 // ---------------------------------------------------------------------------
-// GPU context
+// Read-only pipeline — shared without Mutex
 // ---------------------------------------------------------------------------
 
 static GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 
-struct GpuContext {
-    device: &'static wgpu::Device,
-    queue: &'static wgpu::Queue,
+struct Res {
     pipeline: wgpu::ComputePipeline,
-    bufs: GpuBuffers,
-    bind_group: Option<wgpu::BindGroup>,
+    bg_layout: wgpu::BindGroupLayout,
 }
 
-struct GpuBuffers {
+static RES: OnceLock<Res> = OnceLock::new();
+
+fn get_res(device: &wgpu::Device) -> Result<&'static Res, String> {
+    if let Some(r) = RES.get() {
+        return Ok(r);
+    }
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("midi_display"),
+        source: super::load_shader(include_str!("../shaders/midi_display.wgsl")),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("midi_display"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bg_layout = pipeline.get_bind_group_layout(0);
+    RES.set(Res { pipeline, bg_layout }).map_err(|_| "midi_display: init race".to_string())?;
+    RES.get().ok_or_else(|| "midi_display: init race".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Per-thread buffer pool — no Mutex, no contention
+// ---------------------------------------------------------------------------
+
+struct Bufs {
     uniform_buf: wgpu::Buffer,
     note_buf: wgpu::Buffer,
     dst_buf: wgpu::Buffer,
     staging_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     output_w: u32,
     output_h: u32,
     note_capacity: u32,
 }
 
-static GPU_CTX: OnceLock<Mutex<GpuContext>> = OnceLock::new();
+thread_local! {
+    static BUF_POOL: RefCell<Option<Bufs>> = const { RefCell::new(None) };
+}
 
 const MAX_VISIBLE_NOTES: u64 = 8192;
+
+fn take_or_create_bufs(device: &wgpu::Device, res: &Res, w: u32, h: u32, note_count: u32) -> Bufs {
+    BUF_POOL.with(|cell| {
+        let mut bufs = cell.borrow_mut().take();
+        if bufs.as_ref().map_or(true, |b| b.output_w != w || b.output_h != h || note_count > b.note_capacity) {
+            bufs = Some(create_bufs(device, res, w, h, note_count));
+        }
+        bufs.unwrap()
+    })
+}
+
+fn return_bufs(bufs: Bufs) {
+    let _ = BUF_POOL.try_with(|cell| {
+        *cell.borrow_mut() = Some(bufs);
+    });
+}
+
+fn create_bufs(device: &wgpu::Device, res: &Res, w: u32, h: u32, note_hint: u32) -> Bufs {
+    let image_size = w as u64 * h as u64 * 4;
+    let note_capacity = (note_hint.max(16) as u64).max(MAX_VISIBLE_NOTES);
+    let note_buf_size = note_capacity * std::mem::size_of::<NoteGpu>() as u64;
+
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("midi_uniforms"),
+        size: std::mem::size_of::<MidiDisplayUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let note_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("midi_notes"),
+        size: note_buf_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let dst_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("midi_dst"),
+        size: image_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("midi_staging"),
+        size: image_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("midi_display"),
+        layout: &res.bg_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: note_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: dst_buf.as_entire_binding() },
+        ],
+    });
+
+    Bufs { uniform_buf, note_buf, dst_buf, staging_buf, bind_group, output_w: w, output_h: h, note_capacity: note_capacity as u32 }
+}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -84,30 +170,14 @@ pub fn try_midi_display_gpu_render(
         return Ok(false);
     }
 
-    let ctx = match get_or_init_gpu() {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            GPU_AVAILABLE.store(false, Ordering::Relaxed);
-            return Ok(false);
-        }
-    };
-
-    let mut guard = match ctx.lock() {
-        Ok(g) => g,
-        Err(_) => return Ok(false),
-    };
-
     let note_count = note_data.len() as u32;
     if note_count == 0 {
-        return Ok(false); // nothing to render, let CPU handle simple background
+        return Ok(false);
     }
 
-    // Recreate buffers if dimensions or note count changed
-    if guard.bufs.output_w != dst_w || guard.bufs.output_h != dst_h || note_count > guard.bufs.note_capacity
-    {
-        guard.bufs = create_buffers(guard.device, dst_w, dst_h, note_count);
-        guard.bind_group = None;
-    }
+    let (device, queue) = super::get_or_init_shared_device()?;
+    let res = get_res(device).map_err(|e| { GPU_AVAILABLE.store(false, Ordering::Relaxed); e })?;
+    let bufs = take_or_create_bufs(device, res, dst_w, dst_h, note_count);
 
     let uniforms = MidiDisplayUniforms {
         dst_w, dst_h,
@@ -122,142 +192,28 @@ pub fn try_midi_display_gpu_render(
         _pad: 0,
     };
 
-    // Upload data
-    guard.queue.write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
-    guard.queue.write_buffer(&guard.bufs.note_buf, 0, bytemuck::cast_slice(note_data));
-
-    // Create or reuse bind group
-    if guard.bind_group.is_none() {
-        let layout = guard.pipeline.get_bind_group_layout(0);
-        guard.bind_group = Some(guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("midi_display"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: guard.bufs.uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: guard.bufs.note_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: guard.bufs.dst_buf.as_entire_binding() },
-            ],
-        }));
-    }
+    queue.write_buffer(&bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
+    queue.write_buffer(&bufs.note_buf, 0, bytemuck::cast_slice(note_data));
 
     let image_size = dst_w as u64 * dst_h as u64 * 4;
 
-    // Dispatch compute + copy to staging
+    // Dispatch compute + copy to staging (single encoder)
     {
-        let mut encoder = guard.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&guard.pipeline);
-            pass.set_bind_group(0, guard.bind_group.as_ref().ok_or("bind group not initialized")?, &[]);
+            pass.set_pipeline(&res.pipeline);
+            pass.set_bind_group(0, &bufs.bind_group, &[]);
             pass.dispatch_workgroups((dst_w + 15) / 16, (dst_h + 15) / 16, 1);
         }
-        encoder.copy_buffer_to_buffer(&guard.bufs.dst_buf, 0, &guard.bufs.staging_buf, 0, image_size);
-        guard.queue.submit(std::iter::once(encoder.finish()));
+        encoder.copy_buffer_to_buffer(&bufs.dst_buf, 0, &bufs.staging_buf, 0, image_size);
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Blocking readback
-    let staging = &guard.bufs.staging_buf;
-    let staging_slice = staging.slice(..image_size);
-    let (tx, rx) = std::sync::mpsc::channel();
-    staging_slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    let _ = guard.device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(std::time::Duration::from_millis(100)),
-    });
-    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-        Ok(Ok(())) => {
-            let mapped = staging_slice.get_mapped_range();
-            let buf_size = image_size as usize;
-            if buf_size <= dst.len() {
-                dst[..buf_size].copy_from_slice(&mapped);
-            }
-            drop(mapped);
-            staging.unmap();
-            Ok(true)
-        }
-        _ => {
-            staging.unmap();
-            Err("staging map failed".to_string())
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Initialization
-// ---------------------------------------------------------------------------
-
-fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
-    if let Some(ctx) = GPU_CTX.get() {
-        return Ok(ctx);
-    }
-    static INIT_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(ctx) = GPU_CTX.get() {
-        return Ok(ctx);
-    }
-
-    let (device, queue) = super::get_or_init_shared_device()?;
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("midi_display"),
-        source: super::load_shader(include_str!("../shaders/midi_display.wgsl")),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("midi_display"),
-        layout: None,
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bufs = create_buffers(device, 256, 256, 16);
-
-    let _ = GPU_CTX.set(Mutex::new(GpuContext {
-        device,
-        queue,
-        pipeline,
-        bufs,
-        bind_group: None,
-    }));
-    GPU_CTX
-        .get()
-        .ok_or_else(|| "midi_display: GPU ctx init race".to_string())
-}
-
-fn create_buffers(device: &wgpu::Device, w: u32, h: u32, note_hint: u32) -> GpuBuffers {
-    let image_size = w as u64 * h as u64 * 4;
-    let note_capacity = (note_hint.max(16) as u64).max(MAX_VISIBLE_NOTES);
-    GpuBuffers {
-        uniform_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("midi_uniforms"),
-            size: std::mem::size_of::<MidiDisplayUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        note_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("midi_notes"),
-            size: note_capacity * std::mem::size_of::<NoteGpu>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        dst_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("midi_dst"),
-            size: image_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        staging_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("midi_staging"),
-            size: image_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        output_w: w,
-        output_h: h,
-        note_capacity: note_capacity as u32,
-    }
+    let result = super::blocking_readback(device, &bufs.staging_buf, image_size, &mut dst[..image_size as usize]);
+    return_bufs(bufs);
+    result.map(|()| true)
 }

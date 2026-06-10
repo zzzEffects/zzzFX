@@ -1,8 +1,9 @@
 //! GPU-accelerated MultiTone rendering via single-pass wgpu compute shader.
 //! Supports None and Ordered dithering. Floyd-Steinberg falls back to CPU.
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use crate::settings::multitone::{MultiTone, ToneDithering};
 
@@ -28,22 +29,106 @@ struct Uniforms {
     cm_blend: f32,
 }
 
-struct GpuCtx {
+// ---------------------------------------------------------------------------
+// Read-only pipeline — shared without Mutex
+// ---------------------------------------------------------------------------
+
+struct Res {
     pipeline: wgpu::ComputePipeline,
-    bind_group: Option<wgpu::BindGroup>,
-    bufs: GpuBuffers,
+    bg_layout: wgpu::BindGroupLayout,
 }
 
-struct GpuBuffers {
+static RES: OnceLock<Res> = OnceLock::new();
+
+fn get_res(device: &wgpu::Device) -> Result<&'static Res, String> {
+    if let Some(r) = RES.get() { return Ok(r); }
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("multitone"),
+        source: super::load_shader(include_str!("../shaders/multitone.wgsl")),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("multitone"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bg_layout = pipeline.get_bind_group_layout(0);
+    RES.set(Res { pipeline, bg_layout }).map_err(|_| "multitone: init race".to_string())?;
+    RES.get().ok_or_else(|| "multitone: init race".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Per-thread buffer pool — no Mutex, no contention
+// ---------------------------------------------------------------------------
+
+struct Bufs {
     src_buf: wgpu::Buffer,
     uniform_buf: wgpu::Buffer,
     dst_buf: wgpu::Buffer,
     staging_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
 }
 
-static GPU_CTX: OnceLock<Mutex<GpuCtx>> = OnceLock::new();
+thread_local! {
+    static BUF_POOL: RefCell<Option<Bufs>> = const { RefCell::new(None) };
+}
+
+fn take_or_create_bufs(device: &wgpu::Device, res: &Res, w: u32, h: u32) -> Bufs {
+    BUF_POOL.with(|cell| {
+        let mut bufs = cell.borrow_mut().take();
+        if bufs.as_ref().map_or(true, |b| b.width != w || b.height != h) {
+            bufs = Some(create_bufs(device, res, w, h));
+        }
+        bufs.unwrap()
+    })
+}
+
+fn return_bufs(bufs: Bufs) {
+    let _ = BUF_POOL.try_with(|cell| { *cell.borrow_mut() = Some(bufs); });
+}
+
+fn create_bufs(device: &wgpu::Device, res: &Res, width: u32, height: u32) -> Bufs {
+    let buf_size = (width * height * 4) as u64;
+    let src_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("multitone_src"), size: buf_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("multitone_uniforms"),
+        size: std::mem::size_of::<Uniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let dst_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("multitone_dst"), size: buf_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("multitone_staging"), size: buf_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("multitone"),
+        layout: &res.bg_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: src_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: dst_buf.as_entire_binding() },
+        ],
+    });
+    Bufs { src_buf, uniform_buf, dst_buf, staging_buf, bind_group, width, height }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 pub(crate) fn try_render(
     settings: &MultiTone,
@@ -65,7 +150,6 @@ fn try_render_inner(
     width: usize,
     height: usize,
 ) -> Result<bool, String> {
-    // FS always falls back to CPU
     if matches!(settings.dithering, ToneDithering::FloydSteinberg) {
         return Ok(false);
     }
@@ -77,7 +161,6 @@ fn try_render_inner(
 
     let tone_levels_f = (settings.tone_levels.clamp(2.0, 32.0).floor() as u32).max(2);
     let levels_f = (tone_levels_f - 1) as f32;
-
     let (cm_enabled, sr, sg, sb, mr, mg, mb, hr, hg, hb, mp, cb) =
         if let Some(ref cm) = settings.color_mapping {
             (1u32,
@@ -91,10 +174,8 @@ fn try_render_inner(
         };
 
     let uniforms = Uniforms {
-        width: w,
-        height: h,
-        levels_i: tone_levels_f,
-        levels_f,
+        width: w, height: h,
+        levels_i: tone_levels_f, levels_f,
         mode: settings.mode as u32,
         dithering: settings.dithering as u32,
         dither_amount: settings.dithering_amount.clamp(0.0, 1.0),
@@ -104,106 +185,30 @@ fn try_render_inner(
         shadow_r: sr, shadow_g: sg, shadow_b: sb,
         midtone_r: mr, midtone_g: mg, midtone_b: mb,
         highlight_r: hr, highlight_g: hg, highlight_b: hb,
-        midtone_pos: mp,
-        cm_blend: cb,
+        midtone_pos: mp, cm_blend: cb,
     };
 
-    let ctx = get_or_init_ctx()?;
-    let mut guard = match ctx.lock() {
-        Ok(g) => g,
-        Err(_) => return Ok(false),
-    };
+    let (device, queue) = super::get_or_init_shared_device()?;
+    let res = get_res(device).map_err(|e| { GPU_AVAILABLE.store(false, Ordering::Relaxed); e })?;
+    let bufs = take_or_create_bufs(device, res, w, h);
 
     let buf_size = (w * h * 4) as u64;
     let src_data = &src[..(buf_size as usize).min(src.len())];
 
-    let (device, queue) = super::get_or_init_shared_device()?;
+    queue.write_buffer(&bufs.src_buf, 0, src_data);
+    queue.write_buffer(&bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
-    if guard.bufs.width != w || guard.bufs.height != h {
-        guard.bufs = create_buffers(device, w, h);
-        guard.bind_group = None;
-    }
-
-    queue.write_buffer(&guard.bufs.src_buf, 0, src_data);
-    queue.write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
-
-    if guard.bind_group.is_none() {
-        guard.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("multitone"),
-            layout: &guard.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: guard.bufs.src_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: guard.bufs.uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: guard.bufs.dst_buf.as_entire_binding() },
-            ],
-        }));
-    }
-
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("multitone") });
     {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("multitone") });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("multitone"), timestamp_writes: None });
-            pass.set_pipeline(&guard.pipeline);
-            pass.set_bind_group(0, guard.bind_group.as_ref().expect("multitone: bind group"), &[]);
-            pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
-        }
-        encoder.copy_buffer_to_buffer(&guard.bufs.dst_buf, 0, &guard.bufs.staging_buf, 0, buf_size);
-        queue.submit(std::iter::once(encoder.finish()));
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("multitone"), timestamp_writes: None });
+        pass.set_pipeline(&res.pipeline);
+        pass.set_bind_group(0, &bufs.bind_group, &[]);
+        pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
     }
+    encoder.copy_buffer_to_buffer(&bufs.dst_buf, 0, &bufs.staging_buf, 0, buf_size);
+    queue.submit(std::iter::once(encoder.finish()));
 
-    super::blocking_readback(device, &guard.bufs.staging_buf, buf_size, &mut dst[..buf_size as usize])?;
-    Ok(true)
-}
-
-fn get_or_init_ctx() -> Result<&'static Mutex<GpuCtx>, String> {
-    static INIT_LOCK: Mutex<()> = Mutex::new(());
-    if let Some(ctx) = GPU_CTX.get() { return Ok(ctx); }
-    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(ctx) = GPU_CTX.get() { return Ok(ctx); }
-
-    let (device, _queue) = super::get_or_init_shared_device()?;
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("multitone"),
-        source: super::load_shader(include_str!("../shaders/multitone.wgsl")),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("multitone"),
-        layout: None,
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bufs = create_buffers(device, 256, 256);
-
-    let _ = GPU_CTX.set(Mutex::new(GpuCtx { pipeline, bind_group: None, bufs }));
-    GPU_CTX.get().ok_or_else(|| "multitone: GPU ctx init race".to_string())
-}
-
-fn create_buffers(device: &wgpu::Device, width: u32, height: u32) -> GpuBuffers {
-    let buf_size = (width * height * 4) as u64;
-    GpuBuffers {
-        src_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("multitone_src"), size: buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        uniform_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("multitone_uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        dst_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("multitone_dst"), size: buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        staging_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("multitone_staging"), size: buf_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        width, height,
-    }
+    let result = super::blocking_readback(device, &bufs.staging_buf, buf_size, &mut dst[..buf_size as usize]);
+    return_bufs(bufs);
+    result.map(|()| true)
 }

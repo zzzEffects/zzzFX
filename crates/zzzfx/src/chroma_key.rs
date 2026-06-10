@@ -109,12 +109,14 @@ impl ChromaKey {
         }
 
         // ── Try GPU first ──
-        let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::gpu::chroma_key::try_chroma_key_gpu_render(self, src, dst, width, height)
-        }));
-        match gpu_result {
-            Ok(Ok(true)) => return,
-            _ => {} // fall through to CPU path
+        #[cfg(feature = "gpu")]
+        {
+            let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::gpu::chroma_key::try_chroma_key_gpu_render(self, src, dst, width, height)
+            }));
+            if let Ok(Ok(true)) = gpu_result {
+                return;
+            }
         }
 
         // ── CPU path ──

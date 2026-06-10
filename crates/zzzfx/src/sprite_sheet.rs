@@ -341,6 +341,7 @@ impl SpriteSheet {
             && !self.rotation_pixel_based
             && !self.selection_mode;
         if can_use_gpu {
+            #[cfg(feature = "gpu")]
             if let Some(filter_mode) = match self.scale_algorithm {
                 ScaleAlgorithm::Nearest => Some(0u32),
                 ScaleAlgorithm::Triangle => Some(1u32),
@@ -353,7 +354,7 @@ impl SpriteSheet {
                         crop_rect, sheet_rgba, sheet_w, sheet_h,
                         self.scale, filter_mode,
                         dx, dy, false,
-                        self.rotation, // GPU handles non-pixel-based rotation
+                        self.rotation,
                         dst, dst_w as u32, dst_h as u32,
                     )
                 }));
@@ -591,6 +592,7 @@ impl SpriteSheet {
         let offset_y = (dst_h as i32 - out_h as i32) / 2;
 
         // --- GPU path: full-sheet scaling + centering ---
+        #[cfg(feature = "gpu")]
         let gpu_ok = {
             let dx = offset_x as f32 - (dst_w as i32 - out_w as i32) as f32 / 2.0;
             let dy = offset_y as f32 - (dst_h as i32 - out_h as i32) as f32 / 2.0;
@@ -606,6 +608,8 @@ impl SpriteSheet {
                 Err(_) => false,
             }
         };
+        #[cfg(not(feature = "gpu"))]
+        let gpu_ok = false;
 
         if !gpu_ok {
             // CPU fallback: scale full sheet and copy to dst

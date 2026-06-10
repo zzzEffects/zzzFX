@@ -739,6 +739,16 @@ pub unsafe fn action_load_common(suites: &SuiteCache) -> OfxResult<()> {
     suites
         .supports_multiple_clip_depths
         .store(v != 0, Ordering::Release);
+
+    // Eagerly warm up the shared wgpu device so the first render
+    // doesn't stall. If init fails, do NOT permanently blacklist —
+    // render-time will try again (the GPU may be available in a
+    // different thread context than kOfxActionLoad).
+    #[cfg(feature = "gpu")]
+    {
+        zzzfx::gpu::try_init_shared_device();
+    }
+
     Ok(())
 }
 

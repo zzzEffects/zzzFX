@@ -124,19 +124,19 @@ impl AmbientLight {
         }
 
         // Stage 3: Try GPU composite
-        let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::gpu::ambient_light::try_ambient_light_gpu_render(
-                &bufs.ambient_local, &bufs.ambient_global,
-                fg, bg, &bufs.edge_factor,
-                self, dst, width, height,
-            )
-        }));
-        match gpu_result {
-            Ok(Ok(true)) => {
+        #[cfg(feature = "gpu")]
+        {
+            let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::gpu::ambient_light::try_ambient_light_gpu_render(
+                    &bufs.ambient_local, &bufs.ambient_global,
+                    fg, bg, &bufs.edge_factor,
+                    self, dst, width, height,
+                )
+            }));
+            if let Ok(Ok(true)) = gpu_result {
                 BUFS.with(|cell| cell.replace(bufs));
                 return;
             }
-            _ => {} // GPU unavailable — fall through to CPU composite
         }
 
         // Stage 4: CPU composite fallback

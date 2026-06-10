@@ -103,9 +103,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let inv = 1.0 - fg_a;
 
     dst[i] = pack(
-        fg_r * fg_a + bg_r * inv,
-        fg_g * fg_a + bg_g * inv,
-        fg_b * fg_a + bg_b * inv,
+        fg_r * fg_a + bg_r * bg_a * inv,
+        fg_g * fg_a + bg_g * bg_a * inv,
+        fg_b * fg_a + bg_b * bg_a * inv,
         fg_a + bg_a * inv,
     );
 }

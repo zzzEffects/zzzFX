@@ -95,13 +95,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = y * u.width + x;
     let pixel = unpack_rgba8(src[idx]);
 
-    // Ordered dithering noise
-    if u.dithering == 1u {
-        let bayer = BAYER[(y % 4u) * 4u + (x % 4u)];
-        let noise = (bayer - 0.5) * u.dither_amount;
-        // Apply noise before quantization (WGSL doesn't allow mutating local vars easily — we'll inline)
-    }
-
     var r = pixel.r;
     var g = pixel.g;
     var b = pixel.b;

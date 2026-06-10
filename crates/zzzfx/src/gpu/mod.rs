@@ -4,18 +4,16 @@ pub mod ass_glyph;
 pub mod ass_subtitle;
 pub mod chroma_key;
 pub mod device;
-#[cfg(feature = "gpu")]
 pub mod halftone;
 pub mod midi_display;
-#[cfg(feature = "gpu")]
 pub mod multitone;
-#[cfg(feature = "gpu")]
 pub mod pixel_art;
 pub mod repeater;
 pub mod sprite_sheet;
 
 use std::borrow::Cow;
-use std::sync::{atomic::AtomicBool, atomic::Ordering, Mutex, OnceLock};
+use std::cell::RefCell;
+use std::sync::{atomic::AtomicBool, atomic::Ordering, OnceLock};
 
 use crate::settings::stroke::Stroke;
 
@@ -23,7 +21,7 @@ use crate::settings::stroke::Stroke;
 // Shared GPU device — from crate::gpu::device.
 // ---------------------------------------------------------------------------
 
-pub use crate::gpu::device::{get_or_init_shared_device, is_shared_device_ready, blocking_readback};
+pub use crate::gpu::device::{get_or_init_shared_device, try_init_shared_device, is_shared_device_ready, blocking_readback};
 use crate::gpu::device::SHARED_GPU_AVAILABLE;
 
 /// Load a WGSL shader by prepending the shared function definitions.
@@ -70,35 +68,160 @@ struct StrokeUniforms {
 }
 
 // ---------------------------------------------------------------------------
-// GPU state
+// Read-only pipelines — shared without Mutex
 // ---------------------------------------------------------------------------
 
 static GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 
-struct GpuContext {
-    device: &'static wgpu::Device,
-    queue: &'static wgpu::Queue,
+struct StrokeRes {
     pipeline_mask: wgpu::ComputePipeline,
     pipeline_jfa: wgpu::ComputePipeline,
     pipeline_compose: wgpu::ComputePipeline,
-    bufs: GpuBuffers,
+    mask_layout: wgpu::BindGroupLayout,
+    jfa_layout: wgpu::BindGroupLayout,
+    compose_layout: wgpu::BindGroupLayout,
 }
 
-struct GpuBuffers {
+static STROKE_RES: OnceLock<StrokeRes> = OnceLock::new();
+
+fn get_res(device: &wgpu::Device) -> Result<&'static StrokeRes, String> {
+    if let Some(r) = STROKE_RES.get() { return Ok(r); }
+    let shader_mask = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("mask"),
+        source: load_shader(include_str!("../shaders/mask.wgsl")),
+    });
+    let shader_jfa = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("jfa"),
+        source: load_shader(include_str!("../shaders/jfa.wgsl")),
+    });
+    let shader_compose = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("compose"),
+        source: load_shader(include_str!("../shaders/compose.wgsl")),
+    });
+    let p_mask = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("mask"), layout: None, module: &shader_mask, entry_point: Some("main"),
+        compilation_options: Default::default(), cache: None,
+    });
+    let p_jfa = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("jfa"), layout: None, module: &shader_jfa, entry_point: Some("main"),
+        compilation_options: Default::default(), cache: None,
+    });
+    let p_compose = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("compose"), layout: None, module: &shader_compose, entry_point: Some("main"),
+        compilation_options: Default::default(), cache: None,
+    });
+    let mask_layout = p_mask.get_bind_group_layout(0);
+    let jfa_layout = p_jfa.get_bind_group_layout(0);
+    let compose_layout = p_compose.get_bind_group_layout(0);
+    let r = StrokeRes {
+        pipeline_mask: p_mask, pipeline_jfa: p_jfa, pipeline_compose: p_compose,
+        mask_layout, jfa_layout, compose_layout,
+    };
+    STROKE_RES.set(r).map_err(|_| "stroke: init race".to_string())?;
+    STROKE_RES.get().ok_or_else(|| "stroke: init race".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Per-thread buffer pool — no Mutex, no contention
+// ---------------------------------------------------------------------------
+
+struct StrokeBufs {
     src_buf: wgpu::Buffer,
+    #[allow(dead_code)]
     seeds_a: wgpu::Buffer,
+    #[allow(dead_code)]
     seeds_b: wgpu::Buffer,
     dst_buf: wgpu::Buffer,
     staging_buf: wgpu::Buffer,
     uniform_buf: wgpu::Buffer,
     mask_uniform_buf: wgpu::Buffer,
+    bg_mask: wgpu::BindGroup,
+    bg_jfa_from_a: wgpu::BindGroup,
+    bg_jfa_from_b: wgpu::BindGroup,
+    bg_compose_a: wgpu::BindGroup,
+    bg_compose_b: wgpu::BindGroup,
     width: u32,
     height: u32,
-    // Cached bind groups — only recreated when buffers are recreated
-    bind_groups: Option<(wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup)>,
 }
 
-static GPU_CTX: OnceLock<Mutex<GpuContext>> = OnceLock::new();
+thread_local! {
+    static BUF_POOL: RefCell<Option<StrokeBufs>> = const { RefCell::new(None) };
+}
+
+fn take_or_create_bufs(device: &wgpu::Device, res: &StrokeRes, w: u32, h: u32) -> StrokeBufs {
+    BUF_POOL.with(|cell| {
+        let mut bufs = cell.borrow_mut().take();
+        if bufs.as_ref().map_or(true, |b| b.width != w || b.height != h) {
+            bufs = Some(create_bufs(device, res, w, h));
+        }
+        bufs.unwrap()
+    })
+}
+
+fn return_bufs(bufs: StrokeBufs) {
+    let _ = BUF_POOL.try_with(|cell| { *cell.borrow_mut() = Some(bufs); });
+}
+
+fn create_bufs(device: &wgpu::Device, res: &StrokeRes, width: u32, height: u32) -> StrokeBufs {
+    let n_pixels = (width * height) as u64;
+    let src_size = n_pixels * 4;
+    let seeds_size = n_pixels * 4;
+    let uniform_size = std::mem::size_of::<StrokeUniforms>() as u64;
+    let mask_uniform_size = std::mem::size_of::<MaskUniforms>() as u64;
+
+    let src_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("src"), size: src_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+    let seeds_a = device.create_buffer(&wgpu::BufferDescriptor { label: Some("seeds_a"), size: seeds_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+    let seeds_b = device.create_buffer(&wgpu::BufferDescriptor { label: Some("seeds_b"), size: seeds_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+    let dst_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("dst"), size: src_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("staging"), size: src_size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("uniforms"), size: uniform_size.max(std::mem::size_of::<JfaUniforms>() as u64), usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+    let mask_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("mask_uniforms"), size: mask_uniform_size, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+
+    let bg_mask = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("mask"), layout: &res.mask_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: src_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: mask_uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: seeds_a.as_entire_binding() },
+        ],
+    });
+    let bg_jfa_from_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("jfa_a_to_b"), layout: &res.jfa_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: seeds_a.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: seeds_b.as_entire_binding() },
+        ],
+    });
+    let bg_jfa_from_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("jfa_b_to_a"), layout: &res.jfa_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: seeds_b.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: seeds_a.as_entire_binding() },
+        ],
+    });
+    let bg_compose_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("compose_a"), layout: &res.compose_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: src_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: seeds_a.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: dst_buf.as_entire_binding() },
+        ],
+    });
+    let bg_compose_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("compose_b"), layout: &res.compose_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: src_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: seeds_b.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: dst_buf.as_entire_binding() },
+        ],
+    });
+
+    StrokeBufs { src_buf, seeds_a, seeds_b, dst_buf, staging_buf, uniform_buf, mask_uniform_buf, bg_mask, bg_jfa_from_a, bg_jfa_from_b, bg_compose_a, bg_compose_b, width, height }
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -121,302 +244,74 @@ pub fn try_gpu_render(
     let w = width as u32;
     let h = height as u32;
 
-    let ctx = match get_or_init_gpu() {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            GPU_AVAILABLE.store(false, Ordering::Relaxed);
-            return Ok(false);
-        }
-    };
-
-    let mut guard = match ctx.lock() {
-        Ok(g) => g,
-        Err(_) => return Ok(false),
-    };
-
-    if guard.bufs.width != w || guard.bufs.height != h {
-        guard.bufs = create_buffers(&guard.device, w, h);
-        // Invalidate cached bind groups since buffers changed
-        guard.bufs.bind_groups = None;
-    }
+    let (device, queue) = get_or_init_shared_device()?;
+    let res = get_res(device).map_err(|e| { GPU_AVAILABLE.store(false, Ordering::Relaxed); e })?;
+    let bufs = take_or_create_bufs(device, res, w, h);
 
     let uniforms = build_uniforms(settings, w, h);
     let buf_size = (w * h * 4) as u64;
     let src_data = &src[..buf_size as usize];
 
-    // Upload source data (immediate CPU-side)
-    guard
-        .queue
-        .write_buffer(&guard.bufs.src_buf, 0, src_data);
+    queue.write_buffer(&bufs.src_buf, 0, src_data);
 
-    let mask_uniforms = MaskUniforms {
-        width: w,
-        height: h,
-        alpha_threshold: uniforms.alpha_threshold,
-        _pad: 0,
-    };
-    guard
-        .queue
-        .write_buffer(&guard.bufs.mask_uniform_buf, 0, bytemuck::bytes_of(&mask_uniforms));
-
-    guard
-        .queue
-        .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
-
-    // Build or reuse bind groups (only recreate when buffers change dimensions)
-    if guard.bufs.bind_groups.is_none() {
-        guard.bufs.bind_groups = Some(create_bind_groups(&guard, &guard.device));
-    }
-    let (bg_mask, bg_jfa_from_a, bg_jfa_from_b, bg_compose_a, bg_compose_b) =
-        guard.bufs.bind_groups.as_ref().ok_or("bind groups not initialized")?;
+    let mask_uniforms = MaskUniforms { width: w, height: h, alpha_threshold: uniforms.alpha_threshold, _pad: 0 };
+    queue.write_buffer(&bufs.mask_uniform_buf, 0, bytemuck::bytes_of(&mask_uniforms));
+    queue.write_buffer(&bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
     let workgroup_count_x = (w + 15) / 16;
     let workgroup_count_y = (h + 15) / 16;
-
     let max_dim = w.max(h);
     let n = max_dim.next_power_of_two();
     let jfa_passes = n.ilog2();
 
     // Stage 1+2: Mask + edge detection + JFA init
     {
-        let mut encoder =
-            guard
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&guard.pipeline_mask);
-            pass.set_bind_group(0, bg_mask, &[]);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+            pass.set_pipeline(&res.pipeline_mask);
+            pass.set_bind_group(0, &bufs.bg_mask, &[]);
             pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
-        guard.queue.submit(std::iter::once(encoder.finish()));
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     // Stage 3: JFA passes — one submit per pass so uniforms are visible
     for pass_idx in 0..jfa_passes {
         let step = n >> (pass_idx + 1);
-        let jfa_uniforms = JfaUniforms {
-            width: w,
-            height: h,
-            step,
-            use_sharp_corners: if settings.use_sharp_corners { 1 } else { 0 },
-        };
+        let jfa_uniforms = JfaUniforms { width: w, height: h, step, use_sharp_corners: if settings.use_sharp_corners { 1 } else { 0 } };
+        queue.write_buffer(&bufs.uniform_buf, 0, bytemuck::bytes_of(&jfa_uniforms));
 
-        guard
-            .queue
-            .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&jfa_uniforms));
-
-        let bind_group = if pass_idx % 2 == 0 {
-            bg_jfa_from_a
-        } else {
-            bg_jfa_from_b
-        };
-
-        let mut encoder =
-            guard
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let bind_group = if pass_idx % 2 == 0 { &bufs.bg_jfa_from_a } else { &bufs.bg_jfa_from_b };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&guard.pipeline_jfa);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+            pass.set_pipeline(&res.pipeline_jfa);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
-        guard.queue.submit(std::iter::once(encoder.finish()));
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Stage 4+5: Stroke composition
+    // Stage 4+5: Stroke composition + copy to staging
     {
-        guard
-            .queue
-            .write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
-
-        let compose_bg = if jfa_passes % 2 == 0 {
-            bg_compose_a
-        } else {
-            bg_compose_b
-        };
-
-        let mut encoder =
-            guard
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        queue.write_buffer(&bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
+        let compose_bg = if jfa_passes % 2 == 0 { &bufs.bg_compose_a } else { &bufs.bg_compose_b };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&guard.pipeline_compose);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+            pass.set_pipeline(&res.pipeline_compose);
             pass.set_bind_group(0, compose_bg, &[]);
             pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
-        guard.queue.submit(std::iter::once(encoder.finish()));
+        encoder.copy_buffer_to_buffer(&bufs.dst_buf, 0, &bufs.staging_buf, 0, buf_size);
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Readback: copy dst_buf → staging, then map and copy to CPU
-    {
-        let mut encoder =
-            guard
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_buffer(&guard.bufs.dst_buf, 0, &guard.bufs.staging_buf, 0, buf_size);
-        guard.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    // Map staging buffer and copy to CPU dst
-    blocking_readback(guard.device, &guard.bufs.staging_buf, buf_size, &mut dst[..buf_size as usize])?;
-    Ok(true)
+    let result = blocking_readback(device, &bufs.staging_buf, buf_size, &mut dst[..buf_size as usize]);
+    return_bufs(bufs);
+    result.map(|()| true)
 }
-
-// ---------------------------------------------------------------------------
-// Internal: initialization
-// ---------------------------------------------------------------------------
-
-fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
-    static INIT_LOCK: Mutex<()> = Mutex::new(());
-
-    if let Some(ctx) = GPU_CTX.get() {
-        return Ok(ctx);
-    }
-
-    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(ctx) = GPU_CTX.get() {
-        return Ok(ctx);
-    }
-
-    let (device, queue) = get_or_init_shared_device()?;
-    let (pipeline_mask, pipeline_jfa, pipeline_compose) = create_pipelines(device)?;
-    let bufs = create_buffers(device, 256, 256);
-
-    let _ = GPU_CTX.set(Mutex::new(GpuContext {
-        device,
-        queue,
-        pipeline_mask,
-        pipeline_jfa,
-        pipeline_compose,
-        bufs,
-    }));
-    GPU_CTX
-        .get()
-        .ok_or_else(|| "GPU context init race".to_string())
-}
-
-fn create_pipelines(
-    device: &wgpu::Device,
-) -> Result<
-    (
-        wgpu::ComputePipeline,
-        wgpu::ComputePipeline,
-        wgpu::ComputePipeline,
-    ),
-    String,
-> {
-    let shader_mask = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("mask"),
-        source: load_shader(include_str!("../shaders/mask.wgsl")),
-    });
-    let shader_jfa = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("jfa"),
-        source: load_shader(include_str!("../shaders/jfa.wgsl")),
-    });
-    let shader_compose = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("compose"),
-        source: load_shader(include_str!("../shaders/compose.wgsl")),
-    });
-
-    let pipeline_mask = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("mask"),
-        layout: None, // auto-derived
-        module: &shader_mask,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let pipeline_jfa = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("jfa"),
-        layout: None,
-        module: &shader_jfa,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let pipeline_compose = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("compose"),
-        layout: None,
-        module: &shader_compose,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-
-    Ok((pipeline_mask, pipeline_jfa, pipeline_compose))
-}
-
-// ---------------------------------------------------------------------------
-// Internal: buffer management
-// ---------------------------------------------------------------------------
-
-fn create_buffers(device: &wgpu::Device, width: u32, height: u32) -> GpuBuffers {
-    let n_pixels = (width * height) as u64;
-    let src_size = n_pixels * 4;
-    let seeds_size = n_pixels * 4;
-    let uniform_size = std::mem::size_of::<StrokeUniforms>() as u64;
-
-    GpuBuffers {
-        src_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("src"),
-            size: src_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        seeds_a: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("seeds_a"),
-            size: seeds_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        seeds_b: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("seeds_b"),
-            size: seeds_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        dst_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("dst"),
-            size: src_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        staging_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("staging"),
-            size: src_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        uniform_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("uniforms"),
-            size: uniform_size.max(std::mem::size_of::<JfaUniforms>() as u64),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        mask_uniform_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mask_uniforms"),
-            size: std::mem::size_of::<MaskUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        width,
-        height,
-        bind_groups: None,
-    }
-}
-
 
 // ---------------------------------------------------------------------------
 // Internal: uniform construction
@@ -437,11 +332,7 @@ fn build_uniforms(settings: &Stroke, width: u32, height: u32) -> StrokeUniforms 
         };
 
     let (gsr, gsg, gsb) = if let Some(ref g) = settings.gradient {
-        (
-            g.start_color_r,
-            g.start_color_g,
-            g.start_color_b,
-        )
+        (g.start_color_r, g.start_color_g, g.start_color_b)
     } else {
         (0.0, 0.0, 0.0)
     };
@@ -453,11 +344,8 @@ fn build_uniforms(settings: &Stroke, width: u32, height: u32) -> StrokeUniforms 
     };
 
     StrokeUniforms {
-        width,
-        height,
-        max_dim,
-        stroke_width_px: w_px,
-        feather_px,
+        width, height, max_dim,
+        stroke_width_px: w_px, feather_px,
         stroke_a: settings.stroke_color_a.clamp(0.0, 1.0),
         stroke_r: settings.stroke_color_r.clamp(0.0, 1.0),
         stroke_g: settings.stroke_color_g.clamp(0.0, 1.0),
@@ -469,17 +357,10 @@ fn build_uniforms(settings: &Stroke, width: u32, height: u32) -> StrokeUniforms 
         fill_mode: settings.fill_mode as u32,
         blend_mode: settings.blend_mode as u32,
         use_sharp_corners: if settings.use_sharp_corners { 1 } else { 0 },
-        grad_start_x,
-        grad_start_y,
-        grad_end_x,
-        grad_end_y,
-        grad_start_r: gsr,
-        grad_start_g: gsg,
-        grad_start_b: gsb,
+        grad_start_x, grad_start_y, grad_end_x, grad_end_y,
+        grad_start_r: gsr, grad_start_g: gsg, grad_start_b: gsb,
         _pad0: 0,
-        grad_end_r: ger,
-        grad_end_g: geg,
-        grad_end_b: geb,
+        grad_end_r: ger, grad_end_g: geg, grad_end_b: geb,
         _pad1: 0,
     }
 }
@@ -508,146 +389,4 @@ struct JfaUniforms {
     height: u32,
     step: u32,
     use_sharp_corners: u32,
-}
-
-// ---------------------------------------------------------------------------
-// Internal: bind group creation
-// ---------------------------------------------------------------------------
-
-/// Creates all bind groups. Returns:
-/// - mask: reads src, uniforms, writes seeds_a
-/// - jfa_from_a: reads seeds_a, uniforms, writes seeds_b
-/// - jfa_from_b: reads seeds_b, uniforms, writes seeds_a
-/// - compose_a: reads src, uniforms, seeds_a, writes dst (JFA ended on seeds_a as output)
-/// - compose_b: reads src, uniforms, seeds_b, writes dst (JFA ended on seeds_b as output)
-fn create_bind_groups(
-    ctx: &GpuContext,
-    device: &wgpu::Device,
-) -> (
-    wgpu::BindGroup,
-    wgpu::BindGroup,
-    wgpu::BindGroup,
-    wgpu::BindGroup,
-    wgpu::BindGroup,
-) {
-    // Get bind group layouts from pipelines (index 0 for all since we use single bind group)
-    let mask_layout = &ctx.pipeline_mask.get_bind_group_layout(0);
-    let jfa_layout = &ctx.pipeline_jfa.get_bind_group_layout(0);
-    let compose_layout = &ctx.pipeline_compose.get_bind_group_layout(0);
-
-    // Mask bind group: src (0), mask_uniforms (1), seeds_a (2)
-    let bg_mask = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("mask"),
-        layout: mask_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: ctx.bufs.src_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: ctx.bufs.mask_uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ctx.bufs.seeds_a.as_entire_binding(),
-            },
-        ],
-    });
-
-    // JFA from A→B: reads seeds_a (0), uniforms (1), writes seeds_b (2)
-    let bg_jfa_from_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("jfa_a_to_b"),
-        layout: jfa_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: ctx.bufs.seeds_a.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: ctx.bufs.uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ctx.bufs.seeds_b.as_entire_binding(),
-            },
-        ],
-    });
-
-    // JFA from B→A: reads seeds_b (0), uniforms (1), writes seeds_a (2)
-    let bg_jfa_from_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("jfa_b_to_a"),
-        layout: jfa_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: ctx.bufs.seeds_b.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: ctx.bufs.uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ctx.bufs.seeds_a.as_entire_binding(),
-            },
-        ],
-    });
-
-    // Compose with seeds_a as JFA output
-    let bg_compose_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("compose_a"),
-        layout: compose_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: ctx.bufs.src_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: ctx.bufs.uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ctx.bufs.seeds_a.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: ctx.bufs.dst_buf.as_entire_binding(),
-            },
-        ],
-    });
-
-    // Compose with seeds_b as JFA output
-    let bg_compose_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("compose_b"),
-        layout: compose_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: ctx.bufs.src_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: ctx.bufs.uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ctx.bufs.seeds_b.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: ctx.bufs.dst_buf.as_entire_binding(),
-            },
-        ],
-    });
-
-    (
-        bg_mask,
-        bg_jfa_from_a,
-        bg_jfa_from_b,
-        bg_compose_a,
-        bg_compose_b,
-    )
 }

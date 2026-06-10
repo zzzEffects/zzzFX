@@ -77,6 +77,20 @@ pub fn is_shared_device_ready() -> bool {
         && SHARED_QUEUE.get().is_some()
 }
 
+/// Attempt to eagerly initialize the shared GPU device without permanently
+/// blacklisting on failure. Use this during plugin load to warm up the device
+/// so the first render doesn't stall. If init fails, the blacklist flag is
+/// reset so render-time can try again (the GPU might be available in a
+/// different thread context).
+pub fn try_init_shared_device() {
+    if SHARED_DEVICE.get().is_some() {
+        return;
+    }
+    if get_or_init_shared_device().is_err() {
+        SHARED_GPU_AVAILABLE.store(true, Ordering::Relaxed);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared GPU readback helper
 // ---------------------------------------------------------------------------
@@ -89,27 +103,43 @@ pub fn blocking_readback(
     image_size: u64,
     dst: &mut [u8],
 ) -> Result<(), String> {
+    use std::sync::mpsc::TryRecvError;
+    use std::time::Instant;
+
     let staging_slice = staging_buf.slice(..image_size);
     let (tx, rx) = std::sync::mpsc::channel();
     staging_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    let _ = device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(std::time::Duration::from_millis(100)),
-    });
-    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-        Ok(Ok(())) => {
-            let mapped = staging_slice.get_mapped_range();
-            let len = (image_size as usize).min(dst.len());
-            dst[..len].copy_from_slice(&mapped[..len]);
-            drop(mapped);
-            staging_buf.unmap();
-            Ok(())
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::ZERO),
+        });
+        match rx.try_recv() {
+            Ok(Ok(())) => {
+                let mapped = staging_slice.get_mapped_range();
+                let len = (image_size as usize).min(dst.len());
+                dst[..len].copy_from_slice(&mapped[..len]);
+                drop(mapped);
+                staging_buf.unmap();
+                return Ok(());
+            }
+            Ok(Err(_)) => {
+                staging_buf.unmap();
+                return Err("staging map failed".to_string());
+            }
+            Err(TryRecvError::Disconnected) => {
+                staging_buf.unmap();
+                return Err("staging map channel disconnected".to_string());
+            }
+            Err(TryRecvError::Empty) => {}
         }
-        _ => {
+        if Instant::now() >= deadline {
             staging_buf.unmap();
-            Err("staging map failed".to_string())
+            return Err("staging map timed out".to_string());
         }
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }

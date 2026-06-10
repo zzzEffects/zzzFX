@@ -1,20 +1,5 @@
-use std::sync::{atomic::AtomicBool, atomic::Ordering, Mutex, OnceLock};
-
-use super::get_or_init_shared_device;
-
-/// Fast non-cryptographic hash for sheet change detection.
-fn hash_sheet(data: &[u8]) -> u64 {
-    if data.len() < 128 {
-        let mut h: u64 = data.len() as u64;
-        for &b in data { h = h.wrapping_mul(0x100000001b3).wrapping_add(b as u64); }
-        return h;
-    }
-    let len = data.len();
-    let mut h: u64 = len as u64;
-    for &b in &data[..64] { h = h.wrapping_mul(0x100000001b3).wrapping_add(b as u64); }
-    for &b in &data[len - 64..] { h = h.wrapping_mul(0x100000001b3).wrapping_add(b as u64); }
-    h
-}
+use std::cell::RefCell;
+use std::sync::{atomic::AtomicBool, atomic::Ordering, OnceLock};
 
 // ---------------------------------------------------------------------------
 // GPU-side struct matching sprite_sheet.wgsl
@@ -42,31 +27,113 @@ struct SpriteSheetUniforms {
 }
 
 // ---------------------------------------------------------------------------
-// GPU state
+// Read-only pipeline — shared without Mutex
 // ---------------------------------------------------------------------------
 
 static GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 
-struct GpuContext {
-    device: &'static wgpu::Device,
-    queue: &'static wgpu::Queue,
+struct Res {
     pipeline: wgpu::ComputePipeline,
-    bufs: GpuBuffers,
-    bind_group: Option<wgpu::BindGroup>,
-    cached_sheet_hash: u64,
+    bg_layout: wgpu::BindGroupLayout,
 }
 
-struct GpuBuffers {
+static RES: OnceLock<Res> = OnceLock::new();
+
+fn get_res(device: &wgpu::Device) -> Result<&'static Res, String> {
+    if let Some(r) = RES.get() {
+        return Ok(r);
+    }
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sprite_sheet"),
+        source: super::load_shader(include_str!("../shaders/sprite_sheet.wgsl")),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("sprite_sheet"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bg_layout = pipeline.get_bind_group_layout(0);
+    RES.set(Res { pipeline, bg_layout }).map_err(|_| "sprite_sheet: init race".to_string())?;
+    RES.get().ok_or_else(|| "sprite_sheet: init race".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Per-thread buffer pool — no Mutex, no contention
+// ---------------------------------------------------------------------------
+
+struct Bufs {
     sheet_buf: wgpu::Buffer,
     uniform_buf: wgpu::Buffer,
     dst_buf: wgpu::Buffer,
-    staging_bufs: [wgpu::Buffer; 2],
+    staging_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     output_w: u32,
     output_h: u32,
     sheet_size: u64,
 }
 
-static GPU_CTX: OnceLock<Mutex<GpuContext>> = OnceLock::new();
+thread_local! {
+    static BUF_POOL: RefCell<Option<Bufs>> = const { RefCell::new(None) };
+}
+
+fn take_or_create_bufs(device: &wgpu::Device, res: &Res, output_w: u32, output_h: u32, sheet_size: u64) -> Bufs {
+    BUF_POOL.with(|cell| {
+        let mut bufs = cell.borrow_mut().take();
+        if bufs.as_ref().map_or(true, |b| b.output_w != output_w || b.output_h != output_h || b.sheet_size < sheet_size) {
+            bufs = Some(create_bufs(device, res, output_w, output_h, sheet_size));
+        }
+        bufs.unwrap()
+    })
+}
+
+fn return_bufs(bufs: Bufs) {
+    let _ = BUF_POOL.try_with(|cell| {
+        *cell.borrow_mut() = Some(bufs);
+    });
+}
+
+fn create_bufs(device: &wgpu::Device, res: &Res, output_w: u32, output_h: u32, sheet_size: u64) -> Bufs {
+    let image_size = output_w as u64 * output_h as u64 * 4;
+
+    let sheet_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sheet"),
+        size: sheet_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: std::mem::size_of::<SpriteSheetUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let dst_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("dst"),
+        size: image_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("staging"),
+        size: image_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sprite_sheet"),
+        layout: &res.bg_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: sheet_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: dst_buf.as_entire_binding() },
+        ],
+    });
+
+    Bufs { sheet_buf, uniform_buf, dst_buf, staging_buf, bind_group, output_w, output_h, sheet_size }
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -126,41 +193,16 @@ fn gpu_render_impl(
 
     let (cx, cy, cw, ch) = crop_rect;
 
-    let ctx = match get_or_init_gpu() {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            GPU_AVAILABLE.store(false, Ordering::Relaxed);
-            return Ok(false);
-        }
-    };
-
-    let mut guard = match ctx.lock() {
-        Ok(g) => g,
-        Err(_) => return Ok(false),
-    };
-
-    let sheet_byte_size = sheet_w as u64 * sheet_h as u64 * 4 ;
+    let sheet_byte_size = sheet_w as u64 * sheet_h as u64 * 4;
 
     // Sanity check: reject zero or absurdly large dimensions
     if dst_w == 0 || dst_h == 0 || sheet_w == 0 || sheet_h == 0 || dst_w > 16384 || dst_h > 16384 {
         return Ok(false);
     }
 
-    // Recreate buffers if output dimensions or sheet size changed
-    if guard.bufs.output_w != dst_w
-        || guard.bufs.output_h != dst_h
-        || guard.bufs.sheet_size < sheet_byte_size
-    {
-        guard.bufs = create_buffers(guard.device, dst_w, dst_h, sheet_byte_size);
-        guard.bind_group = None; // Invalidate cached bind group
-    }
-
-    // Cache sheet upload: skip if unchanged
-    let sheet_hash = hash_sheet(sheet_rgba);
-    if guard.cached_sheet_hash != sheet_hash {
-        guard.queue.write_buffer(&guard.bufs.sheet_buf, 0, sheet_rgba);
-        guard.cached_sheet_hash = sheet_hash;
-    }
+    let (device, queue) = super::get_or_init_shared_device()?;
+    let res = get_res(device).map_err(|e| { GPU_AVAILABLE.store(false, Ordering::Relaxed); e })?;
+    let bufs = take_or_create_bufs(device, res, dst_w, dst_h, sheet_byte_size);
 
     let (rot_enabled, cos_r, sin_r) = if rotation_deg != 0.0 {
         let rad = rotation_deg as f64 * std::f64::consts::PI / 180.0;
@@ -178,157 +220,29 @@ fn gpu_render_impl(
         sin_rotation: sin_r,
         _pad: [0],
     };
-    guard.queue.write_buffer(&guard.bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
-    // Bind group (cached across frames)
-    if guard.bind_group.is_none() {
-        let layout = guard.pipeline.get_bind_group_layout(0);
-        guard.bind_group = Some(guard.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sprite_sheet"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: guard.bufs.sheet_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: guard.bufs.uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: guard.bufs.dst_buf.as_entire_binding() },
-            ],
-        }));
-    }
-    let bind_group = guard.bind_group.as_ref().ok_or("bind group not initialized")?;
+    // Always upload sheet and uniforms
+    queue.write_buffer(&bufs.sheet_buf, 0, sheet_rgba);
+    queue.write_buffer(&bufs.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
     let image_size = dst_w as u64 * dst_h as u64 * 4;
 
     // Single encoder: compute dispatch + copy to staging
     {
-        let mut encoder = guard.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None, timestamp_writes: None,
             });
-            pass.set_pipeline(&guard.pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_pipeline(&res.pipeline);
+            pass.set_bind_group(0, &bufs.bind_group, &[]);
             pass.dispatch_workgroups((dst_w + 15) / 16, (dst_h + 15) / 16, 1);
         }
-        encoder.copy_buffer_to_buffer(&guard.bufs.dst_buf, 0, &guard.bufs.staging_bufs[0], 0, image_size);
-        guard.queue.submit(std::iter::once(encoder.finish()));
+        encoder.copy_buffer_to_buffer(&bufs.dst_buf, 0, &bufs.staging_buf, 0, image_size);
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
-    // Blocking readback
-    let staging = &guard.bufs.staging_bufs[0];
-    let staging_slice = staging.slice(..image_size);
-    let (tx, rx) = std::sync::mpsc::channel();
-    staging_slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    let _ = guard.device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(std::time::Duration::from_millis(100)),
-    });
-    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-        Ok(Ok(())) => {
-            let mapped = staging_slice.get_mapped_range();
-            dst[..image_size as usize].copy_from_slice(&mapped);
-            drop(mapped);
-            staging.unmap();
-            Ok(true)
-        }
-        _ => {
-            staging.unmap();
-            Err("staging map failed".to_string())
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Internal: initialization
-// ---------------------------------------------------------------------------
-
-fn get_or_init_gpu() -> Result<&'static Mutex<GpuContext>, String> {
-    if let Some(ctx) = GPU_CTX.get() {
-        return Ok(ctx);
-    }
-
-    static INIT_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(ctx) = GPU_CTX.get() {
-        return Ok(ctx);
-    }
-
-    let (device, queue) = get_or_init_shared_device()?;
-    let pipeline = create_pipeline(device)?;
-    let bufs = create_buffers(device, 256, 256, 256 * 256 * 4);
-
-    let _ = GPU_CTX.set(Mutex::new(GpuContext {
-        device,
-        queue,
-        pipeline,
-        bufs,
-        bind_group: None,
-        cached_sheet_hash: 0,
-    }));
-    GPU_CTX
-        .get()
-        .ok_or_else(|| "sprite_sheet: GPU ctx init race".to_string())
-}
-
-fn create_pipeline(device: &wgpu::Device) -> Result<wgpu::ComputePipeline, String> {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sprite_sheet"),
-        source: super::load_shader(include_str!("../shaders/sprite_sheet.wgsl")),
-    });
-
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("sprite_sheet"),
-        layout: None,
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-
-    Ok(pipeline)
-}
-
-// ---------------------------------------------------------------------------
-// Internal: buffer management
-// ---------------------------------------------------------------------------
-
-fn create_buffers(
-    device: &wgpu::Device,
-    output_w: u32,
-    output_h: u32,
-    sheet_size: u64,
-) -> GpuBuffers {
-    let image_size = output_w as u64 * output_h as u64 * 4;
-    let uniform_size = std::mem::size_of::<SpriteSheetUniforms>() as u64;
-
-    let make_staging = |label: &str| device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: image_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    GpuBuffers {
-        sheet_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sheet"),
-            size: sheet_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        uniform_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("uniforms"),
-            size: uniform_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        dst_buf: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("dst"),
-            size: image_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        staging_bufs: [make_staging("staging0"), make_staging("staging1")],
-        output_w,
-        output_h,
-        sheet_size,
-    }
+    let result = super::blocking_readback(device, &bufs.staging_buf, image_size, &mut dst[..image_size as usize]);
+    return_bufs(bufs);
+    result.map(|()| true)
 }

@@ -66,10 +66,14 @@ impl Stroke {
 
         // GPU first
         #[cfg(feature = "gpu")]
-        match crate::gpu::try_gpu_render(self, src, dst, width, height) {
-            Ok(true) => return,
-            Ok(false) => {}
-            Err(_) => {}
+        {
+            let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::gpu::try_gpu_render(self, src, dst, width, height)
+            }));
+            match gpu_result {
+                Ok(Ok(true)) => return,
+                _ => {}
+            }
         }
 
         // CPU fallback with rayon

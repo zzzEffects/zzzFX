@@ -1,13 +1,7 @@
-use std::sync::{atomic::AtomicBool, atomic::Ordering, Mutex, OnceLock};
+use std::cell::RefCell;
+use std::sync::{atomic::AtomicBool, atomic::Ordering, OnceLock};
 
 use crate::settings::cast_shadow::CastShadow;
-
-use super::get_or_init_shared_device;
-
-thread_local! {
-    static PACKED_BUF: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
-    static ZERO_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::new());
-}
 
 // ---------------------------------------------------------------------------
 // Uniforms (must match WGSL struct layout exactly)
@@ -49,78 +43,26 @@ struct Uniforms {
 const UNIFORM_SIZE: u64 = std::mem::size_of::<Uniforms>() as u64;
 
 // ---------------------------------------------------------------------------
-// GPU state
+// Read-only pipelines — shared without Mutex
 // ---------------------------------------------------------------------------
 
 static GPU_AVAILABLE: AtomicBool = AtomicBool::new(true);
 
-struct Bufs {
-    w: u32,
-    h: u32,
-    src: wgpu::Buffer,
-    alpha_a: wgpu::Buffer,
-    alpha_b: wgpu::Buffer,
-    dst: wgpu::Buffer,
-    staging: wgpu::Buffer,
-    uniform: wgpu::Buffer,
-}
-
-struct Ctx {
-    device: &'static wgpu::Device,
-    queue: &'static wgpu::Queue,
+struct Res {
     pipeline_project: wgpu::ComputePipeline,
     pipeline_blur: wgpu::ComputePipeline,
     pipeline_composite: wgpu::ComputePipeline,
-    bufs: Bufs,
-    bg_project: Option<wgpu::BindGroup>,
-    bg_blur_h: Option<wgpu::BindGroup>,
-    bg_blur_v: Option<wgpu::BindGroup>,
-    bg_composite: Option<wgpu::BindGroup>,
+    project_layout: wgpu::BindGroupLayout,
+    blur_layout: wgpu::BindGroupLayout,
+    composite_layout: wgpu::BindGroupLayout,
 }
 
-static CTX: OnceLock<Mutex<Ctx>> = OnceLock::new();
+static RES: OnceLock<Res> = OnceLock::new();
 
-// ---------------------------------------------------------------------------
-// Initialization
-// ---------------------------------------------------------------------------
-
-fn get_or_init() -> Result<std::sync::MutexGuard<'static, Ctx>, String> {
-    if let Some(mutex) = CTX.get() {
-        return mutex
-            .lock()
-            .map_err(|_| "ctx lock poisoned".to_string());
+fn get_res(device: &wgpu::Device) -> Result<&'static Res, String> {
+    if let Some(r) = RES.get() {
+        return Ok(r);
     }
-
-    static INIT_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = INIT_LOCK
-        .lock()
-        .map_err(|_| "init lock poisoned".to_string())?;
-
-    if let Some(mutex) = CTX.get() {
-        return mutex
-            .lock()
-            .map_err(|_| "ctx lock poisoned".to_string());
-    }
-
-    if GPU_AVAILABLE.load(Ordering::Relaxed) {
-        match create_ctx() {
-            Ok(ctx) => {
-                let _ = CTX.set(Mutex::new(ctx));
-            }
-            Err(_) => {
-                GPU_AVAILABLE.store(false, Ordering::Relaxed);
-            }
-        }
-    }
-
-    CTX.get()
-        .ok_or_else(|| "GPU initialization failed".to_string())?
-        .lock()
-        .map_err(|_| "ctx lock poisoned".to_string())
-}
-
-fn create_ctx() -> Result<Ctx, String> {
-    let (device, queue) = get_or_init_shared_device()?;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("cast_shadow"),
         source: super::load_shader(include_str!("../shaders/cast_shadow.wgsl")),
@@ -149,156 +91,138 @@ fn create_ctx() -> Result<Ctx, String> {
         compilation_options: Default::default(),
         cache: None,
     });
-    let bufs = create_bufs(device, 256, 256);
+    let project_layout = pipeline_project.get_bind_group_layout(0);
+    let blur_layout = pipeline_blur.get_bind_group_layout(0);
+    let composite_layout = pipeline_composite.get_bind_group_layout(0);
 
-    let layout_project = pipeline_project.get_bind_group_layout(0);
-    let layout_blur = pipeline_blur.get_bind_group_layout(0);
-    let layout_composite = pipeline_composite.get_bind_group_layout(0);
+    RES.set(Res {
+        pipeline_project, pipeline_blur, pipeline_composite,
+        project_layout, blur_layout, composite_layout,
+    }).map_err(|_| "cast_shadow: init race".to_string())?;
+    RES.get().ok_or_else(|| "cast_shadow: init race".to_string())
+}
 
-    let bg_project = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cs_project_bg"),
-        layout: &layout_project,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: bufs.src.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bufs.alpha_a.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: bufs.uniform.as_entire_binding(),
-            },
-        ],
-    }));
+// ---------------------------------------------------------------------------
+// Per-thread buffer pool — no Mutex, no contention
+// ---------------------------------------------------------------------------
 
-    // Blur H: alpha_a → alpha_b
-    let bg_blur_h = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cs_blur_h_bg"),
-        layout: &layout_blur,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bufs.alpha_a.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: bufs.alpha_b.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: bufs.uniform.as_entire_binding(),
-            },
-        ],
-    }));
+#[allow(dead_code)]
+struct Bufs {
+    w: u32,
+    h: u32,
+    src: wgpu::Buffer,
+    alpha_a: wgpu::Buffer,
+    alpha_b: wgpu::Buffer,
+    uniform: wgpu::Buffer,
+    dst: wgpu::Buffer,
+    staging: wgpu::Buffer,
+    bg_project: wgpu::BindGroup,
+    bg_blur_h: wgpu::BindGroup,
+    bg_blur_v: wgpu::BindGroup,
+    bg_composite: wgpu::BindGroup,
+}
 
-    // Blur V: alpha_b → alpha_a
-    let bg_blur_v = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cs_blur_v_bg"),
-        layout: &layout_blur,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bufs.alpha_b.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: bufs.alpha_a.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: bufs.uniform.as_entire_binding(),
-            },
-        ],
-    }));
+thread_local! {
+    static BUF_POOL: RefCell<Option<Bufs>> = const { RefCell::new(None) };
+}
 
-    let bg_composite = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cs_composite_bg"),
-        layout: &layout_composite,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: bufs.src.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bufs.alpha_a.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: bufs.uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: bufs.dst.as_entire_binding(),
-            },
-        ],
-    }));
-
-    Ok(Ctx {
-        device,
-        queue,
-        pipeline_project,
-        pipeline_blur,
-        pipeline_composite,
-        bufs,
-        bg_project,
-        bg_blur_h,
-        bg_blur_v,
-        bg_composite,
+fn take_or_create_bufs(device: &wgpu::Device, res: &Res, w: u32, h: u32) -> Bufs {
+    BUF_POOL.with(|cell| {
+        let mut bufs = cell.borrow_mut().take();
+        if bufs.as_ref().map_or(true, |b| b.w != w || b.h != h) {
+            bufs = Some(create_bufs(device, res, w, h));
+        }
+        bufs.unwrap()
     })
 }
 
-fn create_bufs(device: &wgpu::Device, w: u32, h: u32) -> Bufs {
+fn return_bufs(bufs: Bufs) {
+    let _ = BUF_POOL.try_with(|cell| {
+        *cell.borrow_mut() = Some(bufs);
+    });
+}
+
+fn create_bufs(device: &wgpu::Device, res: &Res, w: u32, h: u32) -> Bufs {
     let count = (w * h) as u64;
     let u32_size = count * 4;
     let f32_size = count * 4;
-    Bufs {
-        w,
-        h,
-        src: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cs_src"),
-            size: u32_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        alpha_a: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cs_alpha_a"),
-            size: f32_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        alpha_b: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cs_alpha_b"),
-            size: f32_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-        dst: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cs_dst"),
-            size: u32_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }),
-        staging: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cs_staging"),
-            size: u32_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        }),
-        uniform: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cs_uniform"),
-            size: UNIFORM_SIZE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-    }
+
+    let src = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cs_src"),
+        size: u32_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let alpha_a = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cs_alpha_a"),
+        size: f32_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let alpha_b = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cs_alpha_b"),
+        size: f32_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cs_uniform"),
+        size: UNIFORM_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let dst = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cs_dst"),
+        size: u32_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cs_staging"),
+        size: u32_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let bg_project = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cs_project_bg"),
+        layout: &res.project_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: src.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: alpha_a.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+        ],
+    });
+    let bg_blur_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cs_blur_h_bg"),
+        layout: &res.blur_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 1, resource: alpha_a.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: alpha_b.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+        ],
+    });
+    let bg_blur_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cs_blur_v_bg"),
+        layout: &res.blur_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 1, resource: alpha_b.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: alpha_a.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+        ],
+    });
+    let bg_composite = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cs_composite_bg"),
+        layout: &res.composite_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: src.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: alpha_a.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 4, resource: dst.as_entire_binding() },
+        ],
+    });
+
+    Bufs { w, h, src, alpha_a, alpha_b, uniform, dst, staging, bg_project, bg_blur_h, bg_blur_v, bg_composite }
 }
 
 // ---------------------------------------------------------------------------
@@ -312,289 +236,193 @@ pub fn try_cast_shadow_gpu_render(
     width: usize,
     height: usize,
 ) -> Result<bool, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        try_cast_shadow_inner(shadow, src, dst, width, height)
+    }))
+    .unwrap_or(Err("cast_shadow GPU render panicked".into()))
+}
+
+fn try_cast_shadow_inner(
+    shadow: &CastShadow,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    height: usize,
+) -> Result<bool, String> {
     if !GPU_AVAILABLE.load(Ordering::Relaxed) {
         return Ok(false);
     }
     if shadow.is_identity() {
-        return Ok(false); // let CPU handle trivial cases
+        return Ok(false);
     }
 
     let w = width as u32;
     let h = height as u32;
 
-    let result: Result<bool, String> = (|| {
-        let mut ctx = get_or_init()?;
+    let (device, queue) = super::get_or_init_shared_device()?;
+    let res = get_res(device).map_err(|e| { GPU_AVAILABLE.store(false, Ordering::Relaxed); e })?;
+    let bufs = take_or_create_bufs(device, res, w, h);
 
-        // Recreate buffers if dimensions changed
-        if ctx.bufs.w != w || ctx.bufs.h != h {
-            ctx.bufs = create_bufs(ctx.device, w, h);
-            // Invalidate cached bind groups
-            ctx.bg_project = None;
-            ctx.bg_blur_h = None;
-            ctx.bg_blur_v = None;
-            ctx.bg_composite = None;
-        }
-
-        let dev = ctx.device;
-        let queue = ctx.queue;
-
-        // Upload source (RGBA8 → packed u32), reuse thread-local buffer
-        PACKED_BUF.with(|buf_cell| {
-            let buf = &mut *buf_cell.borrow_mut();
-            buf.clear();
-            buf.reserve(src.len() / 4);
-            for p in src.chunks_exact(4) {
-                buf.push((p[0] as u32) | ((p[1] as u32) << 8) | ((p[2] as u32) << 16) | ((p[3] as u32) << 24));
-            }
-            queue.write_buffer(&ctx.bufs.src, 0, bytemuck::cast_slice(buf));
-        });
-
-        // Compute all axes based on pivot mode
-        let axes = compute_axes(shadow, src, width, height);
-
-        let blur_radius = (shadow.softness.clamp(0.0, 1.0)
-            * f32::min(width as f32, height as f32)
-            * 0.08)
-            .ceil() as u32;
-
-        let base_uniforms = Uniforms {
-            width: w,
-            height: h,
-            contact_x: 0.0,
-            contact_y: 0.0,
-            normal_x: 0.0,
-            normal_y: 0.0,
-            axis_x: 0.0,
-            axis_y: 0.0,
-            scale: shadow.scale.clamp(0.1, 3.0),
-            shear_angle: 0.0,
-            shear_amount: 0.5,
-            inv_bbox_perp: 0.0,
-            total_dx: (shadow.offset_x.clamp(0.0, 1.0) - 0.5) * width as f32,
-            total_dy: (shadow.offset_y.clamp(0.0, 1.0) - 0.5) * height as f32,
-            pivot_mode: shadow.pivot_mode as u32,
-            fade: shadow.fade.clamp(0.0, 1.0),
-            shadow_r: shadow.shadow_color_r.clamp(0.0, 1.0),
-            shadow_g: shadow.shadow_color_g.clamp(0.0, 1.0),
-            shadow_b: shadow.shadow_color_b.clamp(0.0, 1.0),
-            shadow_a: shadow.shadow_color_a.clamp(0.0, 1.0),
-            
-            source_opacity: shadow.source_opacity.clamp(0.0, 1.0),
-            blur_radius,
-            horizontal: 0,
-            alpha_threshold: shadow.alpha_threshold.clamp(0.0, 1.0),
-            bbox_min_x: 0.0,
-            bbox_max_x: 0.0,
-            bbox_min_y: 0.0,
-            bbox_max_y: 0.0,
-        };
-
-        // Create bind groups if needed (lazy, after possible buffer recreation)
-        let layout_project = ctx.pipeline_project.get_bind_group_layout(0);
-        let layout_blur = ctx.pipeline_blur.get_bind_group_layout(0);
-        let layout_composite = ctx.pipeline_composite.get_bind_group_layout(0);
-
-        if ctx.bg_project.is_none() {
-            ctx.bg_project = Some(dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("cs_project_bg"),
-                layout: &layout_project,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: ctx.bufs.src.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: ctx.bufs.alpha_a.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: ctx.bufs.uniform.as_entire_binding() },
-                ],
-            }));
-        }
-        if ctx.bg_blur_h.is_none() {
-            ctx.bg_blur_h = Some(dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("cs_blur_h_bg"),
-                layout: &layout_blur,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 1, resource: ctx.bufs.alpha_a.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: ctx.bufs.alpha_b.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: ctx.bufs.uniform.as_entire_binding() },
-                ],
-            }));
-        }
-        if ctx.bg_blur_v.is_none() {
-            ctx.bg_blur_v = Some(dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("cs_blur_v_bg"),
-                layout: &layout_blur,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 1, resource: ctx.bufs.alpha_b.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: ctx.bufs.alpha_a.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: ctx.bufs.uniform.as_entire_binding() },
-                ],
-            }));
-        }
-        if ctx.bg_composite.is_none() {
-            ctx.bg_composite = Some(dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("cs_composite_bg"),
-                layout: &layout_composite,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: ctx.bufs.src.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: ctx.bufs.alpha_a.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: ctx.bufs.uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: ctx.bufs.dst.as_entire_binding() },
-                ],
-            }));
-        }
-
-        let wx = (w + 15) / 16;
-        let wy = (h + 15) / 16;
-
-        // Zero alpha_a before accumulation (for multi-axis modes), reuse thread-local
-        let alpha_size = (w * h * 4) as usize;
-        {
-            ZERO_BUF.with(|buf_cell| {
-                let buf = &mut *buf_cell.borrow_mut();
-                if buf.len() < alpha_size {
-                    buf.resize(alpha_size, 0);
-                } else {
-                    buf[..alpha_size].fill(0);
-                }
-                queue.write_buffer(&ctx.bufs.alpha_a, 0, &buf[..alpha_size]);
-            });
-        }
-
-        // Pass 1: project (once per axis, accumulating via max)
-        for axis in &axes {
-            let mut axis_uniforms = base_uniforms;
-            axis_uniforms.contact_x = axis.contact_x;
-            axis_uniforms.contact_y = axis.contact_y;
-            axis_uniforms.normal_x = axis.nx;
-            axis_uniforms.normal_y = axis.ny;
-            axis_uniforms.axis_x = axis.ax;
-            axis_uniforms.axis_y = axis.ay;
-            axis_uniforms.shear_angle = shadow.shear_angle.clamp(0.0, 360.0).to_radians();
-            axis_uniforms.shear_amount = shadow.shear_amount.clamp(0.0, 1.0);
-            axis_uniforms.inv_bbox_perp = if axis.bbox_perp > 0.0 { 1.0 / axis.bbox_perp } else { 0.0 };
-            axis_uniforms.bbox_min_x = axis.bbox_min_x;
-            axis_uniforms.bbox_max_x = axis.bbox_max_x;
-            axis_uniforms.bbox_min_y = axis.bbox_min_y;
-            axis_uniforms.bbox_max_y = axis.bbox_max_y;
-            queue.write_buffer(&ctx.bufs.uniform, 0, bytemuck::bytes_of(&axis_uniforms));
-
-            let mut encoder =
-                dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_project") });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("cs_project"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&ctx.pipeline_project);
-                pass.set_bind_group(0, ctx.bg_project.as_ref().ok_or("bind group not initialized")?, &[]);
-                pass.dispatch_workgroups(wx, wy, 1);
-            }
-            queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        // Restore full uniforms for blur/composite (using last axis's params)
-        queue.write_buffer(&ctx.bufs.uniform, 0, bytemuck::bytes_of(&base_uniforms));
-
-        // Pass 2: blur (separable H + V)
-        if blur_radius > 0 {
-            // Update uniform with horizontal flag
-            let mut blur_uniforms_h = base_uniforms;
-            blur_uniforms_h.horizontal = 1;
-            queue.write_buffer(&ctx.bufs.uniform, 0, bytemuck::bytes_of(&blur_uniforms_h));
-
-            let mut encoder =
-                dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_blur_h") });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("cs_blur_h"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&ctx.pipeline_blur);
-                pass.set_bind_group(0, ctx.bg_blur_h.as_ref().ok_or("bind group not initialized")?, &[]);
-                pass.dispatch_workgroups(wx, wy, 1);
-            }
-            queue.submit(std::iter::once(encoder.finish()));
-
-            // Vertical pass
-            let mut blur_uniforms_v = base_uniforms;
-            blur_uniforms_v.horizontal = 0;
-            queue.write_buffer(&ctx.bufs.uniform, 0, bytemuck::bytes_of(&blur_uniforms_v));
-
-            let mut encoder =
-                dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_blur_v") });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("cs_blur_v"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&ctx.pipeline_blur);
-                pass.set_bind_group(0, ctx.bg_blur_v.as_ref().ok_or("bind group not initialized")?, &[]);
-                pass.dispatch_workgroups(wx, wy, 1);
-            }
-            queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        // Pass 3: composite
-        {
-            let mut encoder =
-                dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_composite") });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("cs_composite"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&ctx.pipeline_composite);
-                pass.set_bind_group(0, ctx.bg_composite.as_ref().ok_or("bind group not initialized")?, &[]);
-                pass.dispatch_workgroups(wx, wy, 1);
-            }
-            queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        // Readback
-        let buf_size = (w * h * 4) as u64;
-        {
-            let mut encoder =
-                dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_readback") });
-            encoder.copy_buffer_to_buffer(&ctx.bufs.dst, 0, &ctx.bufs.staging, 0, buf_size);
-            queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        let staging_slice = ctx.bufs.staging.slice(..buf_size);
-        let (tx, rx) = std::sync::mpsc::channel();
-        staging_slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        let _ = dev.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
-        match rx.recv() {
-            Ok(Ok(())) => {
-                let mapped = staging_slice.get_mapped_range();
-                let staging_u32: &[u32] = bytemuck::cast_slice(&mapped);
-                for (i, &packed) in staging_u32.iter().enumerate() {
-                    let o = i * 4;
-                    dst[o] = (packed & 0xFF) as u8;
-                    dst[o + 1] = ((packed >> 8) & 0xFF) as u8;
-                    dst[o + 2] = ((packed >> 16) & 0xFF) as u8;
-                    dst[o + 3] = ((packed >> 24) & 0xFF) as u8;
-                }
-                drop(mapped);
-                ctx.bufs.staging.unmap();
-                Ok(true)
-            }
-            _ => {
-                ctx.bufs.staging.unmap();
-                GPU_AVAILABLE.store(false, Ordering::Relaxed);
-                Err("staging map failed".to_string())
-            }
-        }
-    })();
-
-    match result {
-        Ok(true) => Ok(true),
-        Ok(false) => Ok(false),
-        Err(_) => {
-            Ok(false)
-        }
+    // Upload source as packed u32 (RGBA → u32 on little-endian)
+    thread_local! {
+        static PACKED_BUF: RefCell<Vec<u32>> = RefCell::new(Vec::new());
+        static ZERO_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     }
+    PACKED_BUF.with(|buf_cell| {
+        let buf = &mut *buf_cell.borrow_mut();
+        buf.clear();
+        buf.reserve(src.len() / 4);
+        for p in src.chunks_exact(4) {
+            buf.push((p[0] as u32) | ((p[1] as u32) << 8) | ((p[2] as u32) << 16) | ((p[3] as u32) << 24));
+        }
+        queue.write_buffer(&bufs.src, 0, bytemuck::cast_slice(buf));
+    });
+
+    // Compute all axes based on pivot mode
+    let axes = compute_axes(shadow, src, width, height);
+
+    let blur_radius = (shadow.softness.clamp(0.0, 1.0)
+        * f32::min(width as f32, height as f32)
+        * 0.08)
+        .ceil() as u32;
+
+    let base_uniforms = Uniforms {
+        width: w,
+        height: h,
+        contact_x: 0.0,
+        contact_y: 0.0,
+        normal_x: 0.0,
+        normal_y: 0.0,
+        axis_x: 0.0,
+        axis_y: 0.0,
+        scale: shadow.scale.clamp(0.1, 3.0),
+        shear_angle: 0.0,
+        shear_amount: 0.5,
+        inv_bbox_perp: 0.0,
+        total_dx: (shadow.offset_x.clamp(0.0, 1.0) - 0.5) * width as f32,
+        total_dy: (shadow.offset_y.clamp(0.0, 1.0) - 0.5) * height as f32,
+        pivot_mode: shadow.pivot_mode as u32,
+        fade: shadow.fade.clamp(0.0, 1.0),
+        shadow_r: shadow.shadow_color_r.clamp(0.0, 1.0),
+        shadow_g: shadow.shadow_color_g.clamp(0.0, 1.0),
+        shadow_b: shadow.shadow_color_b.clamp(0.0, 1.0),
+        shadow_a: shadow.shadow_color_a.clamp(0.0, 1.0),
+        source_opacity: shadow.source_opacity.clamp(0.0, 1.0),
+        blur_radius,
+        horizontal: 0,
+        alpha_threshold: shadow.alpha_threshold.clamp(0.0, 1.0),
+        bbox_min_x: 0.0,
+        bbox_max_x: 0.0,
+        bbox_min_y: 0.0,
+        bbox_max_y: 0.0,
+    };
+
+    let wx = (w + 15) / 16;
+    let wy = (h + 15) / 16;
+
+    // Zero alpha_a before accumulation (for multi-axis modes)
+    let alpha_size = (w * h * 4) as usize;
+    ZERO_BUF.with(|buf_cell| {
+        let buf = &mut *buf_cell.borrow_mut();
+        if buf.len() < alpha_size {
+            buf.resize(alpha_size, 0);
+        } else {
+            buf[..alpha_size].fill(0);
+        }
+        queue.write_buffer(&bufs.alpha_a, 0, &buf[..alpha_size]);
+    });
+
+    // Pass 1: project (once per axis, accumulating via max)
+    for axis in &axes {
+        let mut axis_uniforms = base_uniforms;
+        axis_uniforms.contact_x = axis.contact_x;
+        axis_uniforms.contact_y = axis.contact_y;
+        axis_uniforms.normal_x = axis.nx;
+        axis_uniforms.normal_y = axis.ny;
+        axis_uniforms.axis_x = axis.ax;
+        axis_uniforms.axis_y = axis.ay;
+        axis_uniforms.shear_angle = shadow.shear_angle.clamp(0.0, 360.0).to_radians();
+        axis_uniforms.shear_amount = shadow.shear_amount.clamp(0.0, 1.0);
+        axis_uniforms.inv_bbox_perp = if axis.bbox_perp > 0.0 { 1.0 / axis.bbox_perp } else { 0.0 };
+        axis_uniforms.bbox_min_x = axis.bbox_min_x;
+        axis_uniforms.bbox_max_x = axis.bbox_max_x;
+        axis_uniforms.bbox_min_y = axis.bbox_min_y;
+        axis_uniforms.bbox_max_y = axis.bbox_max_y;
+        queue.write_buffer(&bufs.uniform, 0, bytemuck::bytes_of(&axis_uniforms));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_project") });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("cs_project"), timestamp_writes: None,
+            });
+            pass.set_pipeline(&res.pipeline_project);
+            pass.set_bind_group(0, &bufs.bg_project, &[]);
+            pass.dispatch_workgroups(wx, wy, 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    // Restore full uniforms for blur/composite
+    queue.write_buffer(&bufs.uniform, 0, bytemuck::bytes_of(&base_uniforms));
+
+    // Pass 2: blur (separable H + V)
+    if blur_radius > 0 {
+        let mut blur_uniforms_h = base_uniforms;
+        blur_uniforms_h.horizontal = 1;
+        queue.write_buffer(&bufs.uniform, 0, bytemuck::bytes_of(&blur_uniforms_h));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_blur_h") });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("cs_blur_h"), timestamp_writes: None,
+            });
+            pass.set_pipeline(&res.pipeline_blur);
+            pass.set_bind_group(0, &bufs.bg_blur_h, &[]);
+            pass.dispatch_workgroups(wx, wy, 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let mut blur_uniforms_v = base_uniforms;
+        blur_uniforms_v.horizontal = 0;
+        queue.write_buffer(&bufs.uniform, 0, bytemuck::bytes_of(&blur_uniforms_v));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_blur_v") });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("cs_blur_v"), timestamp_writes: None,
+            });
+            pass.set_pipeline(&res.pipeline_blur);
+            pass.set_bind_group(0, &bufs.bg_blur_v, &[]);
+            pass.dispatch_workgroups(wx, wy, 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    // Pass 3: composite
+    {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_composite") });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("cs_composite"), timestamp_writes: None,
+            });
+            pass.set_pipeline(&res.pipeline_composite);
+            pass.set_bind_group(0, &bufs.bg_composite, &[]);
+            pass.dispatch_workgroups(wx, wy, 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    // Readback
+    let buf_size = (w * h * 4) as u64;
+    {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cs_readback") });
+        encoder.copy_buffer_to_buffer(&bufs.dst, 0, &bufs.staging, 0, buf_size);
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    let result = super::blocking_readback(device, &bufs.staging, buf_size, &mut dst[..buf_size as usize]);
+    return_bufs(bufs);
+    result.map(|()| true)
 }
 
 // ---------------------------------------------------------------------------
@@ -661,7 +489,7 @@ fn compute_axes(
 }
 
 // ---------------------------------------------------------------------------
-// Single axis from a bbox (or None = frame center for manual mode)
+// Single axis from a bbox (or None = frame center)
 // ---------------------------------------------------------------------------
 
 fn compute_single_axis(
@@ -704,9 +532,7 @@ fn compute_single_axis(
                 bbox_min_y: min_yf, bbox_max_y: max_yf,
             })
         }
-        None => {
-            compute_axis_manual(pivot_angle, wf, hf, 0.0, 0.0)
-        }
+        None => compute_axis_manual(pivot_angle, wf, hf, 0.0, 0.0),
     }
 }
 
@@ -761,7 +587,7 @@ fn find_bbox(src: &[u8], width: usize, height: usize, threshold: f32) -> Option<
 }
 
 // ---------------------------------------------------------------------------
-// BFS connected-component detection (GPU-side, same as CPU find_components)
+// BFS connected-component detection (CPU-side, same as CPU find_components)
 // ---------------------------------------------------------------------------
 
 fn find_components_gpu(

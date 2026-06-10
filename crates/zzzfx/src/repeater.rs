@@ -44,14 +44,16 @@ impl super::Repeater {
         }
 
         // GPU first — try wgpu compute; if unavailable or panics, fall through to CPU.
-        const MAX_GPU_LAYERS: usize = 32;
-        if layers.len() <= MAX_GPU_LAYERS {
-            let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::gpu::repeater::try_repeater_gpu_render(self, layers, dst, width, height)
-            }));
-            match gpu_result {
-                Ok(Ok(true)) => return,
-                _ => {} // GPU unavailable, errored, or panicked — fall through to CPU
+        #[cfg(feature = "gpu")]
+        {
+            const MAX_GPU_LAYERS: usize = 32;
+            if layers.len() <= MAX_GPU_LAYERS {
+                let gpu_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    crate::gpu::repeater::try_repeater_gpu_render(self, layers, dst, width, height)
+                }));
+                if let Ok(Ok(true)) = gpu_result {
+                    return;
+                }
             }
         }
 
